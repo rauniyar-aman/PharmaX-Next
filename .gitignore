@@ -141,3 +141,20 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Python / Django
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+env/
+.venv/
+*.sqlite3
+db.sqlite3
+media/
+staticfiles/
+*.pot
+*.mo
+celerybeat-schedule
+celerybeat.pid

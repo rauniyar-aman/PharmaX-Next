@@ -1,0 +1,186 @@
+@import "tailwindcss";
+
+/* ─── Light palette ─── */
+:root {
+  --c-primary:                    0 107 44;
+  --c-primary-dark:               0 82 32;
+  --c-primary-container:          0 135 58;
+  --c-inverse-primary:            98 223 125;
+  --c-on-primary:                 255 255 255;
+  --c-on-primary-container:       247 255 242;
+
+  --c-secondary:                  0 81 213;
+  --c-secondary-container:        49 107 243;
+  --c-on-secondary:               255 255 255;
+  --c-on-secondary-container:     254 252 255;
+
+  --c-background:                 249 249 255;
+  --c-on-background:              21 28 39;
+
+  --c-surface:                    255 255 255;
+  --c-surface-dim:                211 218 234;
+  --c-surface-bright:             249 249 255;
+  --c-surface-container-lowest:   255 255 255;
+  --c-surface-container-low:      240 243 255;
+  --c-surface-container:          231 238 254;
+  --c-surface-container-high:     226 232 248;
+  --c-surface-container-highest:  220 226 243;
+  --c-on-surface:                 21 28 39;
+  --c-on-surface-variant:         62 74 61;
+  --c-inverse-surface:            42 49 61;
+  --c-inverse-on-surface:         235 241 255;
+
+  --c-outline:                    110 123 108;
+  --c-outline-variant:            189 202 186;
+  --c-surface-variant:            220 226 243;
+
+  --c-error:                      186 26 26;
+  --c-on-error:                   255 255 255;
+  --c-error-container:            255 218 214;
+  --c-on-error-container:         147 0 10;
+
+  --c-success:                    0 107 44;
+  --c-success-container:          214 245 224;
+  --c-warning:                    230 81 0;
+  --c-warning-container:          255 243 224;
+  --c-info:                       0 81 213;
+  --c-info-container:             219 225 255;
+}
+
+/* ─── Dark palette ─── */
+.dark {
+  --c-primary:                    98 223 125;
+  --c-primary-dark:               62 170 85;
+  --c-on-primary:                 0 33 9;
+  --c-on-primary-container:       127 252 151;
+
+  --c-secondary:                  180 197 255;
+  --c-secondary-container:        0 62 168;
+  --c-on-secondary:               0 23 75;
+  --c-on-secondary-container:     219 225 255;
+
+  --c-background:                 15 17 23;
+  --c-on-background:              228 231 247;
+
+  --c-surface:                    15 17 23;
+  --c-surface-dim:                10 13 20;
+  --c-surface-bright:             53 58 74;
+  --c-surface-container-lowest:   10 14 25;
+  --c-surface-container-low:      23 29 45;
+  --c-surface-container:          27 33 50;
+  --c-surface-container-high:     34 40 57;
+  --c-surface-container-highest:  45 51 66;
+  --c-on-surface:                 228 231 247;
+  --c-on-surface-variant:         184 196 188;
+  --c-inverse-surface:            228 231 247;
+  --c-inverse-on-surface:         42 49 61;
+
+  --c-outline:                    138 151 137;
+  --c-outline-variant:            62 74 61;
+  --c-surface-variant:            42 49 61;
+
+  --c-error:                      255 180 171;
+  --c-on-error:                   105 0 5;
+  --c-error-container:            147 0 10;
+  --c-on-error-container:         255 218 214;
+
+  --c-success:                    98 223 125;
+  --c-success-container:          0 58 18;
+  --c-warning:                    255 183 124;
+  --c-warning-container:          58 26 0;
+  --c-info:                       180 197 255;
+  --c-info-container:             0 62 168;
+}
+
+/* ─── Tailwind 4 color tokens ─── */
+@theme inline {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  --color-primary:                    rgb(var(--c-primary));
+  --color-primary-dark:               rgb(var(--c-primary-dark));
+  --color-on-primary:                 rgb(var(--c-on-primary));
+  --color-on-primary-container:       rgb(var(--c-on-primary-container));
+  --color-primary-container:          rgb(var(--c-primary-container));
+  --color-inverse-primary:            rgb(var(--c-inverse-primary));
+
+  --color-secondary:                  rgb(var(--c-secondary));
+  --color-secondary-container:        rgb(var(--c-secondary-container));
+  --color-on-secondary:               rgb(var(--c-on-secondary));
+  --color-on-secondary-container:     rgb(var(--c-on-secondary-container));
+
+  --color-background:                 rgb(var(--c-background));
+  --color-on-background:              rgb(var(--c-on-background));
+
+  --color-surface:                    rgb(var(--c-surface));
+  --color-surface-dim:                rgb(var(--c-surface-dim));
+  --color-surface-bright:             rgb(var(--c-surface-bright));
+  --color-surface-container-lowest:   rgb(var(--c-surface-container-lowest));
+  --color-surface-container-low:      rgb(var(--c-surface-container-low));
+  --color-surface-container:          rgb(var(--c-surface-container));
+  --color-surface-container-high:     rgb(var(--c-surface-container-high));
+  --color-surface-container-highest:  rgb(var(--c-surface-container-highest));
+  --color-on-surface:                 rgb(var(--c-on-surface));
+  --color-on-surface-variant:         rgb(var(--c-on-surface-variant));
+  --color-inverse-surface:            rgb(var(--c-inverse-surface));
+  --color-inverse-on-surface:         rgb(var(--c-inverse-on-surface));
+  --color-surface-variant:            rgb(var(--c-surface-variant));
+
+  --color-outline:                    rgb(var(--c-outline));
+  --color-outline-variant:            rgb(var(--c-outline-variant));
+
+  --color-error:                      rgb(var(--c-error));
+  --color-on-error:                   rgb(var(--c-on-error));
+  --color-error-container:            rgb(var(--c-error-container));
+  --color-on-error-container:         rgb(var(--c-on-error-container));
+
+  --color-success:                    rgb(var(--c-success));
+  --color-success-container:          rgb(var(--c-success-container));
+  --color-warning:                    rgb(var(--c-warning));
+  --color-warning-container:          rgb(var(--c-warning-container));
+  --color-info:                       rgb(var(--c-info));
+  --color-info-container:             rgb(var(--c-info-container));
+
+  --shadow-card:    0px 4px 6px -1px rgba(0,0,0,0.05), 0px 2px 4px -1px rgba(0,0,0,0.03);
+  --shadow-card-md: 0px 10px 15px -3px rgba(0,0,0,0.08), 0px 4px 6px -2px rgba(0,0,0,0.04);
+  --shadow-modal:   0px 20px 25px -5px rgba(0,0,0,0.1), 0px 10px 10px -5px rgba(0,0,0,0.04);
+  --shadow-sidebar: 4px 0 24px -4px rgba(0,0,0,0.08);
+}
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color-scheme: light;
+  }
+  html.dark { color-scheme: dark; }
+
+  body {
+    background-color: rgb(var(--c-background));
+    color: rgb(var(--c-on-background));
+    min-height: 100vh;
+  }
+
+  input, textarea, select, button { font-family: inherit; }
+  img { max-width: 100%; display: block; }
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 1;
+  font-size: 20px;
+}
+.ms-filled {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #bdcaba; border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: #6e7b6c; }
+
+.active-glow { box-shadow: 0 0 15px rgba(49, 107, 243, 0.25); }
