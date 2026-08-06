@@ -49,7 +49,7 @@ export default function PromoSlider({ slides, intervalMs = 5000 }: Props) {
               <p className="text-lg sm:text-xl font-bold text-white leading-snug">{slide.title}</p>
               <p className="text-sm text-white/85 mt-1.5 leading-relaxed">{slide.subtitle}</p>
               <Link href={slide.href}
-                className="inline-flex items-center gap-1.5 mt-4 px-4 py-2 bg-white text-on-surface text-xs font-bold rounded-xl hover:opacity-90 transition-opacity">
+                className="inline-flex items-center gap-1.5 mt-4 px-4 py-2 bg-white text-gray-900 text-xs font-bold rounded-xl hover:opacity-90 transition-opacity">
                 {slide.cta}
                 <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
               </Link>
