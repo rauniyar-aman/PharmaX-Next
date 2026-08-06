@@ -420,7 +420,11 @@ class MedicineListView(APIView):
         if search:
             qs = qs.filter(Q(name__icontains=search) | Q(brand__icontains=search) | Q(manufacturer__icontains=search))
         if category:
-            qs = qs.filter(Q(category__name__iexact=category) | Q(category__id=category))
+            try:
+                uuid_lib.UUID(category)
+                qs = qs.filter(Q(category__name__iexact=category) | Q(category__id=category))
+            except ValueError:
+                qs = qs.filter(category__name__iexact=category)
         if type_ in ('Rx', 'OTC'):
             qs = qs.filter(type=type_)
         if in_stock == 'true':

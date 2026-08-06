@@ -184,3 +184,6 @@
 ::-webkit-scrollbar-thumb:hover { background: #6e7b6c; }
 
 .active-glow { box-shadow: 0 0 15px rgba(49, 107, 243, 0.25); }
+
+.scrollbar-hide { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
