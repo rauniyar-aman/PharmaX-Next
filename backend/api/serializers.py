@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
-from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral
+from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -51,6 +51,8 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    permission_codes = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
@@ -58,9 +60,63 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'blood_group', 'allergies', 'avatar_url', 'referral_code', 'role', 'is_active',
             'is_email_verified', 'notif_order_updates',
             'notif_prescription_alerts', 'notif_promotions',
+            'is_super_admin', 'permission_codes',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'email', 'referral_code', 'role', 'is_active', 'is_email_verified', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'email', 'referral_code', 'role', 'is_active', 'is_email_verified',
+            'is_super_admin', 'permission_codes', 'created_at', 'updated_at',
+        ]
+
+    def get_permission_codes(self, obj):
+        if obj.role != 'ADMIN':
+            return []
+        return list(obj.permissions.values_list('code', flat=True))
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.role != 'ADMIN':
+            data.pop('is_super_admin', None)
+            data.pop('permission_codes', None)
+        return data
+
+
+class PermissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Permission
+        fields = ['id', 'code', 'label', 'group', 'description']
+        read_only_fields = fields
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    permission_codes = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'full_name', 'email', 'phone', 'is_active', 'is_super_admin', 'permission_codes', 'created_at']
+        read_only_fields = fields
+
+    def get_permission_codes(self, obj):
+        return list(obj.permissions.values_list('code', flat=True))
+
+
+class AdminUserCreateSerializer(serializers.Serializer):
+    full_name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    phone = serializers.CharField(max_length=20)
+    password = serializers.CharField(min_length=6, write_only=True)
+    is_super_admin = serializers.BooleanField(default=False, required=False)
+    permission_codes = serializers.ListField(child=serializers.CharField(), default=list, required=False)
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Email already registered.')
+        return value
+
+    def validate_phone(self, value):
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError('Phone number already registered.')
+        return value
 
 
 class AddressSerializer(serializers.ModelSerializer):
