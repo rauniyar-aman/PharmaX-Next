@@ -154,4 +154,7 @@ urlpatterns = [
     path('admin/inventory/',                    views.AdminInventoryView.as_view(),         name='admin-inventory'),
     path('admin/inventory/<uuid:pk>/',          views.AdminInventoryView.as_view(),         name='admin-inventory-detail'),
     path('admin/inventory/<uuid:pk>/log/',      views.AdminStockLogView.as_view(),          name='admin-inventory-log'),
+    path('admin/permissions/',                  views.PermissionListView.as_view(),         name='admin-permissions'),
+    path('admin/admins/',                       views.AdminUserListView.as_view(),          name='admin-users'),
+    path('admin/admins/<uuid:pk>/',             views.AdminUserDetailView.as_view(),        name='admin-user-detail'),
 ]

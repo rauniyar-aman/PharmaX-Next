@@ -25,7 +25,7 @@ from .models import (
     Notification, SystemSetting, StockLog,
     LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment,
     PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
-    Coupon, CouponUsage, Wallet, WalletTransaction, Referral,
+    Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
@@ -41,6 +41,7 @@ from .serializers import (
     DoctorReviewSerializer, MyDoctorReviewSerializer, HealthRecordSerializer,
     MedicineReminderSerializer, ReminderLogSerializer,
     CouponSerializer, WalletSerializer, WalletTransactionSerializer, ReferralSerializer,
+    PermissionSerializer, AdminUserSerializer, AdminUserCreateSerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
 from .permissions import IsAdmin, IsSuperAdmin, require_permission
@@ -3140,3 +3141,73 @@ class AdminStockLogView(APIView):
                 'pagination': {'total': total, 'page': page, 'totalPages': (total + limit - 1) // limit},
             },
         })
+
+
+# ─── Admin User Management (super admin only) ─────────────────────────────────
+
+class PermissionListView(APIView):
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request):
+        perms = Permission.objects.all()
+        return Response({'success': True, 'data': {'permissions': PermissionSerializer(perms, many=True).data}})
+
+
+class AdminUserListView(APIView):
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request):
+        admins = User.objects.filter(role='ADMIN').prefetch_related('permissions').order_by('full_name')
+        return Response({'success': True, 'data': {'admins': AdminUserSerializer(admins, many=True).data}})
+
+    def post(self, request):
+        s = AdminUserCreateSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        admin = User.objects.create_user(
+            email=s.validated_data['email'],
+            full_name=s.validated_data['full_name'],
+            phone=s.validated_data['phone'],
+            password=s.validated_data['password'],
+            role='ADMIN',
+            is_super_admin=s.validated_data.get('is_super_admin', False),
+            is_active=True,
+            is_email_verified=True,
+        )
+        codes = s.validated_data.get('permission_codes') or []
+        if codes:
+            admin.permissions.set(Permission.objects.filter(code__in=codes))
+
+        return Response({'success': True, 'data': {'admin': AdminUserSerializer(admin).data}, 'message': 'Admin created.'}, status=status.HTTP_201_CREATED)
+
+
+class AdminUserDetailView(APIView):
+    permission_classes = [IsSuperAdmin]
+
+    def get(self, request, pk):
+        try:
+            admin = User.objects.get(id=pk, role='ADMIN')
+        except User.DoesNotExist:
+            return Response({'success': False, 'message': 'Admin not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'admin': AdminUserSerializer(admin).data}})
+
+    def patch(self, request, pk):
+        try:
+            admin = User.objects.get(id=pk, role='ADMIN')
+        except User.DoesNotExist:
+            return Response({'success': False, 'message': 'Admin not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'full_name' in request.data:
+            admin.full_name = request.data['full_name']
+        if 'is_active' in request.data:
+            admin.is_active = bool(request.data['is_active'])
+        if 'is_super_admin' in request.data:
+            admin.is_super_admin = bool(request.data['is_super_admin'])
+        admin.save()
+
+        if 'permission_codes' in request.data:
+            codes = request.data.get('permission_codes') or []
+            admin.permissions.set(Permission.objects.filter(code__in=codes))
+
+        return Response({'success': True, 'data': {'admin': AdminUserSerializer(admin).data}, 'message': 'Admin updated.'})
