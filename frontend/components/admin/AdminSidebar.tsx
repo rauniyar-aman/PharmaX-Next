@@ -21,6 +21,7 @@ const navItems = [
   { label: 'Orders',        href: '/admin/orders',        icon: 'shopping_cart', code: 'manage_orders' },
   { label: 'Customers',     href: '/admin/customers',     icon: 'group',       code: 'manage_customers' },
   { label: 'Delivery',      href: '/admin/delivery',      icon: 'local_shipping', code: 'manage_orders' },
+  { label: 'Wallet',        href: '/admin/wallet',        icon: 'account_balance_wallet', code: 'manage_finance' },
   { label: 'Reports',       href: '/admin/reports',       icon: 'bar_chart',   code: 'view_reports' },
   { label: 'Admins',        href: '/admin/admins',        icon: 'admin_panel_settings', superAdminOnly: true },
 ]
