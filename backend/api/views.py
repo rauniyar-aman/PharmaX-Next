@@ -3,6 +3,7 @@ import hashlib
 import base64
 import json
 import os
+import random
 import uuid as uuid_lib
 import requests
 from django.utils import timezone
@@ -12,25 +13,34 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.db.models import Q, Avg, Count, Sum
+from django.db.models import Q, Avg, Count, Sum, F
 from django.db import transaction
 from django.http import HttpResponseRedirect
 from django.conf import settings
 from decimal import Decimal
 
 from .models import (
-    User, Address, Category, Medicine, Prescription,
+    User, Address, Category, Brand, Medicine, Prescription,
     Cart, CartItem, Order, OrderItem, Review, WishlistItem,
     Notification, SystemSetting, StockLog,
+    LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment,
+    PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
+    Coupon, CouponUsage, Wallet, WalletTransaction, Referral,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
     LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
     ChangePasswordSerializer, UserProfileSerializer,
-    CategorySerializer, MedicineListSerializer, MedicineDetailSerializer,
+    CategorySerializer, BrandSerializer, MedicineListSerializer, MedicineDetailSerializer,
     AddressSerializer, PrescriptionSerializer, CartSerializer,
     CartItemSerializer, OrderSerializer, ReviewSerializer, MyReviewSerializer,
     NotificationSerializer, StockLogSerializer, SystemSettingSerializer,
+    LabTestCategorySerializer, LabTestListSerializer, LabTestDetailSerializer, LabTestBookingSerializer,
+    BlogPostListSerializer, BlogPostDetailSerializer, MedicineSubscriptionSerializer,
+    DoctorSerializer, DoctorAppointmentSerializer, PlusPlanSerializer, PlusMembershipSerializer,
+    DoctorReviewSerializer, MyDoctorReviewSerializer, HealthRecordSerializer,
+    MedicineReminderSerializer, ReminderLogSerializer,
+    CouponSerializer, WalletSerializer, WalletTransactionSerializer, ReferralSerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
 from .permissions import IsAdmin
@@ -70,6 +80,14 @@ def _handle_wrong_otp(user):
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 
+def _generate_referral_code(full_name):
+    base = ''.join(ch for ch in full_name.upper() if ch.isalnum())[:6] or 'USER'
+    while True:
+        code = f'{base}{random.randint(100, 999)}'
+        if not User.objects.filter(referral_code=code).exists():
+            return code
+
+
 class RegisterView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [AuthRateThrottle]
@@ -86,6 +104,14 @@ class RegisterView(APIView):
         s = RegisterSerializer(data=request.data)
         if not s.is_valid():
             return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        referrer = None
+        referral_code = s.validated_data.get('referral_code', '').strip()
+        if referral_code:
+            referrer = User.objects.filter(referral_code__iexact=referral_code).first()
+            if not referrer:
+                return Response({'success': False, 'message': 'Invalid referral code.'}, status=status.HTTP_400_BAD_REQUEST)
+
         otp = generate_otp()
         user = User.objects.create_user(
             email=s.validated_data['email'],
@@ -98,6 +124,12 @@ class RegisterView(APIView):
             otp_locked_until=None,
             is_active=False,
         )
+        user.referral_code = _generate_referral_code(user.full_name)
+        user.save(update_fields=['referral_code'])
+
+        if referrer:
+            Referral.objects.create(referrer=referrer, referred_user=user)
+
         send_otp_email_async(user.email, user.full_name, otp)
         return Response({'success': True, 'message': 'OTP sent to your email. Please verify.'}, status=status.HTTP_201_CREATED)
 
@@ -407,34 +439,73 @@ class MedicineListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        qs = Medicine.objects.select_related('category').all()
+        qs = Medicine.objects.select_related('category', 'brand').all()
 
         search = request.query_params.get('search', '').strip()
         category = request.query_params.get('category', '').strip()
+        brand = request.query_params.get('brand', '').strip()
         type_ = request.query_params.get('type', '').strip()
         in_stock = request.query_params.get('inStock', '').strip()
+        availability = request.query_params.get('availability', '').strip()
+        price_ranges = request.query_params.get('priceRanges', '').strip()
         min_price = request.query_params.get('minPrice')
         max_price = request.query_params.get('maxPrice')
+        min_rating = request.query_params.get('minRating')
         sort = request.query_params.get('sortBy', 'popular')
 
         if search:
-            qs = qs.filter(Q(name__icontains=search) | Q(brand__icontains=search) | Q(manufacturer__icontains=search))
+            qs = qs.filter(Q(name__icontains=search) | Q(brand__name__icontains=search) | Q(manufacturer__icontains=search))
         if category:
-            try:
-                uuid_lib.UUID(category)
-                qs = qs.filter(Q(category__name__iexact=category) | Q(category__id=category))
-            except ValueError:
-                qs = qs.filter(category__name__iexact=category)
-        if type_ in ('Rx', 'OTC'):
-            qs = qs.filter(type=type_)
+            names = [c.strip() for c in category.split(',') if c.strip()]
+            if names:
+                qs = qs.filter(category__name__in=names)
+        if brand:
+            brand_names = [b.strip() for b in brand.split(',') if b.strip()]
+            if brand_names:
+                qs = qs.filter(brand__name__in=brand_names)
+        if type_:
+            types = [t.strip() for t in type_.split(',') if t.strip() in ('Rx', 'OTC')]
+            if len(types) == 1:
+                qs = qs.filter(type=types[0])
+
+        # Legacy single-value availability param (kept for backwards compatibility)
         if in_stock == 'true':
             qs = qs.filter(in_stock=True)
         elif in_stock == 'false':
             qs = qs.filter(in_stock=False)
+        # Multi-select availability checkboxes: only constrain if exactly one is checked
+        if availability:
+            avail_vals = set(a.strip() for a in availability.split(',') if a.strip())
+            if avail_vals == {'in-stock'}:
+                qs = qs.filter(in_stock=True)
+            elif avail_vals == {'out-of-stock'}:
+                qs = qs.filter(in_stock=False)
+
+        if price_ranges:
+            bucket_q = Q()
+            has_bucket = False
+            for bucket in price_ranges.split(','):
+                bucket = bucket.strip()
+                if bucket == 'under-100':
+                    bucket_q |= Q(price__lt=100)
+                    has_bucket = True
+                elif bucket == '100-300':
+                    bucket_q |= Q(price__gte=100, price__lte=300)
+                    has_bucket = True
+                elif bucket == 'over-300':
+                    bucket_q |= Q(price__gt=300)
+                    has_bucket = True
+            if has_bucket:
+                qs = qs.filter(bucket_q)
         if min_price:
             qs = qs.filter(price__gte=Decimal(min_price))
         if max_price:
             qs = qs.filter(price__lte=Decimal(max_price))
+        if min_rating:
+            try:
+                qs = qs.filter(rating__gte=Decimal(min_rating))
+            except Exception:
+                pass
 
         sort_map = {
             'popular': '-total_reviews',
@@ -448,7 +519,7 @@ class MedicineListView(APIView):
 
         try:
             page = max(1, int(request.query_params.get('page', 1)))
-            limit = min(50, max(1, int(request.query_params.get('limit', 12))))
+            limit = min(100, max(1, int(request.query_params.get('limit', 12))))
         except ValueError:
             page, limit = 1, 12
 
@@ -470,12 +541,21 @@ class MedicineListView(APIView):
         })
 
 
+class MedicineBrandsView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        qs = Brand.objects.filter(is_active=True).annotate(medicine_count=Count('medicines')).order_by('name')
+        brands = [{'id': str(b.id), 'name': b.name, 'logo_url': b.logo_url, 'medicine_count': b.medicine_count} for b in qs]
+        return Response({'success': True, 'data': {'brands': brands}})
+
+
 class MedicineDetailView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, pk):
         try:
-            medicine = Medicine.objects.select_related('category').get(id=pk)
+            medicine = Medicine.objects.select_related('category', 'brand').get(id=pk)
         except Medicine.DoesNotExist:
             return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'success': True, 'data': {'medicine': MedicineDetailSerializer(medicine).data}})
@@ -620,7 +700,7 @@ class WishlistView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        items = WishlistItem.objects.filter(user=request.user).select_related('medicine__category').order_by('-added_at')
+        items = WishlistItem.objects.filter(user=request.user).select_related('medicine__category', 'medicine__brand').order_by('-added_at')
         medicines = [MedicineListSerializer(i.medicine).data for i in items]
         return Response({'success': True, 'data': {'wishlist': medicines}})
 
@@ -767,8 +847,108 @@ def _get_setting(key, default):
         return default
 
 
+def _has_active_plus(user):
+    try:
+        membership = PlusMembership.objects.get(user=user)
+    except PlusMembership.DoesNotExist:
+        return False
+    return membership.is_active
+
+
+def _validate_coupon(code, user, subtotal):
+    """Returns (coupon_or_None, discount_amount, error_message_or_None)."""
+    if not code:
+        return None, Decimal('0'), None
+    try:
+        coupon = Coupon.objects.get(code__iexact=code.strip(), is_active=True)
+    except Coupon.DoesNotExist:
+        return None, Decimal('0'), 'Invalid coupon code.'
+
+    now = timezone.now()
+    if not (coupon.valid_from <= now <= coupon.valid_until):
+        return None, Decimal('0'), 'This coupon has expired or is not yet active.'
+    if subtotal < coupon.min_order_amount:
+        return None, Decimal('0'), f'Minimum order of NPR {coupon.min_order_amount} required for this coupon.'
+    if coupon.usage_limit is not None and coupon.usages.count() >= coupon.usage_limit:
+        return None, Decimal('0'), 'This coupon has reached its usage limit.'
+    if coupon.usages.filter(user=user).count() >= coupon.per_user_limit:
+        return None, Decimal('0'), 'You have already used this coupon.'
+
+    if coupon.discount_type == 'PERCENTAGE':
+        discount = (subtotal * coupon.discount_value / Decimal('100')).quantize(Decimal('0.01'))
+        if coupon.max_discount_amount:
+            discount = min(discount, coupon.max_discount_amount)
+    else:
+        discount = coupon.discount_value
+    discount = min(discount, subtotal)
+    return coupon, discount, None
+
+
+def _maybe_reward_referral(user):
+    try:
+        referral = Referral.objects.select_related('referrer').get(referred_user=user, status='PENDING')
+    except Referral.DoesNotExist:
+        return
+    if Order.objects.filter(user=user).count() != 1:
+        return
+
+    referrer_bonus = Decimal(_get_setting('referral_bonus_referrer', '100'))
+    referee_bonus = Decimal(_get_setting('referral_bonus_referee', '50'))
+
+    referrer_wallet, _ = Wallet.objects.get_or_create(user=referral.referrer)
+    referrer_wallet.balance += referrer_bonus
+    referrer_wallet.save(update_fields=['balance'])
+    WalletTransaction.objects.create(
+        wallet=referrer_wallet, type='CREDIT', amount=referrer_bonus,
+        reason=f'Referral bonus — {user.full_name} placed their first order',
+        balance_after=referrer_wallet.balance,
+    )
+
+    referee_wallet, _ = Wallet.objects.get_or_create(user=user)
+    referee_wallet.balance += referee_bonus
+    referee_wallet.save(update_fields=['balance'])
+    WalletTransaction.objects.create(
+        wallet=referee_wallet, type='CREDIT', amount=referee_bonus,
+        reason='Welcome bonus for using a referral code',
+        balance_after=referee_wallet.balance,
+    )
+
+    referral.status = 'REWARDED'
+    referral.reward_amount = referrer_bonus
+    referral.rewarded_at = timezone.now()
+    referral.save(update_fields=['status', 'reward_amount', 'rewarded_at'])
+
+    Notification.objects.create(
+        user=referral.referrer, type='REFERRAL', title='Referral Bonus Earned!',
+        message=f'You earned NPR {referrer_bonus} because {user.full_name} placed their first order.',
+        link='/referrals',
+    )
+    Notification.objects.create(
+        user=user, type='REFERRAL', title='Welcome Bonus Credited!',
+        message=f'NPR {referee_bonus} has been added to your wallet as a welcome bonus.',
+        link='/wallet',
+    )
+
+
+def _release_order_holds(order):
+    """Refunds wallet usage and releases coupon usage for a cancelled/failed order."""
+    if order.wallet_used and order.wallet_used > 0:
+        wallet, _ = Wallet.objects.get_or_create(user=order.user)
+        wallet.balance += order.wallet_used
+        wallet.save(update_fields=['balance'])
+        WalletTransaction.objects.create(
+            wallet=wallet, type='CREDIT', amount=order.wallet_used,
+            reason=f'Refund for cancelled order #{str(order.id)[:8]}',
+            balance_after=wallet.balance, order=order,
+        )
+        order.wallet_used = Decimal('0')
+        order.save(update_fields=['wallet_used'])
+    CouponUsage.objects.filter(order=order).delete()
+
+
 def _create_order_from_cart(user, address_id, prescription_id, payment_method, notes='',
-                             payment_status='PENDING', order_status='PLACED', clear_cart=True):
+                             payment_status='PENDING', order_status='PLACED', clear_cart=True,
+                             coupon_code=None, use_wallet=False):
     """Returns (order, error_response). Exactly one is None."""
     try:
         cart = Cart.objects.prefetch_related('items__medicine').get(user=user)
@@ -797,14 +977,28 @@ def _create_order_from_cart(user, address_id, prescription_id, payment_method, n
         total = sum(item.medicine.price * item.quantity for item in items)
         free_threshold = Decimal(_get_setting('free_delivery_threshold', '500'))
         delivery_charge_setting = Decimal(_get_setting('delivery_charge', '50'))
-        delivery = Decimal('0') if total >= free_threshold else delivery_charge_setting
+        delivery = Decimal('0') if (total >= free_threshold or _has_active_plus(user)) else delivery_charge_setting
+
+        coupon, coupon_discount, coupon_error = _validate_coupon(coupon_code, user, total)
+        if coupon_error:
+            return None, Response({'success': False, 'message': coupon_error}, status=status.HTTP_400_BAD_REQUEST)
+
+        payable = total + delivery - coupon_discount
+        wallet = None
+        wallet_used = Decimal('0')
+        if use_wallet:
+            wallet, _ = Wallet.objects.get_or_create(user=user)
+            wallet_used = min(wallet.balance, payable)
 
         order = Order.objects.create(
             user=user,
             address=address,
             prescription=prescription,
-            total_amount=total + delivery,
+            total_amount=payable - wallet_used,
             delivery_charge=delivery,
+            discount=coupon_discount,
+            coupon=coupon,
+            wallet_used=wallet_used,
             payment_method=payment_method,
             payment_status=payment_status,
             status=order_status,
@@ -823,8 +1017,21 @@ def _create_order_from_cart(user, address_id, prescription_id, payment_method, n
                 med.in_stock = False
             med.save(update_fields=['stock_quantity', 'in_stock'])
 
+        if coupon:
+            CouponUsage.objects.create(coupon=coupon, user=user, order=order, discount_amount=coupon_discount)
+
+        if wallet_used > 0:
+            wallet.balance -= wallet_used
+            wallet.save(update_fields=['balance'])
+            WalletTransaction.objects.create(
+                wallet=wallet, type='DEBIT', amount=wallet_used,
+                reason=f'Used on order #{str(order.id)[:8]}', balance_after=wallet.balance, order=order,
+            )
+
         if clear_cart:
             cart.items.all().delete()
+
+    _maybe_reward_referral(user)
 
     Notification.objects.create(
         user=user,
@@ -849,7 +1056,10 @@ class OrderListView(APIView):
         prescription_id = request.data.get('prescription_id') or request.data.get('prescriptionId')
         notes = request.data.get('notes', '')
 
-        order, err = _create_order_from_cart(request.user, address_id, prescription_id, payment_method, notes)
+        order, err = _create_order_from_cart(
+            request.user, address_id, prescription_id, payment_method, notes,
+            coupon_code=request.data.get('coupon_code'), use_wallet=bool(request.data.get('use_wallet')),
+        )
         if err:
             return err
         return Response({'success': True, 'data': {'order': OrderSerializer(order).data}}, status=status.HTTP_201_CREATED)
@@ -887,6 +1097,7 @@ class OrderCancelView(APIView):
             if order.payment_status == 'PENDING':
                 order.payment_status = 'FAILED'
             order.save(update_fields=['status', 'payment_status'])
+            _release_order_holds(order)
 
         Notification.objects.create(
             user=request.user, type='ORDER_UPDATE', title='Order Cancelled',
@@ -932,6 +1143,7 @@ class PaymentCodPlaceView(APIView):
             request.user, address_id, request.data.get('prescription_id'),
             payment_method='CASH_ON_DELIVERY', notes=request.data.get('notes', ''),
             payment_status='PENDING', order_status='PLACED',
+            coupon_code=request.data.get('coupon_code'), use_wallet=bool(request.data.get('use_wallet')),
         )
         if err:
             return err
@@ -949,6 +1161,7 @@ class PaymentEsewaInitiateView(APIView):
             request.user, address_id, request.data.get('prescription_id'),
             payment_method='ESEWA', notes=request.data.get('notes', ''),
             payment_status='PENDING', order_status='PLACED', clear_cart=False,
+            coupon_code=request.data.get('coupon_code'), use_wallet=bool(request.data.get('use_wallet')),
         )
         if err:
             return err
@@ -1000,6 +1213,7 @@ def _cancel_unpaid_order(order):
         order.payment_status = 'FAILED'
         order.status = 'CANCELLED'
         order.save(update_fields=['payment_status', 'status'])
+        _release_order_holds(order)
 
 
 class EsewaSuccessView(APIView):
@@ -1074,6 +1288,7 @@ class PaymentKhaltiInitiateView(APIView):
             request.user, address_id, request.data.get('prescription_id'),
             payment_method='KHALTI', notes=request.data.get('notes', ''),
             payment_status='PENDING', order_status='PLACED', clear_cart=False,
+            coupon_code=request.data.get('coupon_code'), use_wallet=bool(request.data.get('use_wallet')),
         )
         if err:
             return err
@@ -1093,10 +1308,12 @@ class PaymentKhaltiInitiateView(APIView):
                 },
             })
         except Exception:
+            _release_order_holds(order)
             order.delete()
             return Response({'success': False, 'message': 'Failed to reach Khalti.'}, status=status.HTTP_502_BAD_GATEWAY)
 
         if not khalti_res.get('pidx'):
+            _release_order_holds(order)
             order.delete()
             return Response({'success': False, 'message': khalti_res.get('detail') or khalti_res.get('message') or 'Khalti initiation failed.'}, status=status.HTTP_502_BAD_GATEWAY)
 
@@ -1140,6 +1357,861 @@ class KhaltiVerifyView(APIView):
         if order.payment_status != 'PAID':
             _finalize_paid_order(order)
         return HttpResponseRedirect(f'{FRONTEND_URL}/checkout/confirmation?orderId={order.id}')
+
+
+# ─── Lab Tests ────────────────────────────────────────────────────────────────
+
+class LabTestCategoryListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        categories = LabTestCategory.objects.filter(is_active=True).order_by('name')
+        return Response({'success': True, 'data': {'categories': LabTestCategorySerializer(categories, many=True).data}})
+
+
+class LabTestListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        qs = LabTest.objects.select_related('category').filter(is_active=True)
+
+        search = request.query_params.get('search', '').strip()
+        category = request.query_params.get('category', '').strip()
+        is_package = request.query_params.get('isPackage', '').strip()
+        sort = request.query_params.get('sortBy', 'popular')
+
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(parameters_included__icontains=search))
+        if category:
+            names = [c.strip() for c in category.split(',') if c.strip()]
+            if names:
+                qs = qs.filter(category__name__in=names)
+        if is_package == 'true':
+            qs = qs.filter(is_package=True)
+        elif is_package == 'false':
+            qs = qs.filter(is_package=False)
+
+        sort_map = {
+            'popular': '-total_bookings',
+            'price-asc': 'price',
+            'price-desc': '-price',
+            'name': 'name',
+        }
+        qs = qs.order_by(sort_map.get(sort, '-total_bookings'))
+
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+            limit = min(100, max(1, int(request.query_params.get('limit', 20))))
+        except ValueError:
+            page, limit = 1, 20
+
+        total = qs.count()
+        start = (page - 1) * limit
+        tests = qs[start:start + limit]
+
+        return Response({
+            'success': True,
+            'data': {
+                'labTests': LabTestListSerializer(tests, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+
+class LabTestDetailView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        try:
+            test = LabTest.objects.select_related('category').get(id=pk, is_active=True)
+        except LabTest.DoesNotExist:
+            return Response({'success': False, 'message': 'Lab test not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'labTest': LabTestDetailSerializer(test).data}})
+
+
+TIME_SLOTS = ['6:00 AM - 8:00 AM', '8:00 AM - 10:00 AM', '10:00 AM - 12:00 PM', '4:00 PM - 6:00 PM', '6:00 PM - 8:00 PM']
+
+
+class LabTestBookingListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        bookings = LabTestBooking.objects.filter(user=request.user).select_related('lab_test__category', 'address').order_by('-booked_at')
+        return Response({'success': True, 'data': {'bookings': LabTestBookingSerializer(bookings, many=True).data}})
+
+    def post(self, request):
+        s = LabTestBookingSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        if request.data.get('time_slot') not in TIME_SLOTS:
+            return Response({'success': False, 'message': 'Invalid time slot.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            lab_test = LabTest.objects.get(id=s.validated_data['lab_test_id'], is_active=True)
+        except LabTest.DoesNotExist:
+            return Response({'success': False, 'message': 'Lab test not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            address = Address.objects.get(id=s.validated_data['address_id'], user=request.user)
+        except Address.DoesNotExist:
+            return Response({'success': False, 'message': 'Address not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        booking = LabTestBooking.objects.create(
+            user=request.user,
+            lab_test=lab_test,
+            address=address,
+            scheduled_date=s.validated_data['scheduled_date'],
+            time_slot=s.validated_data['time_slot'],
+            total_amount=lab_test.price,
+            notes=s.validated_data.get('notes'),
+        )
+        lab_test.total_bookings = F('total_bookings') + 1
+        lab_test.save(update_fields=['total_bookings'])
+
+        return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Lab test booked!'}, status=status.HTTP_201_CREATED)
+
+
+class LabTestBookingDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.select_related('lab_test__category', 'address').get(id=pk, user=request.user)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}})
+
+    def put(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.get(id=pk, user=request.user)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if request.data.get('status') != 'CANCELLED':
+            return Response({'success': False, 'message': 'You can only cancel a booking.'}, status=status.HTTP_400_BAD_REQUEST)
+        if booking.status in ('SAMPLE_COLLECTED', 'REPORT_READY', 'CANCELLED'):
+            return Response({'success': False, 'message': f'Cannot cancel a booking that is {booking.status.replace("_", " ").lower()}.'}, status=status.HTTP_400_BAD_REQUEST)
+        booking.status = 'CANCELLED'
+        booking.save(update_fields=['status'])
+        return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Booking cancelled.'})
+
+
+# ─── Blog ─────────────────────────────────────────────────────────────────────
+
+class BlogPostListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        qs = BlogPost.objects.filter(is_published=True)
+        search = request.query_params.get('search', '').strip()
+        category = request.query_params.get('category', '').strip()
+        if search:
+            qs = qs.filter(Q(title__icontains=search) | Q(excerpt__icontains=search))
+        if category:
+            qs = qs.filter(category__iexact=category)
+
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+            limit = min(50, max(1, int(request.query_params.get('limit', 12))))
+        except ValueError:
+            page, limit = 1, 12
+        total = qs.count()
+        posts = qs[(page - 1) * limit: page * limit]
+
+        return Response({
+            'success': True,
+            'data': {
+                'posts': BlogPostListSerializer(posts, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+
+class BlogPostDetailView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, slug):
+        try:
+            post = BlogPost.objects.get(slug=slug, is_published=True)
+        except BlogPost.DoesNotExist:
+            return Response({'success': False, 'message': 'Article not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'post': BlogPostDetailSerializer(post).data}})
+
+
+class BlogCategoryListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        categories = list(
+            BlogPost.objects.filter(is_published=True).exclude(category__isnull=True).exclude(category='')
+            .values_list('category', flat=True).distinct().order_by('category')
+        )
+        return Response({'success': True, 'data': {'categories': categories}})
+
+
+# ─── Subscriptions (Auto-Refill) ───────────────────────────────────────────────
+
+class SubscriptionListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        subs = MedicineSubscription.objects.filter(user=request.user).select_related('medicine__category', 'medicine__brand', 'address').order_by('-is_active', 'next_delivery_date')
+        return Response({'success': True, 'data': {'subscriptions': MedicineSubscriptionSerializer(subs, many=True).data}})
+
+    def post(self, request):
+        s = MedicineSubscriptionSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            medicine = Medicine.objects.get(id=s.validated_data['medicine_id'])
+        except Medicine.DoesNotExist:
+            return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        address = None
+        address_id = s.validated_data.get('address_id')
+        if address_id:
+            try:
+                address = Address.objects.get(id=address_id, user=request.user)
+            except Address.DoesNotExist:
+                return Response({'success': False, 'message': 'Address not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        frequency_days = s.validated_data.get('frequency_days', 30)
+        sub = MedicineSubscription.objects.create(
+            user=request.user,
+            medicine=medicine,
+            address=address,
+            quantity=s.validated_data.get('quantity', 1),
+            frequency_days=frequency_days,
+            next_delivery_date=timezone.now().date() + timedelta(days=frequency_days),
+        )
+        return Response({'success': True, 'data': {'subscription': MedicineSubscriptionSerializer(sub).data}, 'message': 'Subscribed for auto-refill!'}, status=status.HTTP_201_CREATED)
+
+
+class SubscriptionDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, pk):
+        try:
+            sub = MedicineSubscription.objects.get(id=pk, user=request.user)
+        except MedicineSubscription.DoesNotExist:
+            return Response({'success': False, 'message': 'Subscription not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'is_active' in request.data:
+            sub.is_active = bool(request.data['is_active'])
+        if 'quantity' in request.data:
+            sub.quantity = max(1, int(request.data['quantity']))
+        if 'frequency_days' in request.data:
+            sub.frequency_days = int(request.data['frequency_days'])
+        if 'address_id' in request.data and request.data['address_id']:
+            try:
+                sub.address = Address.objects.get(id=request.data['address_id'], user=request.user)
+            except Address.DoesNotExist:
+                pass
+        sub.save()
+        return Response({'success': True, 'data': {'subscription': MedicineSubscriptionSerializer(sub).data}, 'message': 'Subscription updated.'})
+
+    def delete(self, request, pk):
+        try:
+            sub = MedicineSubscription.objects.get(id=pk, user=request.user)
+        except MedicineSubscription.DoesNotExist:
+            return Response({'success': False, 'message': 'Subscription not found.'}, status=status.HTTP_404_NOT_FOUND)
+        sub.delete()
+        return Response({'success': True, 'message': 'Subscription cancelled.'})
+
+
+# ─── Doctor Consult ─────────────────────────────────────────────────────────────
+
+class DoctorListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        qs = Doctor.objects.filter(is_active=True)
+        search = request.query_params.get('search', '').strip()
+        specialty = request.query_params.get('specialty', '').strip()
+        sort = request.query_params.get('sortBy', 'popular')
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(specialty__icontains=search))
+        if specialty:
+            names = [s.strip() for s in specialty.split(',') if s.strip()]
+            if names:
+                qs = qs.filter(specialty__in=names)
+        sort_map = {'popular': '-total_consultations', 'price-asc': 'consultation_fee', 'rating': '-rating'}
+        qs = qs.order_by(sort_map.get(sort, '-total_consultations'))
+        return Response({'success': True, 'data': {'doctors': DoctorSerializer(qs, many=True).data}})
+
+
+class DoctorSpecialtyListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        specialties = list(Doctor.objects.filter(is_active=True).values_list('specialty', flat=True).distinct().order_by('specialty'))
+        return Response({'success': True, 'data': {'specialties': specialties}})
+
+
+class DoctorDetailView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        try:
+            doctor = Doctor.objects.get(id=pk, is_active=True)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'doctor': DoctorSerializer(doctor).data}})
+
+
+APPOINTMENT_TIME_SLOTS = ['9:00 AM - 10:00 AM', '11:00 AM - 12:00 PM', '2:00 PM - 3:00 PM', '4:00 PM - 5:00 PM', '6:00 PM - 7:00 PM']
+
+
+class AppointmentListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        appts = DoctorAppointment.objects.filter(user=request.user).select_related('doctor').order_by('-booked_at')
+        return Response({'success': True, 'data': {'appointments': DoctorAppointmentSerializer(appts, many=True).data}})
+
+    def post(self, request):
+        s = DoctorAppointmentSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        if request.data.get('time_slot') not in APPOINTMENT_TIME_SLOTS:
+            return Response({'success': False, 'message': 'Invalid time slot.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            doctor = Doctor.objects.get(id=s.validated_data['doctor_id'], is_active=True)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        appt = DoctorAppointment.objects.create(
+            user=request.user,
+            doctor=doctor,
+            scheduled_date=s.validated_data['scheduled_date'],
+            time_slot=s.validated_data['time_slot'],
+            fee_amount=doctor.consultation_fee,
+            reason=s.validated_data.get('reason'),
+        )
+        doctor.total_consultations = F('total_consultations') + 1
+        doctor.save(update_fields=['total_consultations'])
+
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment booked!'}, status=status.HTTP_201_CREATED)
+
+
+class AppointmentDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, pk):
+        try:
+            appt = DoctorAppointment.objects.get(id=pk, user=request.user)
+        except DoctorAppointment.DoesNotExist:
+            return Response({'success': False, 'message': 'Appointment not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if request.data.get('status') != 'CANCELLED':
+            return Response({'success': False, 'message': 'You can only cancel an appointment.'}, status=status.HTTP_400_BAD_REQUEST)
+        if appt.status in ('COMPLETED', 'CANCELLED'):
+            return Response({'success': False, 'message': f'Cannot cancel an appointment that is {appt.status.lower()}.'}, status=status.HTTP_400_BAD_REQUEST)
+        appt.status = 'CANCELLED'
+        appt.save(update_fields=['status'])
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment cancelled.'})
+
+
+def _recalc_doctor_rating(doctor):
+    agg = DoctorReview.objects.filter(doctor=doctor).aggregate(avg=Avg('rating'), cnt=Count('id'))
+    doctor.rating = round(agg['avg'] or 0, 2)
+    doctor.total_reviews = agg['cnt']
+    doctor.save(update_fields=['rating', 'total_reviews'])
+
+
+def _user_completed_appointment(user, doctor):
+    return DoctorAppointment.objects.filter(user=user, doctor=doctor, status='COMPLETED').exists()
+
+
+class DoctorReviewsView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        reviews = DoctorReview.objects.filter(doctor_id=pk).select_related('user').order_by('-created_at')
+        data = {'reviews': DoctorReviewSerializer(reviews, many=True, context={'request': request}).data}
+        if request.user.is_authenticated:
+            data['can_review'] = DoctorAppointment.objects.filter(user=request.user, doctor_id=pk, status='COMPLETED').exists()
+        return Response({'success': True, 'data': data})
+
+    def post(self, request, pk):
+        if not request.user.is_authenticated:
+            return Response({'success': False, 'message': 'Authentication required.'}, status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            doctor = Doctor.objects.get(id=pk)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not _user_completed_appointment(request.user, doctor):
+            return Response({'success': False, 'message': 'You can only review a doctor after completing a consultation with them.'}, status=status.HTTP_403_FORBIDDEN)
+
+        rating = request.data.get('rating')
+        comment = request.data.get('comment', '')
+        if not rating or not (1 <= int(rating) <= 5):
+            return Response({'success': False, 'message': 'Rating must be between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        review, created = DoctorReview.objects.update_or_create(
+            user=request.user, doctor=doctor,
+            defaults={'rating': int(rating), 'comment': comment},
+        )
+        _recalc_doctor_rating(doctor)
+
+        return Response({'success': True, 'data': {'review': DoctorReviewSerializer(review, context={'request': request}).data}}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    def put(self, request, pk):
+        if not request.user.is_authenticated:
+            return Response({'success': False, 'message': 'Authentication required.'}, status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            review = DoctorReview.objects.get(doctor_id=pk, user=request.user)
+        except DoctorReview.DoesNotExist:
+            return Response({'success': False, 'message': 'Review not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        rating = request.data.get('rating')
+        if not rating or not (1 <= int(rating) <= 5):
+            return Response({'success': False, 'message': 'Rating must be between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        review.rating = int(rating)
+        review.comment = request.data.get('comment', review.comment)
+        review.save(update_fields=['rating', 'comment'])
+        _recalc_doctor_rating(review.doctor)
+
+        return Response({'success': True, 'data': {'review': DoctorReviewSerializer(review, context={'request': request}).data}, 'message': 'Review updated.'})
+
+    def delete(self, request, pk):
+        if not request.user.is_authenticated:
+            return Response({'success': False, 'message': 'Authentication required.'}, status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            review = DoctorReview.objects.get(doctor_id=pk, user=request.user)
+        except DoctorReview.DoesNotExist:
+            return Response({'success': False, 'message': 'Review not found.'}, status=status.HTTP_404_NOT_FOUND)
+        doctor = review.doctor
+        review.delete()
+        _recalc_doctor_rating(doctor)
+        return Response({'success': True, 'message': 'Review deleted.'})
+
+
+class MyDoctorReviewsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        reviews = DoctorReview.objects.filter(user=request.user).select_related('doctor').order_by('-created_at')
+        return Response({'success': True, 'data': {'reviews': MyDoctorReviewSerializer(reviews, many=True, context={'request': request}).data}})
+
+
+# ─── PharmaX Plus ─────────────────────────────────────────────────────────────
+
+class PlusPlanListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        plans = PlusPlan.objects.filter(is_active=True).order_by('duration_days')
+        return Response({'success': True, 'data': {'plans': PlusPlanSerializer(plans, many=True).data}})
+
+
+class PlusMembershipView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            membership = PlusMembership.objects.select_related('plan').get(user=request.user)
+            data = PlusMembershipSerializer(membership).data
+        except PlusMembership.DoesNotExist:
+            data = None
+        return Response({'success': True, 'data': {'membership': data}})
+
+    def post(self, request):
+        plan_id = request.data.get('plan_id')
+        try:
+            plan = PlusPlan.objects.get(id=plan_id, is_active=True)
+        except PlusPlan.DoesNotExist:
+            return Response({'success': False, 'message': 'Plan not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        now = timezone.now()
+        membership, created = PlusMembership.objects.get_or_create(
+            user=request.user,
+            defaults={'plan': plan, 'expires_at': now + timedelta(days=plan.duration_days), 'price_paid': plan.price},
+        )
+        if not created:
+            base = membership.expires_at if membership.expires_at > now else now
+            membership.plan = plan
+            membership.expires_at = base + timedelta(days=plan.duration_days)
+            membership.price_paid = plan.price
+            membership.save()
+
+        Notification.objects.create(
+            user=request.user,
+            type='PLUS',
+            title='Welcome to PharmaX Plus!',
+            message=f'Your {plan.name} membership is active until {membership.expires_at.date()}.',
+            link='/plus-membership',
+        )
+        return Response({'success': True, 'data': {'membership': PlusMembershipSerializer(membership).data}, 'message': 'Membership activated!'})
+
+
+class AdminPlusPlanListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        plans = PlusPlan.objects.order_by('duration_days')
+        return Response({'success': True, 'data': {'plans': PlusPlanSerializer(plans, many=True).data}})
+
+    def post(self, request):
+        s = PlusPlanSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        plan = s.save()
+        return Response({'success': True, 'data': {'plan': PlusPlanSerializer(plan).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminPlusPlanDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def put(self, request, pk):
+        try:
+            plan = PlusPlan.objects.get(id=pk)
+        except PlusPlan.DoesNotExist:
+            return Response({'success': False, 'message': 'Plan not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = PlusPlanSerializer(plan, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'plan': s.data}})
+
+    def delete(self, request, pk):
+        try:
+            plan = PlusPlan.objects.get(id=pk)
+        except PlusPlan.DoesNotExist:
+            return Response({'success': False, 'message': 'Plan not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if plan.memberships.exists():
+            return Response({'success': False, 'message': 'Cannot delete a plan with active members.'}, status=status.HTTP_400_BAD_REQUEST)
+        plan.delete()
+        return Response({'success': True, 'message': 'Plan deleted.'})
+
+
+class AdminPlusMembershipListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        qs = PlusMembership.objects.select_related('plan', 'user').order_by('-created_at')
+        filt = request.query_params.get('status')
+        now = timezone.now()
+        if filt == 'active':
+            qs = qs.filter(expires_at__gt=now)
+        elif filt == 'expired':
+            qs = qs.filter(expires_at__lte=now)
+        return Response({'success': True, 'data': {'memberships': PlusMembershipSerializer(qs, many=True).data}})
+
+
+# ─── Coupons ──────────────────────────────────────────────────────────────────
+
+class CouponValidateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        code = request.data.get('code', '')
+        try:
+            subtotal = Decimal(str(request.data.get('subtotal', '0')))
+        except Exception:
+            return Response({'success': False, 'message': 'Invalid subtotal.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        coupon, discount, error = _validate_coupon(code, request.user, subtotal)
+        if error:
+            return Response({'success': False, 'message': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'data': {
+            'code': coupon.code, 'discount_amount': str(discount),
+            'discount_type': coupon.discount_type, 'description': coupon.description,
+        }})
+
+
+# ─── Wallet ───────────────────────────────────────────────────────────────────
+
+class WalletView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
+        transactions = wallet.transactions.all()[:50]
+        data = WalletSerializer(wallet).data
+        data['transactions'] = WalletTransactionSerializer(transactions, many=True).data
+        return Response({'success': True, 'data': {'wallet': data}})
+
+
+# ─── Referrals ────────────────────────────────────────────────────────────────
+
+class ReferralView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        referrals = Referral.objects.filter(referrer=request.user).select_related('referred_user').order_by('-created_at')
+        rewarded_total = referrals.filter(status='REWARDED').aggregate(total=Sum('reward_amount'))['total'] or Decimal('0')
+        return Response({'success': True, 'data': {
+            'referral_code': request.user.referral_code,
+            'referrals': ReferralSerializer(referrals, many=True).data,
+            'total_earned': str(rewarded_total),
+        }})
+
+
+# ─── Admin: Coupons & Wallet ──────────────────────────────────────────────────
+
+class AdminCouponListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        coupons = Coupon.objects.annotate(times_used=Count('usages')).order_by('-created_at')
+        data = CouponSerializer(coupons, many=True).data
+        for i, c in enumerate(coupons):
+            data[i]['times_used'] = c.times_used
+        return Response({'success': True, 'data': {'coupons': data}})
+
+    def post(self, request):
+        s = CouponSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        coupon = s.save()
+        return Response({'success': True, 'data': {'coupon': CouponSerializer(coupon).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminCouponDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def put(self, request, pk):
+        try:
+            coupon = Coupon.objects.get(id=pk)
+        except Coupon.DoesNotExist:
+            return Response({'success': False, 'message': 'Coupon not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = CouponSerializer(coupon, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'coupon': s.data}})
+
+    def delete(self, request, pk):
+        try:
+            coupon = Coupon.objects.get(id=pk)
+        except Coupon.DoesNotExist:
+            return Response({'success': False, 'message': 'Coupon not found.'}, status=status.HTTP_404_NOT_FOUND)
+        coupon.delete()
+        return Response({'success': True, 'message': 'Coupon deleted.'})
+
+
+class AdminWalletListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        wallets = Wallet.objects.select_related('user').order_by('-balance')
+        search = request.query_params.get('search', '').strip()
+        if search:
+            wallets = wallets.filter(Q(user__email__icontains=search) | Q(user__full_name__icontains=search))
+        results = [{
+            'id': str(w.id), 'user': {'id': str(w.user_id), 'full_name': w.user.full_name, 'email': w.user.email},
+            'balance': str(w.balance), 'updated_at': w.updated_at,
+        } for w in wallets]
+        return Response({'success': True, 'data': {'wallets': results}})
+
+
+class AdminWalletAdjustView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def post(self, request):
+        user_id = request.data.get('user_id')
+        try:
+            amount = Decimal(str(request.data.get('amount', '0')))
+        except Exception:
+            return Response({'success': False, 'message': 'Invalid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+        reason = request.data.get('reason', '').strip()
+        adj_type = request.data.get('type', 'CREDIT')
+
+        if amount <= 0:
+            return Response({'success': False, 'message': 'Amount must be positive.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not reason:
+            return Response({'success': False, 'message': 'Reason is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'success': False, 'message': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        wallet, _ = Wallet.objects.get_or_create(user=user)
+        if adj_type == 'DEBIT':
+            if amount > wallet.balance:
+                return Response({'success': False, 'message': 'Insufficient wallet balance.'}, status=status.HTTP_400_BAD_REQUEST)
+            wallet.balance -= amount
+        else:
+            wallet.balance += amount
+        wallet.save(update_fields=['balance'])
+        WalletTransaction.objects.create(
+            wallet=wallet, type=adj_type, amount=amount, reason=reason, balance_after=wallet.balance,
+        )
+        Notification.objects.create(
+            user=user, type='WALLET', title='Wallet Updated',
+            message=f'NPR {amount} was {"credited to" if adj_type == "CREDIT" else "debited from"} your wallet: {reason}',
+            link='/wallet',
+        )
+        return Response({'success': True, 'data': {'wallet': {'balance': str(wallet.balance)}}, 'message': 'Wallet adjusted.'})
+
+
+# ─── Health Locker ────────────────────────────────────────────────────────────
+
+class HealthRecordListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        records = HealthRecord.objects.filter(user=request.user)
+        return Response({'success': True, 'data': {'records': HealthRecordSerializer(records, many=True, context={'request': request}).data}})
+
+    def post(self, request):
+        title = request.data.get('title', '').strip()
+        if not title:
+            return Response({'success': False, 'message': 'Title is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        record = HealthRecord.objects.create(
+            user=request.user,
+            title=title,
+            record_type=request.data.get('record_type', 'OTHER'),
+            file=request.FILES.get('file'),
+            notes=request.data.get('notes', ''),
+            record_date=request.data.get('record_date') or None,
+        )
+        return Response({'success': True, 'data': {'record': HealthRecordSerializer(record, context={'request': request}).data}}, status=status.HTTP_201_CREATED)
+
+
+class HealthRecordDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        try:
+            record = HealthRecord.objects.get(id=pk, user=request.user)
+        except HealthRecord.DoesNotExist:
+            return Response({'success': False, 'message': 'Record not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if record.file:
+            record.file.delete(save=False)
+        record.delete()
+        return Response({'success': True, 'message': 'Record deleted.'})
+
+
+# ─── Medicine Reminders ───────────────────────────────────────────────────────
+
+class ReminderListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        reminders = MedicineReminder.objects.filter(user=request.user).select_related('medicine')
+        active = request.query_params.get('active')
+        if active == 'true':
+            reminders = reminders.filter(is_active=True)
+        return Response({'success': True, 'data': {'reminders': MedicineReminderSerializer(reminders, many=True).data}})
+
+    def post(self, request):
+        s = MedicineReminderSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        medicine = None
+        medicine_id = s.validated_data.get('medicine_id')
+        medicine_name = s.validated_data.get('medicine_name', '').strip()
+        if medicine_id:
+            try:
+                medicine = Medicine.objects.get(id=medicine_id)
+            except Medicine.DoesNotExist:
+                return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
+            if not medicine_name:
+                medicine_name = medicine.name
+        if not medicine_name:
+            return Response({'success': False, 'message': 'Medicine name is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reminder = MedicineReminder.objects.create(
+            user=request.user,
+            medicine=medicine,
+            medicine_name=medicine_name,
+            dosage=s.validated_data.get('dosage'),
+            times=s.validated_data['times'],
+            frequency=s.validated_data.get('frequency', 'DAILY'),
+            start_date=s.validated_data['start_date'],
+            end_date=s.validated_data.get('end_date'),
+            notes=s.validated_data.get('notes'),
+        )
+        return Response({'success': True, 'data': {'reminder': MedicineReminderSerializer(reminder).data}, 'message': 'Reminder created.'}, status=status.HTTP_201_CREATED)
+
+
+class ReminderDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, pk):
+        try:
+            reminder = MedicineReminder.objects.get(id=pk, user=request.user)
+        except MedicineReminder.DoesNotExist:
+            return Response({'success': False, 'message': 'Reminder not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = MedicineReminderSerializer(reminder, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        for field in ['medicine_name', 'dosage', 'times', 'frequency', 'start_date', 'end_date', 'notes']:
+            if field in s.validated_data:
+                setattr(reminder, field, s.validated_data[field])
+        if 'is_active' in request.data:
+            reminder.is_active = bool(request.data['is_active'])
+        reminder.save()
+        return Response({'success': True, 'data': {'reminder': MedicineReminderSerializer(reminder).data}, 'message': 'Reminder updated.'})
+
+    def delete(self, request, pk):
+        try:
+            reminder = MedicineReminder.objects.get(id=pk, user=request.user)
+        except MedicineReminder.DoesNotExist:
+            return Response({'success': False, 'message': 'Reminder not found.'}, status=status.HTTP_404_NOT_FOUND)
+        reminder.delete()
+        return Response({'success': True, 'message': 'Reminder deleted.'})
+
+
+class ReminderMarkTakenView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            reminder = MedicineReminder.objects.get(id=pk, user=request.user)
+        except MedicineReminder.DoesNotExist:
+            return Response({'success': False, 'message': 'Reminder not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        scheduled_time = request.data.get('time', '').strip()
+        if scheduled_time not in [t.strip() for t in reminder.times.split(',')]:
+            return Response({'success': False, 'message': 'Invalid time for this reminder.'}, status=status.HTTP_400_BAD_REQUEST)
+        scheduled_date = request.data.get('date') or timezone.now().date().isoformat()
+
+        log, _ = ReminderLog.objects.get_or_create(
+            reminder=reminder, scheduled_date=scheduled_date, scheduled_time=scheduled_time,
+        )
+        if log.taken_at:
+            log.taken_at = None
+        else:
+            log.taken_at = timezone.now()
+        log.save(update_fields=['taken_at'])
+        return Response({'success': True, 'data': {'log': ReminderLogSerializer(log).data}})
+
+
+class ReminderTodayView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        today = timezone.now().date()
+        reminders = MedicineReminder.objects.filter(
+            user=request.user, is_active=True, start_date__lte=today,
+        ).filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
+
+        logs = {
+            (log.reminder_id, log.scheduled_time): log
+            for log in ReminderLog.objects.filter(reminder__in=reminders, scheduled_date=today)
+        }
+
+        schedule = []
+        for r in reminders:
+            for t in [t.strip() for t in r.times.split(',') if t.strip()]:
+                log = logs.get((r.id, t))
+                schedule.append({
+                    'reminder_id': str(r.id),
+                    'medicine_name': r.medicine_name,
+                    'dosage': r.dosage,
+                    'time': t,
+                    'taken': bool(log and log.taken_at),
+                })
+        schedule.sort(key=lambda x: x['time'])
+        return Response({'success': True, 'data': {'date': today.isoformat(), 'schedule': schedule}})
 
 
 # ─── Notifications ────────────────────────────────────────────────────────────
@@ -1240,13 +2312,13 @@ class AdminReportsView(APIView):
 
         top_items = (
             OrderItem.objects.exclude(order__status='CANCELLED')
-            .values('medicine_id', 'medicine__name', 'medicine__brand', 'medicine__price')
+            .values('medicine_id', 'medicine__name', 'medicine__brand__name', 'medicine__price')
             .annotate(total_qty=Sum('quantity'))
             .order_by('-total_qty')[:8]
         )
         top_medicines = [
             {
-                'medicine': {'id': str(t['medicine_id']), 'name': t['medicine__name'], 'brand': t['medicine__brand']},
+                'medicine': {'id': str(t['medicine_id']), 'name': t['medicine__name'], 'brand': t['medicine__brand__name']},
                 'total_qty': t['total_qty'],
                 'revenue': float(t['total_qty'] * t['medicine__price']),
             }
@@ -1331,14 +2403,64 @@ class AdminCategoryDetailView(APIView):
         return Response({'success': True, 'message': 'Category deleted.'})
 
 
+class AdminBrandListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        brands = Brand.objects.annotate(medicine_count=Count('medicines')).order_by('name')
+        data = BrandSerializer(brands, many=True).data
+        for i, b in enumerate(brands):
+            data[i]['medicine_count'] = b.medicine_count
+        return Response({'success': True, 'data': {'brands': data}})
+
+    def post(self, request):
+        s = BrandSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        brand = s.save()
+        return Response({'success': True, 'data': {'brand': BrandSerializer(brand).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminBrandDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request, pk):
+        try:
+            brand = Brand.objects.get(id=pk)
+        except Brand.DoesNotExist:
+            return Response({'success': False, 'message': 'Brand not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'brand': BrandSerializer(brand).data}})
+
+    def put(self, request, pk):
+        try:
+            brand = Brand.objects.get(id=pk)
+        except Brand.DoesNotExist:
+            return Response({'success': False, 'message': 'Brand not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = BrandSerializer(brand, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'brand': s.data}})
+
+    def delete(self, request, pk):
+        try:
+            brand = Brand.objects.get(id=pk)
+        except Brand.DoesNotExist:
+            return Response({'success': False, 'message': 'Brand not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if brand.medicines.exists():
+            return Response({'success': False, 'message': 'Cannot delete brand with medicines.'}, status=status.HTTP_400_BAD_REQUEST)
+        brand.delete()
+        return Response({'success': True, 'message': 'Brand deleted.'})
+
+
 class AdminMedicineListView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
-        qs = Medicine.objects.select_related('category').order_by('-created_at')
+        qs = Medicine.objects.select_related('category', 'brand').order_by('-created_at')
         search = request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(Q(name__icontains=search) | Q(brand__icontains=search))
+            qs = qs.filter(Q(name__icontains=search) | Q(brand__name__icontains=search))
         category = request.query_params.get('category')
         if category:
             qs = qs.filter(category_id=category)
@@ -1367,7 +2489,7 @@ class AdminMedicineDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            medicine = Medicine.objects.select_related('category').get(id=pk)
+            medicine = Medicine.objects.select_related('category', 'brand').get(id=pk)
         except Medicine.DoesNotExist:
             return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'success': True, 'data': {'medicine': MedicineDetailSerializer(medicine).data}})
@@ -1390,6 +2512,363 @@ class AdminMedicineDetailView(APIView):
             return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
         medicine.delete()
         return Response({'success': True, 'message': 'Medicine deleted.'})
+
+
+class AdminMedicineImageUploadView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def post(self, request):
+        from django.core.files.storage import FileSystemStorage
+
+        file = request.FILES.get('image')
+        if not file:
+            return Response({'success': False, 'message': 'No image file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.content_type not in ('image/jpeg', 'image/png', 'image/webp', 'image/gif'):
+            return Response({'success': False, 'message': 'Only JPG, PNG, WebP, or GIF images are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.size > 5 * 1024 * 1024:
+            return Response({'success': False, 'message': 'Image must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ext = os.path.splitext(file.name)[1].lower() or '.jpg'
+        filename = f'medicine_{uuid_lib.uuid4().hex}{ext}'
+        storage = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'medicines'))
+        storage.save(filename, file)
+
+        return Response({'success': True, 'data': {'image_url': f'/media/medicines/{filename}'}})
+
+
+class AdminLabTestCategoryListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        categories = LabTestCategory.objects.annotate(test_count=Count('lab_tests')).order_by('name')
+        data = LabTestCategorySerializer(categories, many=True).data
+        for i, c in enumerate(categories):
+            data[i]['test_count'] = c.test_count
+        return Response({'success': True, 'data': {'categories': data}})
+
+    def post(self, request):
+        s = LabTestCategorySerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        category = s.save()
+        return Response({'success': True, 'data': {'category': LabTestCategorySerializer(category).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminLabTestCategoryDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def put(self, request, pk):
+        try:
+            category = LabTestCategory.objects.get(id=pk)
+        except LabTestCategory.DoesNotExist:
+            return Response({'success': False, 'message': 'Category not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = LabTestCategorySerializer(category, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'category': s.data}})
+
+    def delete(self, request, pk):
+        try:
+            category = LabTestCategory.objects.get(id=pk)
+        except LabTestCategory.DoesNotExist:
+            return Response({'success': False, 'message': 'Category not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if category.lab_tests.exists():
+            return Response({'success': False, 'message': 'Cannot delete category with lab tests.'}, status=status.HTTP_400_BAD_REQUEST)
+        category.delete()
+        return Response({'success': True, 'message': 'Category deleted.'})
+
+
+class AdminLabTestListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        qs = LabTest.objects.select_related('category').order_by('-created_at')
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(name__icontains=search)
+        page = max(1, int(request.query_params.get('page', 1)))
+        limit = min(50, int(request.query_params.get('limit', 20)))
+        total = qs.count()
+        tests = qs[(page - 1) * limit: page * limit]
+        return Response({
+            'success': True,
+            'data': {
+                'labTests': LabTestDetailSerializer(tests, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+    def post(self, request):
+        s = LabTestDetailSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        test = s.save()
+        return Response({'success': True, 'data': {'labTest': LabTestDetailSerializer(test).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminLabTestDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request, pk):
+        try:
+            test = LabTest.objects.select_related('category').get(id=pk)
+        except LabTest.DoesNotExist:
+            return Response({'success': False, 'message': 'Lab test not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'labTest': LabTestDetailSerializer(test).data}})
+
+    def put(self, request, pk):
+        try:
+            test = LabTest.objects.get(id=pk)
+        except LabTest.DoesNotExist:
+            return Response({'success': False, 'message': 'Lab test not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = LabTestDetailSerializer(test, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'labTest': s.data}})
+
+    def delete(self, request, pk):
+        try:
+            test = LabTest.objects.get(id=pk)
+        except LabTest.DoesNotExist:
+            return Response({'success': False, 'message': 'Lab test not found.'}, status=status.HTTP_404_NOT_FOUND)
+        test.delete()
+        return Response({'success': True, 'message': 'Lab test deleted.'})
+
+
+class AdminLabTestBookingListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        qs = LabTestBooking.objects.select_related('user', 'lab_test', 'address').order_by('-booked_at')
+        status_filter = request.query_params.get('status', '').strip()
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(Q(user__full_name__icontains=search) | Q(user__email__icontains=search) | Q(lab_test__name__icontains=search))
+        page = max(1, int(request.query_params.get('page', 1)))
+        limit = min(50, int(request.query_params.get('limit', 20)))
+        total = qs.count()
+        bookings = qs[(page - 1) * limit: page * limit]
+        return Response({
+            'success': True,
+            'data': {
+                'bookings': LabTestBookingSerializer(bookings, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+
+class AdminLabTestBookingDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def put(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.get(id=pk)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+        new_status = request.data.get('status')
+        if new_status and new_status not in dict(LabTestBooking.STATUS):
+            return Response({'success': False, 'message': 'Invalid status.'}, status=status.HTTP_400_BAD_REQUEST)
+        if new_status:
+            booking.status = new_status
+        if 'report_url' in request.data:
+            booking.report_url = request.data.get('report_url') or None
+        booking.save()
+        return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Booking updated.'})
+
+
+class AdminBlogPostListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        qs = BlogPost.objects.all()
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(title__icontains=search)
+        page = max(1, int(request.query_params.get('page', 1)))
+        limit = min(50, int(request.query_params.get('limit', 20)))
+        total = qs.count()
+        posts = qs[(page - 1) * limit: page * limit]
+        return Response({
+            'success': True,
+            'data': {
+                'posts': BlogPostDetailSerializer(posts, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+    def post(self, request):
+        s = BlogPostDetailSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        post = s.save()
+        return Response({'success': True, 'data': {'post': BlogPostDetailSerializer(post).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminBlogPostDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request, pk):
+        try:
+            post = BlogPost.objects.get(id=pk)
+        except BlogPost.DoesNotExist:
+            return Response({'success': False, 'message': 'Article not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'post': BlogPostDetailSerializer(post).data}})
+
+    def put(self, request, pk):
+        try:
+            post = BlogPost.objects.get(id=pk)
+        except BlogPost.DoesNotExist:
+            return Response({'success': False, 'message': 'Article not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = BlogPostDetailSerializer(post, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'post': s.data}})
+
+    def delete(self, request, pk):
+        try:
+            post = BlogPost.objects.get(id=pk)
+        except BlogPost.DoesNotExist:
+            return Response({'success': False, 'message': 'Article not found.'}, status=status.HTTP_404_NOT_FOUND)
+        post.delete()
+        return Response({'success': True, 'message': 'Article deleted.'})
+
+
+class AdminSubscriptionListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        qs = MedicineSubscription.objects.select_related('user', 'medicine', 'address').order_by('next_delivery_date')
+        due_only = request.query_params.get('due', '').strip()
+        if due_only == 'true':
+            qs = qs.filter(is_active=True, next_delivery_date__lte=timezone.now().date())
+        active = request.query_params.get('active', '').strip()
+        if active == 'true':
+            qs = qs.filter(is_active=True)
+        elif active == 'false':
+            qs = qs.filter(is_active=False)
+        return Response({'success': True, 'data': {'subscriptions': MedicineSubscriptionSerializer(qs, many=True).data}})
+
+
+class AdminSubscriptionRenewView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def post(self, request, pk):
+        try:
+            sub = MedicineSubscription.objects.select_related('medicine', 'address', 'user').get(id=pk)
+        except MedicineSubscription.DoesNotExist:
+            return Response({'success': False, 'message': 'Subscription not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not sub.is_active:
+            return Response({'success': False, 'message': 'This subscription is paused.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            item_total = sub.medicine.price * sub.quantity
+            free_threshold = Decimal(_get_setting('free_delivery_threshold', '500'))
+            delivery_charge_setting = Decimal(_get_setting('delivery_charge', '50'))
+            delivery = Decimal('0') if (item_total >= free_threshold or _has_active_plus(sub.user)) else delivery_charge_setting
+
+            order = Order.objects.create(
+                user=sub.user,
+                address=sub.address,
+                total_amount=item_total + delivery,
+                delivery_charge=delivery,
+                payment_method='COD',
+                payment_status='PENDING',
+                status='PLACED',
+                notes=f'Auto-refill renewal of subscription {sub.id}',
+            )
+            OrderItem.objects.create(order=order, medicine=sub.medicine, quantity=sub.quantity, unit_price=sub.medicine.price)
+
+            sub.last_delivered_at = timezone.now()
+            sub.next_delivery_date = timezone.now().date() + timedelta(days=sub.frequency_days)
+            sub.save(update_fields=['last_delivered_at', 'next_delivery_date'])
+
+        return Response({
+            'success': True,
+            'data': {'order': OrderSerializer(order).data, 'subscription': MedicineSubscriptionSerializer(sub).data},
+            'message': 'Renewal order created.',
+        }, status=status.HTTP_201_CREATED)
+
+
+class AdminDoctorListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        doctors = Doctor.objects.order_by('name')
+        return Response({'success': True, 'data': {'doctors': DoctorSerializer(doctors, many=True).data}})
+
+    def post(self, request):
+        s = DoctorSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        doctor = s.save()
+        return Response({'success': True, 'data': {'doctor': DoctorSerializer(doctor).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminDoctorDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request, pk):
+        try:
+            doctor = Doctor.objects.get(id=pk)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'doctor': DoctorSerializer(doctor).data}})
+
+    def put(self, request, pk):
+        try:
+            doctor = Doctor.objects.get(id=pk)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = DoctorSerializer(doctor, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'doctor': s.data}})
+
+    def delete(self, request, pk):
+        try:
+            doctor = Doctor.objects.get(id=pk)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if doctor.appointments.exists():
+            return Response({'success': False, 'message': 'Cannot delete a doctor with appointments.'}, status=status.HTTP_400_BAD_REQUEST)
+        doctor.delete()
+        return Response({'success': True, 'message': 'Doctor removed.'})
+
+
+class AdminAppointmentListView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        qs = DoctorAppointment.objects.select_related('user', 'doctor').order_by('-booked_at')
+        status_filter = request.query_params.get('status', '').strip()
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return Response({'success': True, 'data': {'appointments': DoctorAppointmentSerializer(qs, many=True).data}})
+
+
+class AdminAppointmentDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def put(self, request, pk):
+        try:
+            appt = DoctorAppointment.objects.get(id=pk)
+        except DoctorAppointment.DoesNotExist:
+            return Response({'success': False, 'message': 'Appointment not found.'}, status=status.HTTP_404_NOT_FOUND)
+        new_status = request.data.get('status')
+        if new_status and new_status not in dict(DoctorAppointment.STATUS):
+            return Response({'success': False, 'message': 'Invalid status.'}, status=status.HTTP_400_BAD_REQUEST)
+        if new_status:
+            appt.status = new_status
+        if 'meeting_link' in request.data:
+            appt.meeting_link = request.data.get('meeting_link') or None
+        appt.save()
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment updated.'})
 
 
 class AdminOrderListView(APIView):
@@ -1527,12 +3006,28 @@ class AdminCustomerDetailView(APIView):
             customer = User.objects.get(id=pk, role='CUSTOMER')
         except User.DoesNotExist:
             return Response({'success': False, 'message': 'Customer not found.'}, status=status.HTTP_404_NOT_FOUND)
-        orders = Order.objects.filter(user=customer).order_by('-placed_at')[:10]
+        orders = Order.objects.filter(user=customer).select_related('address').prefetch_related('items__medicine').order_by('-placed_at')
+        addresses = Address.objects.filter(user=customer).order_by('-is_default')
+        prescriptions = Prescription.objects.filter(user=customer).order_by('-uploaded_at')
+        reviews = Review.objects.filter(user=customer).select_related('medicine').order_by('-created_at')
+        wishlist = WishlistItem.objects.filter(user=customer).select_related('medicine').order_by('-added_at')
         return Response({
             'success': True,
             'data': {
                 'customer': UserProfileSerializer(customer).data,
                 'orders': OrderSerializer(orders, many=True).data,
+                'addresses': AddressSerializer(addresses, many=True).data,
+                'prescriptions': PrescriptionSerializer(prescriptions, many=True, context={'request': request}).data,
+                'reviews': MyReviewSerializer(reviews, many=True, context={'request': request}).data,
+                'wishlist': MedicineListSerializer([w.medicine for w in wishlist], many=True).data,
+                'stats': {
+                    'total_orders': orders.count(),
+                    'total_spent': sum(Decimal(o.total_amount) for o in orders if o.payment_status == 'PAID'),
+                    'total_addresses': addresses.count(),
+                    'total_prescriptions': prescriptions.count(),
+                    'total_reviews': reviews.count(),
+                    'total_wishlist': wishlist.count(),
+                },
             },
         })
 
@@ -1576,7 +3071,7 @@ class AdminInventoryView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
-        qs = Medicine.objects.select_related('category').order_by('stock_quantity')
+        qs = Medicine.objects.select_related('category', 'brand').order_by('stock_quantity')
         filter_type = request.query_params.get('filter', 'all')
         if filter_type == 'low':
             low_stock_threshold = int(_get_setting('low_stock_threshold', '10'))
@@ -1585,7 +3080,7 @@ class AdminInventoryView(APIView):
             qs = qs.filter(in_stock=False)
         search = request.query_params.get('search', '').strip()
         if search:
-            qs = qs.filter(Q(name__icontains=search) | Q(brand__icontains=search))
+            qs = qs.filter(Q(name__icontains=search) | Q(brand__name__icontains=search))
         page = max(1, int(request.query_params.get('page', 1)))
         limit = min(50, int(request.query_params.get('limit', 20)))
         total = qs.count()

@@ -34,6 +34,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter()
   const pathname = usePathname()
   const { user, logout } = useAuthStore()
+  const { dark, toggle: toggleDark } = useThemeStore()
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
@@ -68,7 +69,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const sidebarW = collapsed ? 72 : 256
   const { title, icon } = getPageMeta(pathname)
   const avatarSrc = resolveImg(user.avatar_url)
-  const { dark, toggle: toggleDark } = useThemeStore()
 
   return (
     <div className="min-h-screen bg-background">

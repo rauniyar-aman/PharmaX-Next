@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 import type { Order } from '@/types'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -86,7 +87,7 @@ export default function MyOrdersPage() {
                 {order.items.slice(0, 4).map((item) => (
                   <div key={item.id} className="flex items-center gap-1.5 bg-surface-container-low rounded-lg px-2 py-1">
                     {item.medicine.image_url ? (
-                      <img src={item.medicine.image_url} alt={item.medicine.name} className="w-6 h-6 rounded object-cover" />
+                      <img src={resolveImg(item.medicine.image_url) || undefined} alt={item.medicine.name} className="w-6 h-6 rounded object-cover" />
                     ) : (
                       <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '16px' }}>medication</span>
                     )}

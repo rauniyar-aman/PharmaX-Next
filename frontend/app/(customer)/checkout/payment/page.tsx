@@ -18,6 +18,13 @@ export default function CheckoutPaymentPage() {
   const [notes, setNotes] = useState('')
   const [placing, setPlacing] = useState(false)
 
+  const [couponInput, setCouponInput] = useState('')
+  const [applying, setApplying] = useState(false)
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discount_amount: string } | null>(null)
+
+  const [walletBalance, setWalletBalance] = useState(0)
+  const [useWallet, setUseWallet] = useState(false)
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       if (!sessionStorage.getItem('checkoutAllowed')) { router.replace('/cart'); return }
@@ -25,7 +32,36 @@ export default function CheckoutPaymentPage() {
     }
   }, [])
 
+  useEffect(() => {
+    api.get('/wallet/').then((r) => setWalletBalance(Number(r.data.data.wallet.balance))).catch(() => {})
+  }, [])
+
   const hasRx = cart?.items.some((i) => i.medicine.type === 'Rx')
+
+  const items = cart?.items || []
+  const subtotal = items.reduce((s, i) => s + Number(i.medicine.price) * i.quantity, 0)
+  const delivery = subtotal >= 500 ? 0 : 50
+  const couponDiscount = appliedCoupon ? Number(appliedCoupon.discount_amount) : 0
+  const payableBeforeWallet = Math.max(0, subtotal + delivery - couponDiscount)
+  const walletApplied = useWallet ? Math.min(walletBalance, payableBeforeWallet) : 0
+  const total = payableBeforeWallet - walletApplied
+
+  const handleApplyCoupon = async () => {
+    if (!couponInput.trim()) return
+    setApplying(true)
+    try {
+      const res = await api.post('/coupons/validate/', { code: couponInput.trim(), subtotal })
+      setAppliedCoupon({ code: res.data.data.code, discount_amount: res.data.data.discount_amount })
+      toast.success(`Coupon applied! You saved NPR ${Number(res.data.data.discount_amount).toFixed(0)}`)
+    } catch (err: any) {
+      setAppliedCoupon(null)
+      toast.error(err.response?.data?.message || 'Invalid coupon code.')
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  const removeCoupon = () => { setAppliedCoupon(null); setCouponInput('') }
 
   const submitEsewaForm = (formUrl: string, params: Record<string, string>) => {
     const form = document.createElement('form')
@@ -49,27 +85,33 @@ export default function CheckoutPaymentPage() {
     if (hasRx) {
       sessionStorage.setItem('checkoutMethod', method)
       sessionStorage.setItem('checkoutNotes', notes)
+      if (appliedCoupon) sessionStorage.setItem('checkoutCoupon', appliedCoupon.code)
+      else sessionStorage.removeItem('checkoutCoupon')
+      sessionStorage.setItem('checkoutUseWallet', useWallet ? 'true' : 'false')
       router.push('/checkout/prescription')
       return
     }
 
     setPlacing(true)
+    const payload: Record<string, any> = { address_id: addressId, notes }
+    if (appliedCoupon) payload.coupon_code = appliedCoupon.code
+    if (useWallet) payload.use_wallet = true
     try {
       if (method === 'ESEWA') {
-        const res = await api.post('/payment/esewa/initiate/', { address_id: addressId, notes })
+        const res = await api.post('/payment/esewa/initiate/', payload)
         sessionStorage.removeItem('checkoutAllowed')
         sessionStorage.removeItem('checkoutAddress')
         submitEsewaForm(res.data.data.formUrl, res.data.data.params)
         return
       }
       if (method === 'KHALTI') {
-        const res = await api.post('/payment/khalti/initiate/', { address_id: addressId, notes })
+        const res = await api.post('/payment/khalti/initiate/', payload)
         sessionStorage.removeItem('checkoutAllowed')
         sessionStorage.removeItem('checkoutAddress')
         window.location.href = res.data.data.payment_url
         return
       }
-      const res = await api.post('/payment/cod/place/', { address_id: addressId, notes })
+      const res = await api.post('/payment/cod/place/', payload)
       sessionStorage.removeItem('checkoutAllowed')
       sessionStorage.removeItem('checkoutAddress')
       sessionStorage.setItem('lastOrderId', res.data.data.order.id)
@@ -80,11 +122,6 @@ export default function CheckoutPaymentPage() {
       setPlacing(false)
     }
   }
-
-  const items = cart?.items || []
-  const subtotal = items.reduce((s, i) => s + Number(i.medicine.price) * i.quantity, 0)
-  const delivery = subtotal >= 500 ? 0 : 50
-  const total = subtotal + delivery
 
   return (
     <div className="max-w-xl space-y-5">
@@ -121,6 +158,40 @@ export default function CheckoutPaymentPage() {
         ))}
       </div>
 
+      <div className="bg-surface rounded-2xl border border-outline-variant p-4 space-y-3">
+        <p className="text-sm font-bold text-on-surface">Have a coupon?</p>
+        {appliedCoupon ? (
+          <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-emerald-600" style={{ fontSize: '18px' }}>local_offer</span>
+              <span className="text-sm font-semibold text-emerald-700">{appliedCoupon.code}</span>
+              <span className="text-xs text-emerald-600">— NPR {Number(appliedCoupon.discount_amount).toFixed(0)} off</span>
+            </div>
+            <button onClick={removeCoupon} className="text-xs font-semibold text-error hover:underline">Remove</button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <input type="text" value={couponInput} onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+              placeholder="Enter coupon code"
+              className="flex-1 px-3 py-2.5 border border-outline-variant rounded-xl bg-surface-container-low text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary transition" />
+            <button onClick={handleApplyCoupon} disabled={applying || !couponInput.trim()}
+              className="px-4 py-2.5 border border-outline-variant rounded-xl text-sm font-semibold text-primary hover:bg-primary/5 transition-colors disabled:opacity-60">
+              {applying ? 'Checking...' : 'Apply'}
+            </button>
+          </div>
+        )}
+
+        {walletBalance > 0 && (
+          <label className="flex items-center justify-between gap-3 pt-1 cursor-pointer">
+            <div className="flex items-center gap-2">
+              <input type="checkbox" checked={useWallet} onChange={(e) => setUseWallet(e.target.checked)} className="accent-primary" />
+              <span className="text-sm text-on-surface">Use Wallet Balance</span>
+            </div>
+            <span className="text-sm font-semibold text-primary">NPR {walletBalance.toFixed(0)} available</span>
+          </label>
+        )}
+      </div>
+
       <div>
         <label className="text-xs font-medium text-on-surface-variant">Order Notes (optional)</label>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
@@ -132,6 +203,12 @@ export default function CheckoutPaymentPage() {
         <p className="font-bold text-on-surface text-sm">Order Total</p>
         <div className="flex justify-between text-on-surface-variant"><span>Subtotal</span><span className="text-on-surface">NPR {subtotal.toFixed(0)}</span></div>
         <div className="flex justify-between text-on-surface-variant"><span>Delivery</span><span className={delivery === 0 ? 'text-primary font-medium' : 'text-on-surface'}>{delivery === 0 ? 'Free' : `NPR ${delivery}`}</span></div>
+        {couponDiscount > 0 && (
+          <div className="flex justify-between text-emerald-600"><span>Coupon Discount</span><span>− NPR {couponDiscount.toFixed(0)}</span></div>
+        )}
+        {walletApplied > 0 && (
+          <div className="flex justify-between text-emerald-600"><span>Wallet Applied</span><span>− NPR {walletApplied.toFixed(0)}</span></div>
+        )}
         <div className="flex justify-between font-bold text-on-surface border-t border-outline-variant pt-2"><span>Total</span><span>NPR {total.toFixed(0)}</span></div>
       </div>
 

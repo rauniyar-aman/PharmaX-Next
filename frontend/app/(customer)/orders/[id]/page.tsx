@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 import type { Order } from '@/types'
 
 const STEPS = ['PLACED', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED']
@@ -167,7 +168,7 @@ export default function OrderDetailPage() {
             <div key={item.id} className="py-2 border-b border-outline-variant last:border-0 space-y-2">
               <div className="flex gap-3 items-center">
                 {item.medicine.image_url ? (
-                  <img src={item.medicine.image_url} alt={item.medicine.name} className="w-14 h-14 rounded-xl object-cover flex-shrink-0" />
+                  <img src={resolveImg(item.medicine.image_url) || undefined} alt={item.medicine.name} className="w-14 h-14 rounded-xl object-cover flex-shrink-0" />
                 ) : (
                   <div className="w-14 h-14 rounded-xl bg-surface-container-low flex items-center justify-center flex-shrink-0">
                     <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '24px' }}>medication</span>
@@ -175,7 +176,7 @@ export default function OrderDetailPage() {
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-on-surface">{item.medicine.name}</p>
-                  <p className="text-xs text-on-surface-variant">{item.medicine.brand}</p>
+                  <p className="text-xs text-on-surface-variant">{item.medicine.brand_name}</p>
                   <p className="text-xs text-on-surface-variant mt-0.5">Qty: {item.quantity} × NPR {Number(item.unit_price).toFixed(0)}</p>
                 </div>
                 <p className="text-sm font-bold text-on-surface">NPR {(item.quantity * Number(item.unit_price)).toFixed(0)}</p>
@@ -219,12 +220,24 @@ export default function OrderDetailPage() {
           <div className="space-y-1.5 text-sm">
             <div className="flex justify-between text-on-surface-variant">
               <span>Subtotal</span>
-              <span className="text-on-surface">NPR {(Number(order.total_amount) - Number((order as any).delivery_charge || 0)).toFixed(0)}</span>
+              <span className="text-on-surface">NPR {order.items.reduce((s, i) => s + Number(i.unit_price) * i.quantity, 0).toFixed(0)}</span>
             </div>
             <div className="flex justify-between text-on-surface-variant">
               <span>Delivery</span>
-              <span className="text-on-surface">NPR {Number((order as any).delivery_charge || 0).toFixed(0)}</span>
+              <span className="text-on-surface">NPR {Number(order.delivery_charge || 0).toFixed(0)}</span>
             </div>
+            {Number(order.discount || 0) > 0 && (
+              <div className="flex justify-between text-emerald-600">
+                <span>Coupon Discount{order.coupon_code ? ` (${order.coupon_code})` : ''}</span>
+                <span>− NPR {Number(order.discount).toFixed(0)}</span>
+              </div>
+            )}
+            {Number(order.wallet_used || 0) > 0 && (
+              <div className="flex justify-between text-emerald-600">
+                <span>Wallet Applied</span>
+                <span>− NPR {Number(order.wallet_used).toFixed(0)}</span>
+              </div>
+            )}
             <div className="flex justify-between font-bold text-on-surface border-t border-outline-variant pt-1.5">
               <span>Total</span>
               <span>NPR {Number(order.total_amount).toFixed(0)}</span>

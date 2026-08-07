@@ -22,6 +22,7 @@ urlpatterns = [
     path('settings/',                      views.PublicSettingsView.as_view(),     name='public-settings'),
     path('categories/',                    views.CategoryListView.as_view(),       name='categories'),
     path('medicines/my-reviews/',          views.MyReviewsView.as_view(),          name='my-reviews'),
+    path('medicines/brands/',              views.MedicineBrandsView.as_view(),     name='medicine-brands'),
     path('medicines/',                     views.MedicineListView.as_view(),       name='medicines'),
     path('medicines/<uuid:pk>/',           views.MedicineDetailView.as_view(),     name='medicine-detail'),
     path('medicines/<uuid:pk>/reviews/',   views.MedicineReviewsView.as_view(),    name='medicine-reviews'),
@@ -63,13 +64,85 @@ urlpatterns = [
     path('notifications/clear-all/',  views.NotificationClearAllView.as_view(), name='notifications-clear-all'),
     path('notifications/<uuid:pk>/',  views.NotificationReadView.as_view(),   name='notification-detail'),
 
+    # Lab Tests
+    path('lab-tests/categories/',       views.LabTestCategoryListView.as_view(), name='lab-test-categories'),
+    path('lab-tests/bookings/',         views.LabTestBookingListCreateView.as_view(), name='lab-test-bookings'),
+    path('lab-tests/bookings/<uuid:pk>/', views.LabTestBookingDetailView.as_view(), name='lab-test-booking-detail'),
+    path('lab-tests/',                  views.LabTestListView.as_view(),      name='lab-tests'),
+    path('lab-tests/<uuid:pk>/',        views.LabTestDetailView.as_view(),    name='lab-test-detail'),
+
+    # Blog
+    path('blog/categories/',            views.BlogCategoryListView.as_view(), name='blog-categories'),
+    path('blog/',                       views.BlogPostListView.as_view(),     name='blog-posts'),
+    path('blog/<slug:slug>/',           views.BlogPostDetailView.as_view(),   name='blog-post-detail'),
+
+    # Subscriptions
+    path('subscriptions/',              views.SubscriptionListCreateView.as_view(), name='subscriptions'),
+    path('subscriptions/<uuid:pk>/',    views.SubscriptionDetailView.as_view(), name='subscription-detail'),
+
+    # Doctor Consult
+    path('doctors/specialties/',        views.DoctorSpecialtyListView.as_view(), name='doctor-specialties'),
+    path('doctors/appointments/',       views.AppointmentListCreateView.as_view(), name='appointments'),
+    path('doctors/appointments/<uuid:pk>/', views.AppointmentDetailView.as_view(), name='appointment-detail'),
+    path('doctors/my-reviews/',         views.MyDoctorReviewsView.as_view(),  name='my-doctor-reviews'),
+    path('doctors/',                    views.DoctorListView.as_view(),       name='doctors'),
+    path('doctors/<uuid:pk>/',          views.DoctorDetailView.as_view(),     name='doctor-detail'),
+    path('doctors/<uuid:pk>/reviews/',  views.DoctorReviewsView.as_view(),    name='doctor-reviews'),
+
+    # PharmaX Plus
+    path('plus/plans/',                 views.PlusPlanListView.as_view(),     name='plus-plans'),
+    path('plus/membership/',            views.PlusMembershipView.as_view(),   name='plus-membership'),
+
+    # Coupons
+    path('coupons/validate/',           views.CouponValidateView.as_view(),   name='coupon-validate'),
+
+    # Wallet
+    path('wallet/',                     views.WalletView.as_view(),           name='wallet'),
+
+    # Referrals
+    path('referrals/',                  views.ReferralView.as_view(),         name='referrals'),
+
+    # Health Locker
+    path('health-records/',             views.HealthRecordListCreateView.as_view(), name='health-records'),
+    path('health-records/<uuid:pk>/',   views.HealthRecordDetailView.as_view(), name='health-record-detail'),
+
+    # Medicine Reminders
+    path('reminders/today/',            views.ReminderTodayView.as_view(),    name='reminders-today'),
+    path('reminders/',                  views.ReminderListCreateView.as_view(), name='reminders'),
+    path('reminders/<uuid:pk>/',        views.ReminderDetailView.as_view(),   name='reminder-detail'),
+    path('reminders/<uuid:pk>/mark-taken/', views.ReminderMarkTakenView.as_view(), name='reminder-mark-taken'),
+
     # Admin
     path('admin/dashboard/',                    views.AdminDashboardView.as_view(),         name='admin-dashboard'),
     path('admin/reports/',                      views.AdminReportsView.as_view(),           name='admin-reports'),
     path('admin/settings/',                     views.AdminSettingsView.as_view(),          name='admin-settings'),
     path('admin/categories/',                   views.AdminCategoryListView.as_view(),      name='admin-categories'),
     path('admin/categories/<uuid:pk>/',         views.AdminCategoryDetailView.as_view(),    name='admin-category-detail'),
+    path('admin/brands/',                       views.AdminBrandListView.as_view(),         name='admin-brands'),
+    path('admin/brands/<uuid:pk>/',             views.AdminBrandDetailView.as_view(),       name='admin-brand-detail'),
+    path('admin/lab-test-categories/',          views.AdminLabTestCategoryListView.as_view(), name='admin-lab-test-categories'),
+    path('admin/lab-test-categories/<uuid:pk>/', views.AdminLabTestCategoryDetailView.as_view(), name='admin-lab-test-category-detail'),
+    path('admin/lab-tests/',                    views.AdminLabTestListView.as_view(),       name='admin-lab-tests'),
+    path('admin/lab-tests/<uuid:pk>/',          views.AdminLabTestDetailView.as_view(),     name='admin-lab-test-detail'),
+    path('admin/lab-test-bookings/',            views.AdminLabTestBookingListView.as_view(), name='admin-lab-test-bookings'),
+    path('admin/lab-test-bookings/<uuid:pk>/',  views.AdminLabTestBookingDetailView.as_view(), name='admin-lab-test-booking-detail'),
+    path('admin/blog/',                         views.AdminBlogPostListView.as_view(),      name='admin-blog-posts'),
+    path('admin/blog/<uuid:pk>/',               views.AdminBlogPostDetailView.as_view(),    name='admin-blog-post-detail'),
+    path('admin/subscriptions/',                views.AdminSubscriptionListView.as_view(),  name='admin-subscriptions'),
+    path('admin/subscriptions/<uuid:pk>/renew/', views.AdminSubscriptionRenewView.as_view(), name='admin-subscription-renew'),
+    path('admin/doctors/',                      views.AdminDoctorListView.as_view(),        name='admin-doctors'),
+    path('admin/doctors/<uuid:pk>/',            views.AdminDoctorDetailView.as_view(),      name='admin-doctor-detail'),
+    path('admin/appointments/',                 views.AdminAppointmentListView.as_view(),   name='admin-appointments'),
+    path('admin/appointments/<uuid:pk>/',       views.AdminAppointmentDetailView.as_view(), name='admin-appointment-detail'),
+    path('admin/plus-plans/',                   views.AdminPlusPlanListView.as_view(),      name='admin-plus-plans'),
+    path('admin/plus-plans/<uuid:pk>/',         views.AdminPlusPlanDetailView.as_view(),    name='admin-plus-plan-detail'),
+    path('admin/plus-memberships/',             views.AdminPlusMembershipListView.as_view(), name='admin-plus-memberships'),
+    path('admin/coupons/',                      views.AdminCouponListView.as_view(),        name='admin-coupons'),
+    path('admin/coupons/<uuid:pk>/',            views.AdminCouponDetailView.as_view(),      name='admin-coupon-detail'),
+    path('admin/wallets/',                      views.AdminWalletListView.as_view(),        name='admin-wallets'),
+    path('admin/wallets/adjust/',               views.AdminWalletAdjustView.as_view(),      name='admin-wallet-adjust'),
     path('admin/medicines/',                    views.AdminMedicineListView.as_view(),      name='admin-medicines'),
+    path('admin/medicines/upload-image/',       views.AdminMedicineImageUploadView.as_view(), name='admin-medicine-image-upload'),
     path('admin/medicines/<uuid:pk>/',          views.AdminMedicineDetailView.as_view(),    name='admin-medicine-detail'),
     path('admin/orders/',                       views.AdminOrderListView.as_view(),         name='admin-orders'),
     path('admin/orders/<uuid:pk>/',             views.AdminOrderDetailView.as_view(),       name='admin-order-detail'),

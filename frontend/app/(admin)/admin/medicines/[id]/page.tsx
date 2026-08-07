@@ -4,13 +4,15 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import type { Category } from '@/types'
+import MedicineImageField from '@/components/admin/MedicineImageField'
+import type { Category, Brand } from '@/types'
 
 export default function EditMedicinePage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const [form, setForm] = useState<any>(null)
   const [categories, setCategories] = useState<Category[]>([])
+  const [brands, setBrands] = useState<Brand[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -18,11 +20,12 @@ export default function EditMedicinePage() {
     Promise.all([
       api.get(`/admin/medicines/${id}/`),
       api.get('/categories/'),
-    ]).then(([medRes, catRes]) => {
+      api.get('/medicines/brands/'),
+    ]).then(([medRes, catRes, brandRes]) => {
       const m = medRes.data.data.medicine
       setForm({
         name: m.name || '',
-        brand: m.brand || '',
+        brand_id: m.brand?.id || '',
         category_id: m.category?.id || '',
         type: m.type || 'OTC',
         price: m.price || '',
@@ -39,6 +42,7 @@ export default function EditMedicinePage() {
         expiry_date: m.expiry_date || '',
       })
       setCategories(catRes.data.data.categories || [])
+      setBrands(brandRes.data.data.brands || [])
     }).catch(() => toast.error('Failed to load.')).finally(() => setLoading(false))
   }, [id])
 
@@ -85,7 +89,6 @@ export default function EditMedicinePage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {[
               { k: 'name', l: 'Medicine Name', req: true },
-              { k: 'brand', l: 'Brand', req: true },
               { k: 'manufacturer', l: 'Manufacturer', req: false },
               { k: 'package_size', l: 'Package Size', req: false },
             ].map((f) => (
@@ -95,6 +98,17 @@ export default function EditMedicinePage() {
                   className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
               </div>
             ))}
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-on-surface-variant">Brand</label>
+                <Link href="/admin/brands/add" target="_blank" className="text-[11px] font-semibold text-primary hover:underline">+ New brand</Link>
+              </div>
+              <select value={form.brand_id} onChange={(e) => set('brand_id', e.target.value)}
+                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
+                <option value="">Select brand</option>
+                {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
             <div>
               <label className="text-xs font-medium text-on-surface-variant">Category</label>
               <select value={form.category_id} onChange={(e) => set('category_id', e.target.value)}
@@ -144,12 +158,7 @@ export default function EditMedicinePage() {
 
         <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
           <p className="text-sm font-bold text-on-surface">Details</p>
-          <div>
-            <label className="text-xs font-medium text-on-surface-variant">Image URL</label>
-            <input type="text" value={form.image_url} onChange={(e) => set('image_url', e.target.value)}
-              placeholder="https://..."
-              className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
-          </div>
+          <MedicineImageField value={form.image_url} onChange={(url) => set('image_url', url)} />
           <div>
             <label className="text-xs font-medium text-on-surface-variant">Dosage</label>
             <input type="text" value={form.dosage} onChange={(e) => set('dosage', e.target.value)}

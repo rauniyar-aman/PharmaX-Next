@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 
 const ACTION_CFG: Record<string, { label: string; color: string; icon: string }> = {
   ADD:      { label: 'Added',     color: 'bg-primary/10 text-primary',   icon: 'add_circle' },
@@ -46,7 +47,7 @@ export default function InventoryLogPage() {
       {medicine && (
         <div className="bg-surface rounded-2xl border border-outline-variant p-4 flex items-center gap-4">
           {medicine.image_url ? (
-            <img src={medicine.image_url} alt={medicine.name} className="w-14 h-14 rounded-xl object-cover flex-shrink-0" />
+            <img src={resolveImg(medicine.image_url) || undefined} alt={medicine.name} className="w-14 h-14 rounded-xl object-cover flex-shrink-0" />
           ) : (
             <div className="w-14 h-14 rounded-xl bg-surface-container-low flex items-center justify-center flex-shrink-0">
               <span className="material-symbols-outlined text-on-surface-variant opacity-40" style={{ fontSize: '28px' }}>medication</span>
@@ -54,7 +55,7 @@ export default function InventoryLogPage() {
           )}
           <div className="flex-1">
             <p className="text-sm font-bold text-on-surface">{medicine.name}</p>
-            <p className="text-xs text-on-surface-variant">{medicine.brand}</p>
+            <p className="text-xs text-on-surface-variant">{medicine.brand?.name}</p>
           </div>
           <div className="text-right">
             <p className="text-xl font-bold text-on-surface">{medicine.stock_quantity}</p>

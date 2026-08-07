@@ -37,7 +37,13 @@ export default function CategoryRail() {
 
   return (
     <section>
-      <h2 className="text-lg font-bold text-on-surface mb-3">Shop by Category</h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-bold text-on-surface">Shop by Category</h2>
+        <Link href="/categories" className="text-xs font-semibold text-primary hover:underline flex items-center gap-0.5">
+          View All
+          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
+        </Link>
+      </div>
       <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
         {loading
           ? Array.from({ length: 8 }).map((_, i) => <TileSkeleton key={i} />)

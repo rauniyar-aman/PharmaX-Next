@@ -2,6 +2,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { useThemeStore } from '@/store/theme'
+import Logo from '@/components/common/Logo'
 
 export default function AboutPage() {
   const { dark, toggle: toggleDark } = useThemeStore()
@@ -11,7 +12,7 @@ export default function AboutPage() {
       {/* Navbar */}
       <header className="border-b border-outline-variant bg-surface">
         <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link href="/"><Image src="/PharmaX_Logo.png" alt="PharmaX" width={44} height={44} className="h-11 w-auto" /></Link>
+          <Link href="/"><Logo iconSize={40} textClassName="text-xl" /></Link>
           <nav className="flex items-center gap-3">
             <button onClick={toggleDark}
               className="p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"

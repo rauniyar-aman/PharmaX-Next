@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { useCart } from '@/hooks/useCart'
+import { resolveImg } from '@/lib/resolveImg'
 
 export default function CartPage() {
   const router = useRouter()
@@ -56,7 +57,7 @@ export default function CartPage() {
           {items.map((item) => (
             <div key={item.id} className="bg-surface rounded-2xl border border-outline-variant p-4 flex gap-4">
               {item.medicine.image_url ? (
-                <img src={item.medicine.image_url} alt={item.medicine.name} className="w-20 h-20 object-cover rounded-xl flex-shrink-0" />
+                <img src={resolveImg(item.medicine.image_url) || undefined} alt={item.medicine.name} className="w-20 h-20 object-cover rounded-xl flex-shrink-0" />
               ) : (
                 <div className="w-20 h-20 bg-surface-container-low rounded-xl flex items-center justify-center flex-shrink-0">
                   <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '32px' }}>medication</span>
@@ -69,7 +70,7 @@ export default function CartPage() {
                       {item.medicine.type}
                     </span>
                     <p className="text-sm font-semibold text-on-surface mt-1 leading-snug">{item.medicine.name}</p>
-                    <p className="text-xs text-on-surface-variant">{item.medicine.brand}</p>
+                    <p className="text-xs text-on-surface-variant">{item.medicine.brand_name}</p>
                   </div>
                   <button onClick={() => handleRemove(item.id)} className="text-error hover:bg-error/10 rounded-lg p-1 transition-colors flex-shrink-0">
                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>delete</span>

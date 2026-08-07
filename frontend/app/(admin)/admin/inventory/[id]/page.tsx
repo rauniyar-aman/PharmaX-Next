@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 
 export default function InventoryDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -65,7 +66,7 @@ export default function InventoryDetailPage() {
       {/* Medicine card */}
       <div className="bg-surface rounded-2xl border border-outline-variant p-5 flex gap-5">
         {medicine.image_url ? (
-          <img src={medicine.image_url} alt={medicine.name} className="w-24 h-24 rounded-2xl object-cover flex-shrink-0" />
+          <img src={resolveImg(medicine.image_url) || undefined} alt={medicine.name} className="w-24 h-24 rounded-2xl object-cover flex-shrink-0" />
         ) : (
           <div className="w-24 h-24 rounded-2xl bg-surface-container-low flex items-center justify-center flex-shrink-0">
             <span className="material-symbols-outlined text-on-surface-variant opacity-40" style={{ fontSize: '40px' }}>medication</span>
@@ -76,7 +77,7 @@ export default function InventoryDetailPage() {
             <div>
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${medicine.type === 'Rx' ? 'bg-primary/10 text-primary' : 'bg-secondary/10 text-secondary'}`}>{medicine.type}</span>
               <h1 className="text-xl font-bold text-on-surface mt-1">{medicine.name}</h1>
-              <p className="text-sm text-on-surface-variant">{medicine.brand} · {medicine.category?.name}</p>
+              <p className="text-sm text-on-surface-variant">{medicine.brand?.name} · {medicine.category?.name}</p>
             </div>
             <Link href={`/admin/inventory/${id}/log`}
               className="flex items-center gap-1.5 px-4 py-2 border border-outline-variant rounded-xl text-sm font-medium text-on-surface-variant hover:border-primary hover:text-primary transition-colors">
