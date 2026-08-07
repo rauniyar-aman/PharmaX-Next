@@ -34,6 +34,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     avatar_url = models.CharField(max_length=500, null=True, blank=True)
     referral_code = models.CharField(max_length=20, unique=True, null=True, blank=True)
     role = models.CharField(max_length=20, choices=ROLES, default='CUSTOMER')
+    is_super_admin = models.BooleanField(default=False)
+    permissions = models.ManyToManyField('Permission', blank=True, related_name='users', db_table='user_permissions')
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_deleted = models.BooleanField(default=False)
@@ -58,6 +60,22 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+
+class Permission(models.Model):
+    """A single grantable admin capability. Seeded once via data migration — not user-editable."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    code = models.CharField(max_length=100, unique=True)
+    label = models.CharField(max_length=150)
+    group = models.CharField(max_length=50)
+    description = models.CharField(max_length=255, blank=True, null=True)
+
+    class Meta:
+        db_table = 'permissions'
+        ordering = ['group', 'label']
+
+    def __str__(self):
+        return self.label
 
 
 class Address(models.Model):
