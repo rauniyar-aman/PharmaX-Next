@@ -4,10 +4,19 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 import { useAuthStore } from '@/store/auth'
 import { useWishlist } from '@/hooks/useWishlist'
 import { useCart } from '@/hooks/useCart'
-import type { Medicine, Review } from '@/types'
+import type { Medicine, Review, Address } from '@/types'
+
+const FREQUENCIES = [
+  { val: 7, label: 'Weekly' },
+  { val: 15, label: 'Every 15 Days' },
+  { val: 30, label: 'Monthly' },
+  { val: 60, label: 'Every 2 Months' },
+  { val: 90, label: 'Every 3 Months' },
+]
 
 export default function MedicineDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -29,6 +38,30 @@ export default function MedicineDetailPage() {
   const [deletingReview, setDeletingReview] = useState(false)
 
   const myExistingReview = reviews.find((r) => (r as any).is_mine || (r as any).mine)
+
+  const [addresses, setAddresses] = useState<Address[]>([])
+  const [subFrequency, setSubFrequency] = useState(30)
+  const [subscribing, setSubscribing] = useState(false)
+
+  useEffect(() => {
+    if (!user) return
+    api.get('/addresses/').then((r) => setAddresses(r.data.data.addresses || [])).catch(() => {})
+  }, [user])
+
+  const handleSubscribe = async () => {
+    if (!user) { router.push('/signin'); return }
+    const defaultAddr = addresses.find((a) => a.is_default) || addresses[0]
+    if (!defaultAddr) { toast.error('Please add a delivery address first.'); router.push('/addresses'); return }
+    setSubscribing(true)
+    try {
+      await api.post('/subscriptions/', { medicine_id: id, address_id: defaultAddr.id, quantity: qty, frequency_days: subFrequency })
+      toast.success('Subscribed for auto-refill!')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Could not set up auto-refill.')
+    } finally {
+      setSubscribing(false)
+    }
+  }
 
   useEffect(() => {
     if (!id) return
@@ -132,7 +165,7 @@ export default function MedicineDetailPage() {
         <div className="space-y-4">
           <div className="relative rounded-2xl overflow-hidden bg-surface-container-low">
             {medicine.image_url ? (
-              <img src={medicine.image_url} alt={medicine.name} className="w-full h-72 object-cover" />
+              <img src={resolveImg(medicine.image_url) || undefined} alt={medicine.name} className="w-full h-72 object-cover" />
             ) : (
               <div className="w-full h-72 flex flex-col items-center justify-center gap-3 text-on-surface-variant">
                 <span className="material-symbols-outlined opacity-30" style={{ fontSize: '80px' }}>medication</span>
@@ -154,7 +187,7 @@ export default function MedicineDetailPage() {
           <div>
             <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-widest mb-1">{(medicine as any).category_name || (medicine.category as any)?.name}</p>
             <h1 className="text-2xl font-bold text-on-surface leading-tight">{medicine.name}</h1>
-            <p className="text-sm text-on-surface-variant mt-0.5">by {medicine.brand}</p>
+            <p className="text-sm text-on-surface-variant mt-0.5">by {medicine.brand?.name}</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -219,6 +252,19 @@ export default function MedicineDetailPage() {
               <span className={`material-symbols-outlined ${inWish ? 'ms-filled' : ''}`} style={{ fontSize: '20px' }}>favorite</span>
             </button>
           </div>
+
+          <div className="flex items-center gap-2 pt-2 border-t border-outline-variant">
+            <span className="material-symbols-outlined text-primary" style={{ fontSize: '20px' }}>autorenew</span>
+            <span className="text-xs font-medium text-on-surface flex-shrink-0">Never run out —</span>
+            <select value={subFrequency} onChange={(e) => setSubFrequency(Number(e.target.value))}
+              className="text-xs border border-outline-variant rounded-lg px-2 py-1.5 bg-surface text-on-surface focus:outline-none focus:border-secondary transition flex-1">
+              {FREQUENCIES.map((f) => <option key={f.val} value={f.val}>{f.label}</option>)}
+            </select>
+            <button onClick={handleSubscribe} disabled={subscribing}
+              className="text-xs font-semibold text-primary hover:underline disabled:opacity-60 whitespace-nowrap">
+              {subscribing ? 'Setting up...' : 'Subscribe'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -242,10 +288,10 @@ export default function MedicineDetailPage() {
               )}
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { label: 'Brand', value: medicine.brand },
+                  { label: 'Brand', value: medicine.brand?.name },
                   { label: 'Dosage', value: (medicine as any).dosage },
                   { label: 'Package Size', value: (medicine as any).package_size },
-                  { label: 'Manufacturer', value: (medicine as any).manufacturer },
+                  { label: 'Manufacturer', value: (medicine as any).manufacturer || medicine.brand?.manufacturer },
                   { label: 'Type', value: medicine.type },
                 ].filter((f) => f.value).map((field) => (
                   <div key={field.label} className="bg-surface-container-low rounded-xl p-3">

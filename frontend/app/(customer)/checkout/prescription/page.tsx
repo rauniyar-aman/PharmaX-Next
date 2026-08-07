@@ -63,6 +63,8 @@ export default function CheckoutPrescriptionPage() {
     const addressId = sessionStorage.getItem('checkoutAddress')
     const method = sessionStorage.getItem('checkoutMethod') || 'CASH_ON_DELIVERY'
     const notes = sessionStorage.getItem('checkoutNotes') || ''
+    const couponCode = sessionStorage.getItem('checkoutCoupon') || ''
+    const useWallet = sessionStorage.getItem('checkoutUseWallet') === 'true'
     if (!addressId) { router.replace('/checkout/shipping'); return }
     if (!selected) { toast.error('Please select or upload a prescription.'); return }
     setPlacing(true)
@@ -71,21 +73,26 @@ export default function CheckoutPrescriptionPage() {
       sessionStorage.removeItem('checkoutAddress')
       sessionStorage.removeItem('checkoutMethod')
       sessionStorage.removeItem('checkoutNotes')
+      sessionStorage.removeItem('checkoutCoupon')
+      sessionStorage.removeItem('checkoutUseWallet')
     }
+    const payload: Record<string, any> = { address_id: addressId, notes, prescription_id: selected }
+    if (couponCode) payload.coupon_code = couponCode
+    if (useWallet) payload.use_wallet = true
     try {
       if (method === 'ESEWA') {
-        const res = await api.post('/payment/esewa/initiate/', { address_id: addressId, notes, prescription_id: selected })
+        const res = await api.post('/payment/esewa/initiate/', payload)
         clearCheckoutState()
         submitEsewaForm(res.data.data.formUrl, res.data.data.params)
         return
       }
       if (method === 'KHALTI') {
-        const res = await api.post('/payment/khalti/initiate/', { address_id: addressId, notes, prescription_id: selected })
+        const res = await api.post('/payment/khalti/initiate/', payload)
         clearCheckoutState()
         window.location.href = res.data.data.payment_url
         return
       }
-      const res = await api.post('/payment/cod/place/', { address_id: addressId, notes, prescription_id: selected })
+      const res = await api.post('/payment/cod/place/', payload)
       clearCheckoutState()
       sessionStorage.setItem('lastOrderId', res.data.data.order.id)
       router.push('/checkout/confirmation')

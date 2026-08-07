@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import Image from 'next/image'
+import Logo from '@/components/common/Logo'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
@@ -10,11 +10,17 @@ import { useWishlist } from '@/hooks/useWishlist'
 import { useCart } from '@/hooks/useCart'
 import PublicHeader from '@/components/common/PublicHeader'
 import PromoSlider, { type Slide } from '@/components/common/PromoSlider'
+import PromoBannerGrid from '@/components/home/PromoBannerGrid'
 import CategoryRail from '@/components/home/CategoryRail'
+import BrandRail from '@/components/home/BrandRail'
 import ProductRail from '@/components/home/ProductRail'
 import CountdownBadge from '@/components/home/CountdownBadge'
 import StatsBar from '@/components/home/StatsBar'
 import Testimonials from '@/components/home/Testimonials'
+import LabTestRail from '@/components/home/LabTestRail'
+import DoctorRail from '@/components/home/DoctorRail'
+import HealthArticlesRail from '@/components/home/HealthArticlesRail'
+import QuickLinksGrid from '@/components/home/QuickLinksGrid'
 import type { Medicine } from '@/types'
 
 const PROMO_SLIDES: Slide[] = [
@@ -41,6 +47,18 @@ const PROMO_SLIDES: Slide[] = [
     subtitle: 'Everything you need to manage diabetes and stay healthy.',
     cta: 'Explore', href: '/medicines?category=Diabetes+Essentials', icon: 'water_drop',
     gradient: 'from-purple-500 to-purple-700',
+  },
+  {
+    title: 'Lab Tests at Home',
+    subtitle: 'Book a certified lab test with free home sample collection.',
+    cta: 'Book Now', href: '/lab-tests', icon: 'biotech',
+    gradient: 'from-cyan-600 to-cyan-700',
+  },
+  {
+    title: 'Consult a Doctor Online',
+    subtitle: 'Talk to certified doctors from the comfort of your home.',
+    cta: 'Consult Now', href: '/doctor-consult', icon: 'stethoscope',
+    gradient: 'from-rose-500 to-rose-600',
   },
 ]
 
@@ -116,10 +134,16 @@ export default function HomePage() {
     <div className="min-h-screen bg-background text-on-background">
       <PublicHeader />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-10">
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-10">
         <PromoSlider slides={PROMO_SLIDES} />
 
+        <QuickLinksGrid />
+
+        <PromoBannerGrid />
+
         <CategoryRail />
+
+        <BrandRail />
 
         <ProductRail
           title="New Launches"
@@ -166,6 +190,12 @@ export default function HomePage() {
           cartLoading={cartLoading}
         />
 
+        <LabTestRail />
+
+        <DoctorRail />
+
+        <HealthArticlesRail />
+
         <StatsBar />
 
         <Testimonials />
@@ -185,9 +215,9 @@ function Footer() {
 
   return (
     <footer className="border-t border-outline-variant mt-4 bg-surface">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
         <div className="col-span-2 sm:col-span-1">
-          <Image src="/PharmaX_Logo.png" alt="PharmaX" width={40} height={40} className="h-10 w-auto mb-2" />
+          <Logo iconSize={36} textClassName="text-lg" className="mb-2" />
           <p className="text-xs text-on-surface-variant leading-relaxed">
             {support.store_name || 'PharmaX'} — your trusted online pharmacy for medicines and wellness essentials.
           </p>

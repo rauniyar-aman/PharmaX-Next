@@ -6,6 +6,7 @@ export interface User {
   role: 'CUSTOMER' | 'ADMIN'
   is_email_verified: boolean
   avatar_url?: string | null
+  referral_code?: string | null
   created_at: string
   updated_at: string
 }
@@ -31,10 +32,22 @@ export interface Category {
   created_at: string
 }
 
+export interface Brand {
+  id: string
+  name: string
+  manufacturer?: string | null
+  logo_url?: string | null
+  description?: string | null
+  is_active: boolean
+  medicine_count?: number
+  created_at: string
+}
+
 export interface Medicine {
   id: string
   name: string
-  brand: string
+  brand: Brand
+  brand_name?: string
   generic_name?: string | null
   description?: string | null
   side_effects?: string | null
@@ -97,6 +110,9 @@ export interface Order {
   status: OrderStatus
   total_amount: string
   delivery_charge?: string
+  discount?: string
+  coupon_code?: string | null
+  wallet_used?: string
   payment_method?: string | null
   payment_status: PaymentStatus
   notes?: string | null
@@ -142,4 +158,233 @@ export interface Notification {
   is_read: boolean
   link?: string | null
   created_at: string
+}
+
+export interface DoctorReview {
+  id: string
+  user?: { id: string; full_name: string } | null
+  doctor?: Doctor
+  rating: number
+  comment?: string | null
+  created_at: string
+  is_mine?: boolean
+}
+
+export type HealthRecordType = 'PRESCRIPTION' | 'LAB_REPORT' | 'VACCINATION' | 'DISCHARGE_SUMMARY' | 'OTHER'
+
+export interface HealthRecord {
+  id: string
+  title: string
+  record_type: HealthRecordType
+  file_url?: string | null
+  notes?: string | null
+  record_date?: string | null
+  uploaded_at: string
+}
+
+export type ReminderFrequency = 'DAILY' | 'WEEKLY' | 'AS_NEEDED'
+
+export interface MedicineReminder {
+  id: string
+  medicine_name: string
+  dosage?: string | null
+  times: string
+  frequency: ReminderFrequency
+  start_date: string
+  end_date?: string | null
+  notes?: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ReminderScheduleItem {
+  reminder_id: string
+  medicine_name: string
+  dosage?: string | null
+  time: string
+  taken: boolean
+}
+
+export interface LabTestCategory {
+  id: string
+  name: string
+  icon?: string | null
+  is_active: boolean
+  test_count?: number
+  created_at: string
+}
+
+export type SampleType = 'BLOOD' | 'URINE' | 'SWAB' | 'OTHER'
+
+export interface LabTest {
+  id: string
+  name: string
+  category: LabTestCategory
+  category_name?: string
+  description?: string | null
+  parameters_included?: string | null
+  sample_type: SampleType
+  fasting_required: boolean
+  reporting_time?: string | null
+  is_package: boolean
+  price: string
+  original_price: string
+  is_active: boolean
+  total_bookings: number
+  created_at: string
+  updated_at: string
+}
+
+export type LabTestBookingStatus = 'PENDING' | 'CONFIRMED' | 'SAMPLE_COLLECTED' | 'REPORT_READY' | 'CANCELLED'
+
+export interface LabTestBooking {
+  id: string
+  user?: { id: string; full_name: string; email: string; phone?: string | null }
+  lab_test: LabTest
+  address?: Address | null
+  scheduled_date: string
+  time_slot: string
+  status: LabTestBookingStatus
+  total_amount: string
+  notes?: string | null
+  report_url?: string | null
+  booked_at: string
+  updated_at: string
+}
+
+export interface MedicineSubscription {
+  id: string
+  user?: { id: string; full_name: string; email: string }
+  medicine: Medicine
+  address?: Address | null
+  quantity: number
+  frequency_days: number
+  is_active: boolean
+  next_delivery_date: string
+  last_delivered_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Doctor {
+  id: string
+  name: string
+  specialty: string
+  qualification?: string | null
+  experience_years: number
+  consultation_fee: string
+  photo_url?: string | null
+  bio?: string | null
+  languages?: string | null
+  is_active: boolean
+  rating: string
+  total_reviews: number
+  total_consultations: number
+  created_at: string
+  updated_at: string
+}
+
+export type AppointmentStatus = 'PENDING' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED'
+
+export interface DoctorAppointment {
+  id: string
+  user?: { id: string; full_name: string; email: string; phone?: string | null }
+  doctor: Doctor
+  scheduled_date: string
+  time_slot: string
+  status: AppointmentStatus
+  fee_amount: string
+  reason?: string | null
+  meeting_link?: string | null
+  booked_at: string
+  updated_at: string
+}
+
+export interface PlusPlan {
+  id: string
+  name: string
+  duration_days: number
+  price: string
+  description?: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PlusMembership {
+  id: string
+  user?: { id: string; full_name: string; email: string }
+  plan: PlusPlan
+  started_at: string
+  expires_at: string
+  price_paid: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface BlogPost {
+  id: string
+  title: string
+  slug: string
+  category?: string | null
+  cover_image_url?: string | null
+  excerpt?: string | null
+  content: string
+  author: string
+  is_published: boolean
+  published_at?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export type DiscountType = 'PERCENTAGE' | 'FLAT'
+
+export interface Coupon {
+  id: string
+  code: string
+  description?: string | null
+  discount_type: DiscountType
+  discount_value: string
+  min_order_amount: string
+  max_discount_amount?: string | null
+  usage_limit?: number | null
+  per_user_limit: number
+  valid_from: string
+  valid_until: string
+  is_active: boolean
+  times_used?: number
+  created_at: string
+  updated_at: string
+}
+
+export type WalletTransactionType = 'CREDIT' | 'DEBIT'
+
+export interface WalletTransaction {
+  id: string
+  type: WalletTransactionType
+  amount: string
+  reason: string
+  balance_after: string
+  order?: string | null
+  created_at: string
+}
+
+export interface Wallet {
+  id: string
+  balance: string
+  updated_at: string
+  transactions: WalletTransaction[]
+}
+
+export type ReferralStatus = 'PENDING' | 'REWARDED'
+
+export interface Referral {
+  id: string
+  referred_user: { full_name: string; email: string }
+  status: ReferralStatus
+  reward_amount?: string | null
+  created_at: string
+  rewarded_at?: string | null
 }

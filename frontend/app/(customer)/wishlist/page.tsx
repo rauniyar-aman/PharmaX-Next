@@ -4,6 +4,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useCart } from '@/hooks/useCart'
+import { resolveImg } from '@/lib/resolveImg'
 import type { Medicine } from '@/types'
 
 export default function WishlistPage() {
@@ -60,7 +61,7 @@ export default function WishlistPage() {
           <div key={med.id} className="bg-surface rounded-2xl border border-outline-variant overflow-hidden flex flex-col hover:-translate-y-1 transition-all duration-200">
             <Link href={`/medicines/${med.id}`} className="relative block overflow-hidden">
               {med.image_url ? (
-                <img src={med.image_url} alt={med.name} className="h-44 w-full object-cover" />
+                <img src={resolveImg(med.image_url) || undefined} alt={med.name} className="h-44 w-full object-cover" />
               ) : (
                 <div className="h-44 w-full bg-surface-container-low flex items-center justify-center">
                   <span className="material-symbols-outlined text-5xl text-on-surface-variant opacity-30">medication</span>
@@ -73,7 +74,7 @@ export default function WishlistPage() {
             <div className="p-4 flex flex-col flex-1">
               <p className="text-xs text-on-surface-variant font-medium uppercase tracking-wide">{(med as any).category_name}</p>
               <Link href={`/medicines/${med.id}`} className="text-sm font-semibold text-on-surface hover:text-primary mt-1 leading-snug">{med.name}</Link>
-              <p className="text-xs text-on-surface-variant mt-0.5">{med.brand}</p>
+              <p className="text-xs text-on-surface-variant mt-0.5">{med.brand_name}</p>
               <p className="text-base font-bold text-on-surface mt-2">NPR {Number(med.price).toFixed(0)}</p>
               <div className="flex gap-2 mt-3 pt-3 border-t border-outline-variant">
                 <button onClick={() => handleAddToCart(med.id)} disabled={!med.in_stock || cartLoading[med.id]}

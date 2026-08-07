@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 import type { Medicine } from '@/types'
 
 export default function AdminMedicinesPage() {
@@ -79,7 +80,7 @@ export default function AdminMedicinesPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       {med.image_url ? (
-                        <img src={med.image_url} alt={med.name} className="w-9 h-9 rounded-lg object-cover flex-shrink-0" />
+                        <img src={resolveImg(med.image_url) || undefined} alt={med.name} className="w-9 h-9 rounded-lg object-cover flex-shrink-0" />
                       ) : (
                         <div className="w-9 h-9 rounded-lg bg-surface-container flex items-center justify-center flex-shrink-0">
                           <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '16px' }}>medication</span>
@@ -87,7 +88,7 @@ export default function AdminMedicinesPage() {
                       )}
                       <div>
                         <p className="font-medium text-on-surface">{med.name}</p>
-                        <p className="text-xs text-on-surface-variant">{med.brand}</p>
+                        <p className="text-xs text-on-surface-variant">{med.brand?.name}</p>
                       </div>
                     </div>
                   </td>

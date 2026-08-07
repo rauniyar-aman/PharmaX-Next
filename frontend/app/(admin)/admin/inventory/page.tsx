@@ -88,7 +88,7 @@ export default function InventoryPage() {
                 <tr key={med.id} className={`hover:bg-surface-container-low transition-colors ${med.stock_quantity === 0 ? 'bg-error/5' : med.stock_quantity <= 10 ? 'bg-amber-50/50' : ''}`}>
                   <td className="px-4 py-3">
                     <p className="text-sm font-medium text-on-surface">{med.name}</p>
-                    <p className="text-xs text-on-surface-variant">{med.brand}</p>
+                    <p className="text-xs text-on-surface-variant">{med.brand?.name}</p>
                   </td>
                   <td className="px-4 py-3 text-xs text-on-surface-variant">{med.category_name || med.category?.name}</td>
                   <td className="px-4 py-3">

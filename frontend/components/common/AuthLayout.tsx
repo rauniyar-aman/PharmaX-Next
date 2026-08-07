@@ -1,8 +1,8 @@
 'use client'
 import Link from 'next/link'
-import Image from 'next/image'
 import type { ReactNode } from 'react'
 import { useThemeStore } from '@/store/theme'
+import Logo from '@/components/common/Logo'
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   const { dark, toggle: toggleDark } = useThemeStore()
@@ -11,7 +11,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
     <div className="min-h-screen flex flex-col bg-background px-4 py-10 sm:px-6 relative">
       <div className="absolute top-5 left-6">
         <Link href="/">
-          <Image src="/PharmaX_Logo.png" alt="PharmaX" width={48} height={48} className="h-12 w-auto" />
+          <Logo iconSize={44} textClassName="text-2xl" />
         </Link>
       </div>
       <button onClick={toggleDark}

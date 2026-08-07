@@ -1,20 +1,26 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { Mail, Lock, User, Phone, Eye, EyeOff } from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Mail, Lock, User, Phone, Eye, EyeOff, Gift } from 'lucide-react'
 import AuthLayout from '@/components/common/AuthLayout'
 import Input from '@/components/ui/Input'
 import Button from '@/components/ui/Button'
 import api from '@/lib/api'
 
-export default function SignUp() {
+function SignUpForm() {
   const router = useRouter()
-  const [form, setForm] = useState({ full_name: '', email: '', phone: '', password: '', confirm_password: '' })
+  const searchParams = useSearchParams()
+  const [form, setForm] = useState({ full_name: '', email: '', phone: '', password: '', confirm_password: '', referral_code: '' })
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    const ref = searchParams.get('ref')
+    if (ref) setForm((prev) => ({ ...prev, referral_code: ref.toUpperCase() }))
+  }, [searchParams])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
@@ -31,7 +37,10 @@ export default function SignUp() {
     if (form.password.length < 6) { setError('Password must be at least 6 characters.'); return }
     setLoading(true)
     try {
-      await api.post('/auth/register/', { full_name: form.full_name, email: form.email, phone: `+977${form.phone}`, password: form.password })
+      await api.post('/auth/register/', {
+        full_name: form.full_name, email: form.email, phone: `+977${form.phone}`, password: form.password,
+        referral_code: form.referral_code || undefined,
+      })
       router.push(`/verify-email?email=${encodeURIComponent(form.email)}`)
     } catch (err: any) {
       if (err.response?.data?.code === 'ACCOUNT_DELETED') {
@@ -101,6 +110,8 @@ export default function SignUp() {
                 </button>
               }
             />
+            <Input label="Referral Code (optional)" name="referral_code" placeholder="e.g., RAHUL123" icon={<Gift size={16} />}
+              value={form.referral_code} onChange={(e) => setForm((prev) => ({ ...prev, referral_code: e.target.value.toUpperCase() }))} />
 
             {error && (
               <p className="text-xs text-error bg-error-container/30 border border-error-container rounded-xl px-4 py-2.5">{error}</p>
@@ -118,5 +129,13 @@ export default function SignUp() {
         </div>
       </div>
     </AuthLayout>
+  )
+}
+
+export default function SignUp() {
+  return (
+    <Suspense fallback={null}>
+      <SignUpForm />
+    </Suspense>
   )
 }

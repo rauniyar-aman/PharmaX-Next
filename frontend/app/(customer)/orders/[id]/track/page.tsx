@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 import type { Order } from '@/types'
 
 const STEPS = [
@@ -147,7 +148,7 @@ export default function TrackOrderPage() {
         {order.items.map((item) => (
           <div key={item.id} className="flex items-center gap-3">
             {item.medicine.image_url ? (
-              <img src={item.medicine.image_url} alt={item.medicine.name} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
+              <img src={resolveImg(item.medicine.image_url) || undefined} alt={item.medicine.name} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
             ) : (
               <div className="w-10 h-10 rounded-lg bg-surface-container-low flex items-center justify-center flex-shrink-0">
                 <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '18px' }}>medication</span>

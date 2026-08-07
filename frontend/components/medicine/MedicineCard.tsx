@@ -1,5 +1,6 @@
 'use client'
 import Link from 'next/link'
+import { resolveImg } from '@/lib/resolveImg'
 import type { Medicine } from '@/types'
 
 export function MedicineCardSkeleton() {
@@ -32,7 +33,7 @@ export default function MedicineCard({ medicine: med, inWishlist, cartLoading, o
     <div className={`bg-surface rounded-2xl border border-outline-variant overflow-hidden hover:-translate-y-1 transition-all duration-200 flex flex-col group ${className}`}>
       <Link href={`/medicines/${med.id}`} className="relative block overflow-hidden">
         {med.image_url ? (
-          <img src={med.image_url} alt={med.name} className="h-44 w-full object-cover group-hover:scale-105 transition-transform duration-300" />
+          <img src={resolveImg(med.image_url) || undefined} alt={med.name} className="h-44 w-full object-cover group-hover:scale-105 transition-transform duration-300" />
         ) : (
           <div className="h-44 w-full bg-surface-container-low flex flex-col items-center justify-center gap-2 text-on-surface-variant">
             <span className="material-symbols-outlined text-5xl opacity-30">medication</span>

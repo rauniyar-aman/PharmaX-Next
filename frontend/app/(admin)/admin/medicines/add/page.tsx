@@ -4,10 +4,11 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import type { Category } from '@/types'
+import MedicineImageField from '@/components/admin/MedicineImageField'
+import type { Category, Brand } from '@/types'
 
 const EMPTY = {
-  name: '', brand: '', category_id: '', type: 'OTC', price: '', original_price: '',
+  name: '', brand_id: '', category_id: '', type: 'OTC', price: '', original_price: '',
   stock_quantity: '', in_stock: true, package_size: '', manufacturer: '', image_url: '',
   dosage: '', usage: '', description: '', side_effects: '', expiry_date: '',
 }
@@ -16,10 +17,12 @@ export default function AddMedicinePage() {
   const router = useRouter()
   const [form, setForm] = useState(EMPTY)
   const [categories, setCategories] = useState<Category[]>([])
+  const [brands, setBrands] = useState<Brand[]>([])
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     api.get('/categories/').then((r) => setCategories(r.data.data.categories || [])).catch(() => {})
+    api.get('/medicines/brands/').then((r) => setBrands(r.data.data.brands || [])).catch(() => {})
   }, [])
 
   const set = (k: string, v: any) => setForm((p) => ({ ...p, [k]: v }))
@@ -62,7 +65,6 @@ export default function AddMedicinePage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {[
               { k: 'name', l: 'Medicine Name', req: true },
-              { k: 'brand', l: 'Brand', req: true },
               { k: 'manufacturer', l: 'Manufacturer', req: false },
               { k: 'package_size', l: 'Package Size (e.g., 10 tablets)', req: false },
             ].map((f) => (
@@ -72,6 +74,17 @@ export default function AddMedicinePage() {
                   className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
               </div>
             ))}
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-on-surface-variant">Brand *</label>
+                <Link href="/admin/brands/add" target="_blank" className="text-[11px] font-semibold text-primary hover:underline">+ New brand</Link>
+              </div>
+              <select required value={form.brand_id} onChange={(e) => set('brand_id', e.target.value)}
+                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
+                <option value="">Select brand</option>
+                {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
             <div>
               <label className="text-xs font-medium text-on-surface-variant">Category *</label>
               <select required value={form.category_id} onChange={(e) => set('category_id', e.target.value)}
@@ -121,12 +134,7 @@ export default function AddMedicinePage() {
 
         <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
           <p className="text-sm font-bold text-on-surface">Details</p>
-          <div>
-            <label className="text-xs font-medium text-on-surface-variant">Image URL</label>
-            <input type="text" value={form.image_url} onChange={(e) => set('image_url', e.target.value)}
-              placeholder="https://..."
-              className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
-          </div>
+          <MedicineImageField value={form.image_url} onChange={(url) => set('image_url', url)} />
           <div>
             <label className="text-xs font-medium text-on-surface-variant">Dosage (e.g., 500mg Tablet)</label>
             <input type="text" value={form.dosage} onChange={(e) => set('dosage', e.target.value)}

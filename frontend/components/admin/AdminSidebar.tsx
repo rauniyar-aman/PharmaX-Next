@@ -2,12 +2,20 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
+import Logo from '@/components/common/Logo'
 
 const navItems = [
   { label: 'Dashboard',     href: '/admin/dashboard',     icon: 'dashboard' },
   { label: 'Medicines',     href: '/admin/medicines',     icon: 'medication' },
   { label: 'Categories',    href: '/admin/categories',    icon: 'category' },
+  { label: 'Brands',        href: '/admin/brands',        icon: 'storefront' },
   { label: 'Inventory',     href: '/admin/inventory',     icon: 'inventory_2' },
+  { label: 'Lab Tests',     href: '/admin/lab-tests',     icon: 'biotech' },
+  { label: 'Doctor Consult', href: '/admin/doctor-consult', icon: 'stethoscope' },
+  { label: 'Health Articles', href: '/admin/blog',        icon: 'article' },
+  { label: 'Subscriptions',  href: '/admin/subscriptions', icon: 'autorenew' },
+  { label: 'Plus Membership', href: '/admin/plus-membership', icon: 'workspace_premium' },
+  { label: 'Marketing',      href: '/admin/marketing',     icon: 'campaign' },
   { label: 'Prescriptions', href: '/admin/prescriptions', icon: 'description' },
   { label: 'Orders',        href: '/admin/orders',        icon: 'shopping_cart' },
   { label: 'Customers',     href: '/admin/customers',     icon: 'group' },
@@ -34,14 +42,14 @@ export default function AdminSidebar({ collapsed, onToggle }: Props) {
       <div className={`flex items-center border-b border-outline-variant flex-shrink-0 ${collapsed ? 'flex-col justify-center gap-2 px-3 py-3' : 'h-16 px-4 justify-between'}`}>
         {collapsed ? (
           <>
-            <Image src="/PharmaX_Logo.png" alt="PharmaX" width={36} height={36} className="h-9 w-auto object-contain" />
+            <Image src="/PharmaX_Icon.png" alt="PharmaX" width={36} height={36} className="h-9 w-auto object-contain" />
             <button onClick={onToggle} className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors">
               <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>menu</span>
             </button>
           </>
         ) : (
           <>
-            <Image src="/PharmaX_Logo.png" alt="PharmaX" width={48} height={48} className="h-12 w-auto" />
+            <Logo iconSize={40} textClassName="text-xl" />
             <button onClick={onToggle} className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors">
               <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>menu_open</span>
             </button>

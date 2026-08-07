@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 
 const STATUS_CFG: Record<string, { label: string; color: string; dot: string }> = {
   PLACED:           { label: 'Placed',            color: 'bg-surface-container text-on-surface-variant', dot: 'bg-on-surface-variant' },
@@ -132,7 +133,7 @@ function TrackingPanel({ order, onClose, onStatusUpdate }: {
               {order.items?.map((item: any) => (
                 <div key={item.id} className="flex items-center gap-3 bg-surface-container-low rounded-xl p-3">
                   {item.medicine?.image_url ? (
-                    <img src={item.medicine.image_url} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" alt="" />
+                    <img src={resolveImg(item.medicine.image_url) || undefined} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" alt="" />
                   ) : (
                     <div className="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center flex-shrink-0">
                       <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '20px' }}>medication</span>
