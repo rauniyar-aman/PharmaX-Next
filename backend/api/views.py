@@ -43,7 +43,7 @@ from .serializers import (
     CouponSerializer, WalletSerializer, WalletTransactionSerializer, ReferralSerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
-from .permissions import IsAdmin
+from .permissions import IsAdmin, IsSuperAdmin, require_permission
 from .throttles import AuthRateThrottle
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
@@ -1850,7 +1850,7 @@ class PlusMembershipView(APIView):
 
 
 class AdminPlusPlanListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_plus_membership')]
 
     def get(self, request):
         plans = PlusPlan.objects.order_by('duration_days')
@@ -1865,7 +1865,7 @@ class AdminPlusPlanListView(APIView):
 
 
 class AdminPlusPlanDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_plus_membership')]
 
     def put(self, request, pk):
         try:
@@ -1890,7 +1890,7 @@ class AdminPlusPlanDetailView(APIView):
 
 
 class AdminPlusMembershipListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_plus_membership')]
 
     def get(self, request):
         qs = PlusMembership.objects.select_related('plan', 'user').order_by('-created_at')
@@ -1955,7 +1955,7 @@ class ReferralView(APIView):
 # ─── Admin: Coupons & Wallet ──────────────────────────────────────────────────
 
 class AdminCouponListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_marketing')]
 
     def get(self, request):
         coupons = Coupon.objects.annotate(times_used=Count('usages')).order_by('-created_at')
@@ -1973,7 +1973,7 @@ class AdminCouponListView(APIView):
 
 
 class AdminCouponDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_marketing')]
 
     def put(self, request, pk):
         try:
@@ -1996,7 +1996,7 @@ class AdminCouponDetailView(APIView):
 
 
 class AdminWalletListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_finance')]
 
     def get(self, request):
         wallets = Wallet.objects.select_related('user').order_by('-balance')
@@ -2011,7 +2011,7 @@ class AdminWalletListView(APIView):
 
 
 class AdminWalletAdjustView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_finance')]
 
     def post(self, request):
         user_id = request.data.get('user_id')
@@ -2256,7 +2256,7 @@ class NotificationClearAllView(APIView):
 # ─── Admin ────────────────────────────────────────────────────────────────────
 
 class AdminDashboardView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('view_reports')]
 
     def get(self, request):
         total_orders = Order.objects.count()
@@ -2290,7 +2290,7 @@ class AdminDashboardView(APIView):
 
 
 class AdminReportsView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('view_reports')]
 
     def get(self, request):
         start_of_month = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -2354,7 +2354,7 @@ class AdminReportsView(APIView):
 
 
 class AdminCategoryListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_inventory')]
 
     def get(self, request):
         categories = Category.objects.annotate(medicine_count=Count('medicines')).order_by('name')
@@ -2372,7 +2372,7 @@ class AdminCategoryListView(APIView):
 
 
 class AdminCategoryDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_inventory')]
 
     def get(self, request, pk):
         try:
@@ -2404,7 +2404,7 @@ class AdminCategoryDetailView(APIView):
 
 
 class AdminBrandListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_inventory')]
 
     def get(self, request):
         brands = Brand.objects.annotate(medicine_count=Count('medicines')).order_by('name')
@@ -2422,7 +2422,7 @@ class AdminBrandListView(APIView):
 
 
 class AdminBrandDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_inventory')]
 
     def get(self, request, pk):
         try:
@@ -2454,7 +2454,7 @@ class AdminBrandDetailView(APIView):
 
 
 class AdminMedicineListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_inventory')]
 
     def get(self, request):
         qs = Medicine.objects.select_related('category', 'brand').order_by('-created_at')
@@ -2485,7 +2485,7 @@ class AdminMedicineListView(APIView):
 
 
 class AdminMedicineDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_inventory')]
 
     def get(self, request, pk):
         try:
@@ -2515,7 +2515,7 @@ class AdminMedicineDetailView(APIView):
 
 
 class AdminMedicineImageUploadView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_inventory')]
 
     def post(self, request):
         from django.core.files.storage import FileSystemStorage
@@ -2537,7 +2537,7 @@ class AdminMedicineImageUploadView(APIView):
 
 
 class AdminLabTestCategoryListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_lab_tests')]
 
     def get(self, request):
         categories = LabTestCategory.objects.annotate(test_count=Count('lab_tests')).order_by('name')
@@ -2555,7 +2555,7 @@ class AdminLabTestCategoryListView(APIView):
 
 
 class AdminLabTestCategoryDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_lab_tests')]
 
     def put(self, request, pk):
         try:
@@ -2580,7 +2580,7 @@ class AdminLabTestCategoryDetailView(APIView):
 
 
 class AdminLabTestListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_lab_tests')]
 
     def get(self, request):
         qs = LabTest.objects.select_related('category').order_by('-created_at')
@@ -2608,7 +2608,7 @@ class AdminLabTestListView(APIView):
 
 
 class AdminLabTestDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_lab_tests')]
 
     def get(self, request, pk):
         try:
@@ -2638,7 +2638,7 @@ class AdminLabTestDetailView(APIView):
 
 
 class AdminLabTestBookingListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_lab_tests')]
 
     def get(self, request):
         qs = LabTestBooking.objects.select_related('user', 'lab_test', 'address').order_by('-booked_at')
@@ -2662,7 +2662,7 @@ class AdminLabTestBookingListView(APIView):
 
 
 class AdminLabTestBookingDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_lab_tests')]
 
     def put(self, request, pk):
         try:
@@ -2681,7 +2681,7 @@ class AdminLabTestBookingDetailView(APIView):
 
 
 class AdminBlogPostListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_blog')]
 
     def get(self, request):
         qs = BlogPost.objects.all()
@@ -2709,7 +2709,7 @@ class AdminBlogPostListView(APIView):
 
 
 class AdminBlogPostDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_blog')]
 
     def get(self, request, pk):
         try:
@@ -2739,7 +2739,7 @@ class AdminBlogPostDetailView(APIView):
 
 
 class AdminSubscriptionListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_subscriptions')]
 
     def get(self, request):
         qs = MedicineSubscription.objects.select_related('user', 'medicine', 'address').order_by('next_delivery_date')
@@ -2755,7 +2755,7 @@ class AdminSubscriptionListView(APIView):
 
 
 class AdminSubscriptionRenewView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_subscriptions')]
 
     def post(self, request, pk):
         try:
@@ -2795,7 +2795,7 @@ class AdminSubscriptionRenewView(APIView):
 
 
 class AdminDoctorListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_doctors')]
 
     def get(self, request):
         doctors = Doctor.objects.order_by('name')
@@ -2810,7 +2810,7 @@ class AdminDoctorListView(APIView):
 
 
 class AdminDoctorDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_doctors')]
 
     def get(self, request, pk):
         try:
@@ -2842,7 +2842,7 @@ class AdminDoctorDetailView(APIView):
 
 
 class AdminAppointmentListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_doctors')]
 
     def get(self, request):
         qs = DoctorAppointment.objects.select_related('user', 'doctor').order_by('-booked_at')
@@ -2853,7 +2853,7 @@ class AdminAppointmentListView(APIView):
 
 
 class AdminAppointmentDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_doctors')]
 
     def put(self, request, pk):
         try:
@@ -2872,7 +2872,7 @@ class AdminAppointmentDetailView(APIView):
 
 
 class AdminOrderListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_orders')]
 
     def get(self, request):
         qs = Order.objects.select_related('user').prefetch_related('items').order_by('-placed_at')
@@ -2896,7 +2896,7 @@ class AdminOrderListView(APIView):
 
 
 class AdminOrderDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_orders')]
 
     def get(self, request, pk):
         try:
@@ -2930,7 +2930,7 @@ class AdminOrderDetailView(APIView):
 
 
 class AdminPrescriptionListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_prescriptions')]
 
     def get(self, request):
         qs = Prescription.objects.select_related('user').filter(_prescription_visibility_filter()).distinct().order_by('-uploaded_at')
@@ -2954,7 +2954,7 @@ class AdminPrescriptionListView(APIView):
 
 
 class AdminPrescriptionDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_prescriptions')]
 
     def put(self, request, pk):
         try:
@@ -2978,7 +2978,7 @@ class AdminPrescriptionDetailView(APIView):
 
 
 class AdminCustomerListView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_customers')]
 
     def get(self, request):
         qs = User.objects.filter(role='CUSTOMER', is_deleted=False).order_by('-created_at')
@@ -2999,7 +2999,7 @@ class AdminCustomerListView(APIView):
 
 
 class AdminCustomerDetailView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_customers')]
 
     def get(self, request, pk):
         try:
@@ -3033,7 +3033,7 @@ class AdminCustomerDetailView(APIView):
 
 
 class AdminCustomerBlockView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_customers')]
 
     def put(self, request, pk):
         try:
@@ -3050,7 +3050,7 @@ class AdminCustomerBlockView(APIView):
 
 
 class AdminSettingsView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [IsSuperAdmin]
 
     def get(self, request):
         rows = SystemSetting.objects.all()
@@ -3068,7 +3068,7 @@ class AdminSettingsView(APIView):
 
 
 class AdminInventoryView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_inventory')]
 
     def get(self, request):
         qs = Medicine.objects.select_related('category', 'brand').order_by('stock_quantity')
@@ -3120,7 +3120,7 @@ class AdminInventoryView(APIView):
 
 
 class AdminStockLogView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [require_permission('manage_inventory')]
 
     def get(self, request, pk):
         try:
