@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import { useAuthStore } from '@/store/auth'
 import { useThemeStore } from '@/store/theme'
 import { resolveImg } from '@/lib/resolveImg'
+import api from '@/lib/api'
 import AdminSidebar from '@/components/admin/AdminSidebar'
 
 const PAGE_TITLES: Record<string, { title: string; icon: string }> = {
@@ -44,6 +45,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (hydrated && !user) router.replace('/signin')
   }, [hydrated, user, router])
+
+  // Refresh the user object (permission_codes / is_super_admin) on mount and on every
+  // navigation, so a permission change made mid-session by a super admin takes effect
+  // without requiring the affected admin to log out and back in.
+  useEffect(() => {
+    if (!hydrated) return
+    const current = useAuthStore.getState().user
+    if (!current || current.role !== 'ADMIN') return
+    api.get('/auth/me/')
+      .then((r) => useAuthStore.getState().setUser(r.data.data.user))
+      .catch(() => {})
+  }, [hydrated, pathname])
 
   if (!hydrated || !user) {
     return (
