@@ -16,7 +16,7 @@ const SETTINGS_FIELDS = [
 
 export default function AdminSettingsPage() {
   const router = useRouter()
-  const { logout } = useAuthStore()
+  const { user, logout } = useAuthStore()
   const [passwords, setPasswords] = useState({ current_password: '', new_password: '', confirm: '' })
   const [pwLoading, setPwLoading] = useState(false)
   const [settings, setSettings] = useState<Record<string, string>>({})
@@ -24,8 +24,13 @@ export default function AdminSettingsPage() {
   const [savingSettings, setSavingSettings] = useState(false)
 
   useEffect(() => {
+    if (user && !user.is_super_admin) router.replace('/admin/dashboard')
+  }, [user, router])
+
+  useEffect(() => {
+    if (!user?.is_super_admin) return
     api.get('/admin/settings/').then((r) => setSettings(r.data.data.settings || {})).catch(() => {}).finally(() => setSettingsLoading(false))
-  }, [])
+  }, [user])
 
   const handleSettingsSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -59,6 +64,8 @@ export default function AdminSettingsPage() {
       setPwLoading(false)
     }
   }
+
+  if (!user?.is_super_admin) return null
 
   return (
     <div className="max-w-lg space-y-5">

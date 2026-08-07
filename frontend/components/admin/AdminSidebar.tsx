@@ -3,24 +3,26 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import Logo from '@/components/common/Logo'
+import { useAuthStore } from '@/store/auth'
 
 const navItems = [
-  { label: 'Dashboard',     href: '/admin/dashboard',     icon: 'dashboard' },
-  { label: 'Medicines',     href: '/admin/medicines',     icon: 'medication' },
-  { label: 'Categories',    href: '/admin/categories',    icon: 'category' },
-  { label: 'Brands',        href: '/admin/brands',        icon: 'storefront' },
-  { label: 'Inventory',     href: '/admin/inventory',     icon: 'inventory_2' },
-  { label: 'Lab Tests',     href: '/admin/lab-tests',     icon: 'biotech' },
-  { label: 'Doctor Consult', href: '/admin/doctor-consult', icon: 'stethoscope' },
-  { label: 'Health Articles', href: '/admin/blog',        icon: 'article' },
-  { label: 'Subscriptions',  href: '/admin/subscriptions', icon: 'autorenew' },
-  { label: 'Plus Membership', href: '/admin/plus-membership', icon: 'workspace_premium' },
-  { label: 'Marketing',      href: '/admin/marketing',     icon: 'campaign' },
-  { label: 'Prescriptions', href: '/admin/prescriptions', icon: 'description' },
-  { label: 'Orders',        href: '/admin/orders',        icon: 'shopping_cart' },
-  { label: 'Customers',     href: '/admin/customers',     icon: 'group' },
-  { label: 'Delivery',      href: '/admin/delivery',      icon: 'local_shipping' },
-  { label: 'Reports',       href: '/admin/reports',       icon: 'bar_chart' },
+  { label: 'Dashboard',     href: '/admin/dashboard',     icon: 'dashboard',    code: 'view_reports' },
+  { label: 'Medicines',     href: '/admin/medicines',     icon: 'medication',   code: 'manage_inventory' },
+  { label: 'Categories',    href: '/admin/categories',    icon: 'category',     code: 'manage_inventory' },
+  { label: 'Brands',        href: '/admin/brands',        icon: 'storefront',   code: 'manage_inventory' },
+  { label: 'Inventory',     href: '/admin/inventory',     icon: 'inventory_2',  code: 'manage_inventory' },
+  { label: 'Lab Tests',     href: '/admin/lab-tests',     icon: 'biotech',      code: 'manage_lab_tests' },
+  { label: 'Doctor Consult', href: '/admin/doctor-consult', icon: 'stethoscope', code: 'manage_doctors' },
+  { label: 'Health Articles', href: '/admin/blog',        icon: 'article',      code: 'manage_blog' },
+  { label: 'Subscriptions',  href: '/admin/subscriptions', icon: 'autorenew',   code: 'manage_subscriptions' },
+  { label: 'Plus Membership', href: '/admin/plus-membership', icon: 'workspace_premium', code: 'manage_plus_membership' },
+  { label: 'Marketing',      href: '/admin/marketing',     icon: 'campaign',    code: 'manage_marketing' },
+  { label: 'Prescriptions', href: '/admin/prescriptions', icon: 'description', code: 'manage_prescriptions' },
+  { label: 'Orders',        href: '/admin/orders',        icon: 'shopping_cart', code: 'manage_orders' },
+  { label: 'Customers',     href: '/admin/customers',     icon: 'group',       code: 'manage_customers' },
+  { label: 'Delivery',      href: '/admin/delivery',      icon: 'local_shipping', code: 'manage_orders' },
+  { label: 'Reports',       href: '/admin/reports',       icon: 'bar_chart',   code: 'view_reports' },
+  { label: 'Admins',        href: '/admin/admins',        icon: 'admin_panel_settings', superAdminOnly: true },
 ]
 
 interface Props {
@@ -30,9 +32,16 @@ interface Props {
 
 export default function AdminSidebar({ collapsed, onToggle }: Props) {
   const pathname = usePathname()
+  const user = useAuthStore((s) => s.user)
 
   const isActive = (href: string) =>
     href === '/admin/dashboard' ? pathname === '/admin/dashboard' : pathname.startsWith(href)
+
+  const visibleItems = navItems.filter((item) => {
+    if (user?.is_super_admin) return true
+    if (item.superAdminOnly) return false
+    return !!user?.permission_codes?.includes(item.code as string)
+  })
 
   return (
     <aside
@@ -59,7 +68,7 @@ export default function AdminSidebar({ collapsed, onToggle }: Props) {
 
       <nav className="flex-1 overflow-y-auto py-3">
         <ul className="space-y-0.5 px-2">
-          {navItems.map((item) => {
+          {visibleItems.map((item) => {
             const active = isActive(item.href)
             return (
               <li key={item.href}>

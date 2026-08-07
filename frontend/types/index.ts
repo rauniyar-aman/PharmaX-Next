@@ -7,8 +7,28 @@ export interface User {
   is_email_verified: boolean
   avatar_url?: string | null
   referral_code?: string | null
+  is_super_admin?: boolean
+  permission_codes?: string[]   // only present when role === 'ADMIN'
   created_at: string
   updated_at: string
+}
+
+export interface Permission {
+  id: string
+  code: string
+  label: string
+  group: string
+}
+
+export interface AdminUser {
+  id: string
+  full_name: string
+  email: string
+  phone: string
+  is_active: boolean
+  is_super_admin: boolean
+  permission_codes: string[]
+  created_at: string
 }
 
 export interface AuthTokens {

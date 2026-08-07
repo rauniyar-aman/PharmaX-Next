@@ -118,11 +118,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     <span className="material-symbols-outlined" style={{ fontSize: '19px' }}>manage_accounts</span>
                     Profile
                   </Link>
-                  <Link href="/admin/settings" onClick={() => setUserMenuOpen(false)}
-                    className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-on-surface hover:bg-surface-container-low transition-colors">
-                    <span className="material-symbols-outlined" style={{ fontSize: '19px' }}>settings</span>
-                    Settings
-                  </Link>
+                  {user.is_super_admin && (
+                    <Link href="/admin/settings" onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-on-surface hover:bg-surface-container-low transition-colors">
+                      <span className="material-symbols-outlined" style={{ fontSize: '19px' }}>settings</span>
+                      Settings
+                    </Link>
+                  )}
                   <div className="my-1 border-t border-outline-variant" />
                   <button
                     onClick={() => { setUserMenuOpen(false); logout(); router.push('/signin') }}
