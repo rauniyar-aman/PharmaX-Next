@@ -16,9 +16,10 @@ const STATUS_CFG: Record<string, { label: string; color: string; icon: string }>
   BROADCASTING:      { label: 'Broadcasting',      color: 'bg-surface-container text-on-surface-variant', icon: 'wifi_tethering' },
 }
 
-const PAYMENT_CFG: Record<string, { label: string; color: string }> = {
-  PAID:    { label: 'Paid',            color: 'bg-emerald-50 text-emerald-600' },
-  PENDING: { label: 'Payment Pending', color: 'bg-amber-50 text-amber-600' },
+const PAYMENT_CFG: Record<string, { label: string; color: string; icon: string }> = {
+  PAID:    { label: 'Paid',            color: 'bg-emerald-50 text-emerald-600', icon: 'paid' },
+  PENDING: { label: 'Payment Pending', color: 'bg-amber-50 text-amber-600',     icon: 'pending' },
+  HIDDEN:  { label: 'Finance Hidden',  color: 'bg-surface-container text-on-surface-variant', icon: 'visibility_off' },
 }
 
 const FILTERS = [
@@ -52,11 +53,15 @@ function StatusStepper({ status }: { status: string }) {
 
 export default function PharmacyOrdersPage() {
   const [orders, setOrders] = useState<PharmacyOrderFulfillment[]>([])
+  const [showFinance, setShowFinance] = useState(true)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('ALL')
 
   useEffect(() => {
-    api.get('/pharmacy/orders/').then((r) => setOrders(r.data.data.orders || [])).catch(() => toast.error('Failed to load orders.')).finally(() => setLoading(false))
+    api.get('/pharmacy/orders/').then((r) => {
+      setOrders(r.data.data.orders || [])
+      setShowFinance(r.data.data.show_finance !== false)
+    }).catch(() => toast.error('Failed to load orders.')).finally(() => setLoading(false))
   }, [])
 
   const filtered = useMemo(() => {
@@ -73,6 +78,8 @@ export default function PharmacyOrdersPage() {
     [orders],
   )
 
+  const visibleFilters = showFinance ? FILTERS : FILTERS.filter((f) => f.key !== 'PAYMENT_PENDING')
+
   return (
     <div className="space-y-5">
       <div>
@@ -80,7 +87,7 @@ export default function PharmacyOrdersPage() {
         <p className="text-sm text-on-surface-variant mt-1">Items you've accepted, their delivery status, and what you're owed.</p>
       </div>
 
-      {!loading && pendingPayoutTotal > 0 && (
+      {!loading && showFinance && pendingPayoutTotal > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
           <span className="material-symbols-outlined ms-filled text-amber-600" style={{ fontSize: '22px' }}>account_balance_wallet</span>
           <p className="text-sm text-amber-800">
@@ -89,8 +96,15 @@ export default function PharmacyOrdersPage() {
         </div>
       )}
 
+      {!loading && !showFinance && (
+        <div className="bg-surface-container-low border border-outline-variant rounded-2xl px-4 py-3 flex items-center gap-3">
+          <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '20px' }}>visibility_off</span>
+          <p className="text-xs text-on-surface-variant">Income and payout figures are hidden from your account. Ask the pharmacy owner for access.</p>
+        </div>
+      )}
+
       <div className="flex items-center gap-2 flex-wrap">
-        {FILTERS.map((f) => (
+        {visibleFilters.map((f) => (
           <button key={f.key} onClick={() => setFilter(f.key)}
             className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${filter === f.key ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'}`}>
             {f.label}

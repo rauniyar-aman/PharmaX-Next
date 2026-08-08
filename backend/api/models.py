@@ -795,6 +795,9 @@ class PharmacyTeamMember(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, related_name='team_members')
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='pharmacy_membership')
+    # off by default — income/payout figures are sensitive, so a newly-added staff login can
+    # manage requests/orders without seeing money until the owner explicitly grants it.
+    can_view_finance = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

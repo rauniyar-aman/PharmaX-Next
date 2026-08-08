@@ -709,6 +709,10 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
         ]
 
     def get_payment_status(self, obj):
+        # context['show_finance'] is set by the view from _can_view_finance() — False for a team
+        # member the owner hasn't granted finance visibility to, always True for the owner.
+        if not self.context.get('show_finance', True):
+            return 'HIDDEN'
         # PharmacyPayout is only created once the fulfillment is DELIVERED (see
         # _create_settlement_records) — before that there's nothing to be paid yet.
         payout = getattr(obj, 'pharmacy_payout', None)
@@ -717,10 +721,14 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
         return payout.status  # 'PENDING' or 'PAID'
 
     def get_payout_amount(self, obj):
+        if not self.context.get('show_finance', True):
+            return None
         payout = getattr(obj, 'pharmacy_payout', None)
         return str(payout.net_payable) if payout else None
 
     def get_payout_paid_at(self, obj):
+        if not self.context.get('show_finance', True):
+            return None
         payout = getattr(obj, 'pharmacy_payout', None)
         return payout.paid_at if payout else None
 
@@ -749,7 +757,7 @@ class PharmacyTeamMemberSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PharmacyTeamMember
-        fields = ['id', 'full_name', 'email', 'phone', 'is_active', 'created_at']
+        fields = ['id', 'full_name', 'email', 'phone', 'is_active', 'can_view_finance', 'created_at']
         read_only_fields = fields
 
 
@@ -758,6 +766,7 @@ class PharmacyTeamMemberCreateSerializer(serializers.Serializer):
     email = serializers.EmailField()
     phone = serializers.CharField(max_length=20)
     password = serializers.CharField(min_length=6, write_only=True)
+    can_view_finance = serializers.BooleanField(default=False, required=False)
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():

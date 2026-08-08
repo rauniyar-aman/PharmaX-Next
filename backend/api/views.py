@@ -3655,6 +3655,17 @@ def _pharmacy_not_found_response():
     return Response({'success': False, 'message': 'No pharmacy is associated with this account.'}, status=status.HTTP_403_FORBIDDEN)
 
 
+def _can_view_finance(user, pharmacy):
+    """The owner can always see income/payout figures for their own pharmacy. A team member can
+    only see them if the owner has explicitly granted PharmacyTeamMember.can_view_finance —
+    defaults to False, since payout amounts are the kind of thing an owner may not want every
+    staff login to see."""
+    if pharmacy.user_id == user.id:
+        return True
+    membership = getattr(user, 'pharmacy_membership', None)
+    return bool(membership and membership.can_view_finance)
+
+
 class PharmacyMedicineListView(APIView):
     """Browse the master Medicine catalog to decide what to carry — read-only, not scoped to any
     pharmacy (there's nothing to own here yet; PharmacyListingListView is where ownership starts)."""
@@ -3835,7 +3846,9 @@ class PharmacyOrderListView(APIView):
         ).select_related(
             'order__address', 'delivery_agent__user', 'pharmacy_payout',
         ).prefetch_related('order_items__medicine').order_by('-accepted_at')
-        return Response({'success': True, 'data': {'orders': PharmacyOrderFulfillmentSerializer(fulfillments, many=True).data}})
+        show_finance = _can_view_finance(request.user, pharmacy)
+        serializer = PharmacyOrderFulfillmentSerializer(fulfillments, many=True, context={'show_finance': show_finance})
+        return Response({'success': True, 'data': {'orders': serializer.data, 'show_finance': show_finance}})
 
 
 class PharmacyTeamListView(APIView):
@@ -3856,6 +3869,10 @@ class PharmacyTeamListView(APIView):
                 'owner': {'full_name': pharmacy.user.full_name, 'email': pharmacy.user.email},
                 'members': PharmacyTeamMemberSerializer(members, many=True).data,
                 'max_members': self.MAX_TEAM_MEMBERS,
+                # whether the CALLER themselves can see income/payout figures — owner always can;
+                # lets any consumer (e.g. the dashboard's finance cards) decide what to render
+                # without re-deriving the owner/membership logic client-side.
+                'my_finance_access': _can_view_finance(request.user, pharmacy),
             },
         })
 
@@ -3879,7 +3896,9 @@ class PharmacyTeamListView(APIView):
                 email=d['email'], full_name=d['full_name'], phone=d['phone'], password=d['password'],
                 role='PHARMACY', is_active=True, is_email_verified=True,
             )
-            member = PharmacyTeamMember.objects.create(pharmacy=pharmacy, user=user)
+            member = PharmacyTeamMember.objects.create(
+                pharmacy=pharmacy, user=user, can_view_finance=d.get('can_view_finance', False),
+            )
 
         return Response(
             {'success': True, 'data': {'member': PharmacyTeamMemberSerializer(member).data}, 'message': 'Team member added.'},
@@ -3889,6 +3908,25 @@ class PharmacyTeamListView(APIView):
 
 class PharmacyTeamMemberDetailView(APIView):
     permission_classes = [IsPharmacy]
+
+    def patch(self, request, pk):
+        # currently only used to grant/revoke finance visibility — owner-only, same as add/remove.
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        if pharmacy.user_id != request.user.id:
+            return Response({'success': False, 'message': 'Only the pharmacy owner can change team member access.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            member = PharmacyTeamMember.objects.select_related('user').get(pk=pk, pharmacy=pharmacy)
+        except PharmacyTeamMember.DoesNotExist:
+            return Response({'success': False, 'message': 'Team member not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'can_view_finance' in request.data:
+            member.can_view_finance = bool(request.data['can_view_finance'])
+            member.save(update_fields=['can_view_finance'])
+
+        return Response({'success': True, 'data': {'member': PharmacyTeamMemberSerializer(member).data}, 'message': 'Team member updated.'})
 
     def delete(self, request, pk):
         pharmacy = get_managed_pharmacy(request.user)
