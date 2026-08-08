@@ -46,7 +46,7 @@ from .serializers import (
 from .utils import generate_otp, send_otp_email_async, get_store_name
 from .permissions import IsAdmin, IsSuperAdmin, require_permission
 from .throttles import AuthRateThrottle
-from .matching import expire_stale_fulfillment_requests
+from .matching import broadcast_order, sync_order_status, expire_stale_fulfillment_requests
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
@@ -971,7 +971,15 @@ def _release_order_holds(order):
 def _create_order_from_cart(user, address_id, prescription_id, payment_method, notes='',
                              payment_status='PENDING', order_status='PLACED', clear_cart=True,
                              coupon_code=None, use_wallet=False):
-    """Returns (order, error_response). Exactly one is None."""
+    """Returns (order, error_response). Exactly one is None.
+
+    Legacy single-warehouse path (creates a fully-formed, immediately-PLACED order and decrements
+    Medicine.stock_quantity directly) — no longer called by any payment view as of Stage 3 of the
+    marketplace spec. Left in place rather than deleted since removing it wasn't asked for; every
+    caller now goes through OrderCheckoutView + broadcast_order() instead, which does not touch
+    Medicine.stock_quantity at all (stock lives on PharmacyMedicineListing under the marketplace
+    model, decremented by pharmacy_accept_item()).
+    """
     try:
         cart = Cart.objects.prefetch_related('items__medicine').get(user=user)
     except Cart.DoesNotExist:
@@ -1070,6 +1078,181 @@ def _create_order_from_cart(user, address_id, prescription_id, payment_method, n
     return order, None
 
 
+def _prepare_awaiting_payment_order(user, order_id, coupon_code=None, use_wallet=False):
+    """Looks up an AWAITING_PAYMENT order belonging to `user`, recomputes total_amount from only
+    the OrderItems a pharmacy actually accepted (not the original full-cart total — some items may
+    have gotten zero acceptances), and applies coupon/wallet against that reduced total.
+
+    Safe to call more than once for the same order (e.g. the customer picks Khalti, it fails, they
+    retry with COD): _release_order_holds() first undoes any wallet debit / coupon usage from a
+    prior call on this order before reapplying fresh, so nothing double-charges the wallet.
+
+    Returns (order, error_response) — exactly one is None.
+    """
+    try:
+        order = Order.objects.prefetch_related('items__medicine').select_related('address').get(id=order_id, user=user)
+    except Order.DoesNotExist:
+        return None, Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if order.status != 'AWAITING_PAYMENT':
+        return None, Response({'success': False, 'message': f'This order is not ready for payment (status: {order.status}).'}, status=status.HTTP_400_BAD_REQUEST)
+
+    accepted_items = [i for i in order.items.all() if i.fulfillment_id is not None]
+    if not accepted_items:
+        return None, Response({'success': False, 'message': 'No pharmacy accepted any item in this order near your address. Please cancel this order and try again.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    _release_order_holds(order)
+
+    subtotal = sum(i.unit_price * i.quantity for i in accepted_items)
+    free_threshold = Decimal(_get_setting('free_delivery_threshold', '500'))
+    delivery_charge_setting = Decimal(_get_setting('delivery_charge', '50'))
+    delivery = Decimal('0') if (subtotal >= free_threshold or _has_active_plus(user)) else delivery_charge_setting
+
+    coupon, coupon_discount, coupon_error = _validate_coupon(coupon_code, user, subtotal)
+    if coupon_error:
+        return None, Response({'success': False, 'message': coupon_error}, status=status.HTTP_400_BAD_REQUEST)
+
+    payable = subtotal + delivery - coupon_discount
+    wallet = None
+    wallet_used = Decimal('0')
+    if use_wallet:
+        wallet, _ = Wallet.objects.get_or_create(user=user)
+        wallet_used = min(wallet.balance, payable)
+
+    order.total_amount = payable - wallet_used
+    order.delivery_charge = delivery
+    order.discount = coupon_discount
+    order.coupon = coupon
+    order.wallet_used = wallet_used
+    order.save(update_fields=['total_amount', 'delivery_charge', 'discount', 'coupon', 'wallet_used'])
+
+    if coupon:
+        CouponUsage.objects.create(coupon=coupon, user=user, order=order, discount_amount=coupon_discount)
+    if wallet_used > 0:
+        wallet.balance -= wallet_used
+        wallet.save(update_fields=['balance'])
+        WalletTransaction.objects.create(
+            wallet=wallet, type='DEBIT', amount=wallet_used,
+            reason=f'Used on order #{str(order.id)[:8]}', balance_after=wallet.balance, order=order,
+        )
+
+    return order, None
+
+
+class OrderCheckoutView(APIView):
+    """Stage 3 entry point to the marketplace checkout flow. Creates the Order in BROADCASTING
+    status with its OrderItems, kicks off broadcast_order(), and returns immediately — no payment
+    prompt yet. The customer polls GET /orders/<id>/fulfillment-summary/ (which just reflects
+    `order.status`) until it flips to AWAITING_PAYMENT, then calls one of the payment endpoints
+    below with this order's id."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        address_id = request.data.get('address_id')
+        if not address_id:
+            return Response({'success': False, 'message': 'Delivery address is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            cart = Cart.objects.prefetch_related('items__medicine').get(user=request.user)
+        except Cart.DoesNotExist:
+            return Response({'success': False, 'message': 'Cart is empty.'}, status=status.HTTP_400_BAD_REQUEST)
+        items = cart.items.all()
+        if not items.exists():
+            return Response({'success': False, 'message': 'Cart is empty.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            address = Address.objects.get(id=address_id, user=request.user)
+        except Address.DoesNotExist:
+            return Response({'success': False, 'message': 'Address not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        prescription = None
+        prescription_id = request.data.get('prescription_id')
+        if prescription_id:
+            try:
+                prescription = Prescription.objects.get(id=prescription_id, user=request.user)
+            except Prescription.DoesNotExist:
+                pass
+
+        with transaction.atomic():
+            order = Order.objects.create(
+                user=request.user,
+                address=address,
+                prescription=prescription,
+                total_amount=Decimal('0'),  # recomputed from accepted items once payment is initiated
+                status='BROADCASTING',
+                payment_status='PENDING',
+                notes=request.data.get('notes', ''),
+            )
+            for item in items:
+                OrderItem.objects.create(
+                    order=order, medicine=item.medicine,
+                    quantity=item.quantity, unit_price=item.medicine.price,
+                )
+            # Deliberately not decrementing Medicine.stock_quantity here — under the marketplace
+            # model, stock lives on PharmacyMedicineListing and is only decremented once a
+            # pharmacy actually wins an item, in pharmacy_accept_item().
+
+        _maybe_reward_referral(request.user)
+        Notification.objects.create(
+            user=request.user, type='ORDER_UPDATE', title='Checking Nearby Pharmacies',
+            message=f"We're checking nearby pharmacies for order #{str(order.id)[:8]}.",
+            link=f'/orders/{order.id}',
+        )
+
+        broadcast_result = broadcast_order(order)
+        order.refresh_from_db()
+
+        return Response({
+            'success': True,
+            'data': {
+                'order': OrderSerializer(order).data,
+                'broadcast': {
+                    'broadcast': [str(i) for i in broadcast_result['broadcast']],
+                    'unfulfillable': [str(i) for i in broadcast_result['unfulfillable']],
+                },
+            },
+        }, status=status.HTTP_201_CREATED)
+
+
+class OrderFulfillmentSummaryView(APIView):
+    """Shows the customer exactly what got accepted (ready to pay for) vs what got zero
+    acceptance vs what's still pending, before they commit to paying."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            order = Order.objects.prefetch_related('items__medicine', 'items__fulfillment_requests').get(id=pk, user=request.user)
+        except Order.DoesNotExist:
+            return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        accepted, unfulfilled, pending = [], [], []
+        for item in order.items.all():
+            entry = {
+                'order_item_id': str(item.id),
+                'medicine_id': str(item.medicine_id),
+                'medicine_name': item.medicine.name,
+                'quantity': item.quantity,
+                'unit_price': str(item.unit_price),
+            }
+            if item.fulfillment_id is not None:
+                accepted.append(entry)
+            elif any(r.status == 'PENDING' for r in item.fulfillment_requests.all()):
+                pending.append(entry)
+            else:
+                unfulfilled.append(entry)
+
+        return Response({
+            'success': True,
+            'data': {
+                'order_status': order.status,
+                'accepted_items': accepted,
+                'unfulfilled_items': unfulfilled,
+                'pending_items': pending,
+                'all_resolved': len(pending) == 0,
+            },
+        })
+
+
 class OrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1078,17 +1261,29 @@ class OrderListView(APIView):
         return Response({'success': True, 'data': {'orders': OrderSerializer(orders, many=True).data}})
 
     def post(self, request):
-        address_id = request.data.get('shipping_address_id') or request.data.get('addressId')
+        """Stage 3: no longer creates an order from scratch — that's OrderCheckoutView's job now.
+        This only finalizes an existing AWAITING_PAYMENT order as Cash on Delivery (the only
+        method it can confirm without a gateway round-trip); use the dedicated payment endpoints
+        for eSewa/Khalti."""
+        order_id = request.data.get('order_id')
+        if not order_id:
+            return Response({'success': False, 'message': 'order_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
         payment_method = request.data.get('payment_method') or request.data.get('paymentMethod', 'CASH_ON_DELIVERY')
-        prescription_id = request.data.get('prescription_id') or request.data.get('prescriptionId')
-        notes = request.data.get('notes', '')
+        if payment_method != 'CASH_ON_DELIVERY':
+            return Response({'success': False, 'message': 'Use /payment/esewa/initiate/ or /payment/khalti/initiate/ for gateway payments.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        order, err = _create_order_from_cart(
-            request.user, address_id, prescription_id, payment_method, notes,
+        order, err = _prepare_awaiting_payment_order(
+            request.user, order_id,
             coupon_code=request.data.get('coupon_code'), use_wallet=bool(request.data.get('use_wallet')),
         )
         if err:
             return err
+        order.payment_method = payment_method
+        order.save(update_fields=['payment_method'])
+        sync_order_status(order)
+        if order.status == 'PLACED':
+            _notify_admins('manage_orders', 'NEW_ORDER', 'New Order',
+                            f'{request.user.full_name} placed order #{str(order.id)[:8]} for NPR {order.total_amount}.', link='/admin/orders')
         return Response({'success': True, 'data': {'order': OrderSerializer(order).data}}, status=status.HTTP_201_CREATED)
 
 
@@ -1162,42 +1357,51 @@ def _esewa_signature(total_amount, transaction_uuid):
 
 
 class PaymentCodPlaceView(APIView):
+    """Stage 3: takes an existing AWAITING_PAYMENT order (created by OrderCheckoutView) rather
+    than creating one from the cart. Guarded to only proceed when the order is AWAITING_PAYMENT,
+    and charges only for the items a pharmacy actually accepted."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        address_id = request.data.get('address_id')
-        if not address_id:
-            return Response({'success': False, 'message': 'Delivery address is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        order, err = _create_order_from_cart(
-            request.user, address_id, request.data.get('prescription_id'),
-            payment_method='CASH_ON_DELIVERY', notes=request.data.get('notes', ''),
-            payment_status='PENDING', order_status='PLACED',
+        order_id = request.data.get('order_id')
+        if not order_id:
+            return Response({'success': False, 'message': 'order_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        order, err = _prepare_awaiting_payment_order(
+            request.user, order_id,
             coupon_code=request.data.get('coupon_code'), use_wallet=bool(request.data.get('use_wallet')),
         )
         if err:
             return err
+        order.payment_method = 'CASH_ON_DELIVERY'
+        order.save(update_fields=['payment_method'])
+        sync_order_status(order)  # payment_method == 'CASH_ON_DELIVERY' is itself the confirmation -> PLACED
+        if order.status == 'PLACED':
+            _notify_admins('manage_orders', 'NEW_ORDER', 'New Order',
+                            f'{request.user.full_name} placed order #{str(order.id)[:8]} for NPR {order.total_amount}.', link='/admin/orders')
         return Response({'success': True, 'data': {'order': OrderSerializer(order).data}}, status=status.HTTP_201_CREATED)
 
 
 class PaymentEsewaInitiateView(APIView):
+    """Stage 3: takes an existing AWAITING_PAYMENT order rather than creating one from the cart.
+    order.status stays AWAITING_PAYMENT here — it only moves to PLACED once eSewa's success
+    callback confirms payment, via _finalize_paid_order()."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        address_id = request.data.get('address_id')
-        if not address_id:
-            return Response({'success': False, 'message': 'Delivery address is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        order, err = _create_order_from_cart(
-            request.user, address_id, request.data.get('prescription_id'),
-            payment_method='ESEWA', notes=request.data.get('notes', ''),
-            payment_status='PENDING', order_status='PLACED', clear_cart=False,
+        order_id = request.data.get('order_id')
+        if not order_id:
+            return Response({'success': False, 'message': 'order_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        order, err = _prepare_awaiting_payment_order(
+            request.user, order_id,
             coupon_code=request.data.get('coupon_code'), use_wallet=bool(request.data.get('use_wallet')),
         )
         if err:
             return err
 
+        order.payment_method = 'ESEWA'
         transaction_uuid = f'{order.id}-{int(timezone.now().timestamp())}'
         order.esewa_transaction_uuid = transaction_uuid
-        order.save(update_fields=['esewa_transaction_uuid'])
+        order.save(update_fields=['payment_method', 'esewa_transaction_uuid'])
 
         total_str = str(order.total_amount)
         signature = _esewa_signature(total_str, transaction_uuid)
@@ -1224,12 +1428,15 @@ class PaymentEsewaInitiateView(APIView):
 
 
 def _finalize_paid_order(order):
+    """Stage 3: no longer jumps status straight to CONFIRMED. Setting payment_status='PAID' and
+    routing through sync_order_status() takes AWAITING_PAYMENT -> PLACED (the pharmacy already
+    confirmed/accepted before payment was even offered, so PLACED — not CONFIRMED — is the correct
+    landing status now; sync_order_status() also clears the cart and fires the "Order Placed"
+    customer notification as part of that transition)."""
     order.payment_status = 'PAID'
-    order.status = 'CONFIRMED'
-    order.save(update_fields=['payment_status', 'status'])
-    cart = Cart.objects.filter(user=order.user).first()
-    if cart:
-        cart.items.all().delete()
+    order.save(update_fields=['payment_status'])
+    sync_order_status(order)
+
     Notification.objects.create(
         user=order.user, type='PAYMENT_UPDATE', title='Payment Received',
         message=f'Payment for order #{str(order.id)[:8]} was received successfully.',
@@ -1240,6 +1447,9 @@ def _finalize_paid_order(order):
         f'Payment received for order #{str(order.id)[:8]} from {order.user.full_name} (NPR {order.total_amount}).',
         link='/admin/orders',
     )
+    if order.status == 'PLACED':
+        _notify_admins('manage_orders', 'NEW_ORDER', 'New Order',
+                        f'{order.user.full_name} placed order #{str(order.id)[:8]} for NPR {order.total_amount}.', link='/admin/orders')
 
 
 def _cancel_unpaid_order(order):
@@ -1312,16 +1522,18 @@ def _khalti_post(path, body):
 
 
 class PaymentKhaltiInitiateView(APIView):
+    """Stage 3: takes an existing AWAITING_PAYMENT order rather than creating one from the cart.
+    Unlike the old flow, a failed initiate attempt no longer deletes the order (there's nothing
+    to delete-and-retry-from-cart anymore) — holds are just released via _release_order_holds()
+    so the order sits back in AWAITING_PAYMENT and the customer can retry or pick another method."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        address_id = request.data.get('address_id')
-        if not address_id:
-            return Response({'success': False, 'message': 'Delivery address is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        order, err = _create_order_from_cart(
-            request.user, address_id, request.data.get('prescription_id'),
-            payment_method='KHALTI', notes=request.data.get('notes', ''),
-            payment_status='PENDING', order_status='PLACED', clear_cart=False,
+        order_id = request.data.get('order_id')
+        if not order_id:
+            return Response({'success': False, 'message': 'order_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        order, err = _prepare_awaiting_payment_order(
+            request.user, order_id,
             coupon_code=request.data.get('coupon_code'), use_wallet=bool(request.data.get('use_wallet')),
         )
         if err:
@@ -1330,8 +1542,6 @@ class PaymentKhaltiInitiateView(APIView):
         amount_paisa = int(round(float(order.total_amount) * 100))
         if amount_paisa < 1000:
             _release_order_holds(order)
-            Notification.objects.filter(user=request.user, link=f'/orders/{order.id}').delete()
-            order.delete()
             return Response({'success': False, 'message': 'Khalti requires a minimum payable amount of NPR 10. Please choose another payment method.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
@@ -1349,18 +1559,15 @@ class PaymentKhaltiInitiateView(APIView):
             })
         except Exception:
             _release_order_holds(order)
-            Notification.objects.filter(user=request.user, link=f'/orders/{order.id}').delete()
-            order.delete()
             return Response({'success': False, 'message': 'Failed to reach Khalti.'}, status=status.HTTP_502_BAD_GATEWAY)
 
         if not khalti_res.get('pidx'):
             _release_order_holds(order)
-            Notification.objects.filter(user=request.user, link=f'/orders/{order.id}').delete()
-            order.delete()
             return Response({'success': False, 'message': khalti_res.get('detail') or khalti_res.get('message') or 'Khalti initiation failed.'}, status=status.HTTP_502_BAD_GATEWAY)
 
+        order.payment_method = 'KHALTI'
         order.khalti_pidx = khalti_res['pidx']
-        order.save(update_fields=['khalti_pidx'])
+        order.save(update_fields=['payment_method', 'khalti_pidx'])
         return Response({'success': True, 'data': {'payment_url': khalti_res['payment_url']}})
 
 

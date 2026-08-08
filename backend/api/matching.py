@@ -1,10 +1,14 @@
-"""Pharmacy/delivery marketplace matching engine (Stage 2 of the marketplace spec).
+"""Pharmacy/delivery marketplace matching engine (Stages 2-3 of the marketplace spec).
 
-Internal functions only — no HTTP layer here. broadcast_order() and pharmacy_accept_item()/
-pharmacy_decline_item() are meant to be called directly (from a checkout flow in Stage 3, from a
-pharmacy-facing API in a later stage, or from the Django shell for testing). The only HTTP-facing
-piece of Stage 2 is the admin/cron-callable expiry endpoint in views.py, which just calls
+broadcast_order(), pharmacy_accept_item(), and pharmacy_decline_item() are internal functions —
+no HTTP layer of their own (Stage 3's checkout view in views.py calls broadcast_order(); a
+pharmacy-facing accept/decline API is a later stage). The only HTTP-facing piece of this module is
+the admin/cron-callable expiry endpoint in views.py, which just calls
 expire_stale_fulfillment_requests().
+
+sync_order_status() is the single source of truth for Order.status transitions and is called
+reactively at the end of every function above that can change whether an order's items are
+resolved — see its own docstring for the transition table.
 """
 from datetime import timedelta
 
@@ -13,7 +17,7 @@ from django.db.models import F, Value, FloatField, ExpressionWrapper
 from django.db.models.functions import Radians, Sin, Cos, ASin, Sqrt, Power
 from django.utils import timezone
 
-from .models import Pharmacy, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, OrderItem
+from .models import Pharmacy, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, OrderItem, Order, Cart, Notification
 
 BROADCAST_RADIUS_KM = 3
 BROADCAST_WINDOW_MINUTES = 10
@@ -52,6 +56,7 @@ def broadcast_order(order):
     if address is None or address.lat is None or address.lng is None:
         for item in order.items.all():
             result['unfulfillable'].append(item.id)
+        sync_order_status(order)
         return result
 
     nearby_pharmacies = _annotate_distance_km(
@@ -77,6 +82,9 @@ def broadcast_order(order):
 
         result['broadcast' if created_any else 'unfulfillable'].append(item.id)
 
+    # covers the edge case where every item had zero eligible pharmacies from the start —
+    # there's nothing PENDING to wait on, so the order is already "resolved" right now.
+    sync_order_status(order)
     return result
 
 
@@ -130,6 +138,7 @@ def pharmacy_accept_item(pharmacy, order_item):
         stock_quantity=F('stock_quantity') - item.quantity
     )
 
+    sync_order_status(item.order)
     return True, None
 
 
@@ -145,6 +154,7 @@ def pharmacy_decline_item(pharmacy, order_item):
     ).update(status='DECLINED', responded_at=timezone.now())
     if not updated:
         return False, 'This request is no longer available.'
+    sync_order_status(order_item.order)
     return True, None
 
 
@@ -161,4 +171,60 @@ def expire_stale_fulfillment_requests():
     unfulfillable_item_ids = list(
         OrderItem.objects.filter(id__in=stale_item_ids, fulfillment__isnull=True).values_list('id', flat=True)
     )
+
+    affected_order_ids = OrderItem.objects.filter(id__in=stale_item_ids).values_list('order_id', flat=True).distinct()
+    for order in Order.objects.filter(id__in=list(affected_order_ids)):
+        sync_order_status(order)
+
     return expired_count, unfulfillable_item_ids
+
+
+def _all_items_resolved(order):
+    """True once every OrderItem in the order either has `fulfillment` set (a pharmacy won it),
+    or has no PENDING FulfillmentRequest left (every pharmacy that was asked has declined/expired,
+    or none were ever eligible in the first place)."""
+    for item in order.items.all():
+        if item.fulfillment_id is not None:
+            continue
+        if FulfillmentRequest.objects.filter(order_item=item, status='PENDING').exists():
+            return False
+    return True
+
+
+def sync_order_status(order):
+    """Single source of truth for Order.status transitions driven by marketplace/payment state —
+    called reactively after broadcast_order(), pharmacy_accept_item(), pharmacy_decline_item(),
+    and expire_stale_fulfillment_requests() (chosen over a separate polling endpoint: the customer
+    already polls GET /orders/<id>/fulfillment-summary/, which just reflects whatever `order.status`
+    currently is, so a second polling mechanism on the backend would be redundant).
+
+    Stage 3 only exercises the first two transitions below. Stage 4 will extend this function to
+    also roll up PLACED→...→DELIVERED from the order's OrderFulfillment statuses — that rollup
+    isn't implemented yet since delivery broadcast doesn't exist until Stage 4.
+    """
+    if order.status == 'BROADCASTING':
+        if _all_items_resolved(order):
+            order.status = 'AWAITING_PAYMENT'
+            order.save(update_fields=['status'])
+            Notification.objects.create(
+                user=order.user, type='ORDER_UPDATE', title='Order Ready for Payment',
+                message=f'Nearby pharmacies have responded to order #{str(order.id)[:8]} — review and pay to confirm.',
+                link=f'/orders/{order.id}',
+            )
+
+    elif order.status == 'AWAITING_PAYMENT':
+        # COD has no async gateway callback to wait for — the payment view calling this function
+        # having already set payment_method='CASH_ON_DELIVERY' IS the confirmation. Khalti/eSewa
+        # instead flip payment_status to 'PAID' once their gateway confirms, then call this.
+        if order.payment_status == 'PAID' or order.payment_method == 'CASH_ON_DELIVERY':
+            order.status = 'PLACED'
+            order.save(update_fields=['status'])
+            cart = Cart.objects.filter(user=order.user).first()
+            if cart:
+                cart.items.all().delete()
+            Notification.objects.create(
+                user=order.user, type='ORDER', title='Order Placed',
+                message=f'Your order #{str(order.id)[:8]} has been placed successfully.',
+                link=f'/orders/{order.id}',
+            )
+            # TODO: Stage 4 - trigger delivery broadcast here
