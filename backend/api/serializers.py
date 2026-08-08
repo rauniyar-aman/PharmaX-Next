@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
-from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission
+from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -107,6 +107,71 @@ class AdminUserCreateSerializer(serializers.Serializer):
     password = serializers.CharField(min_length=6, write_only=True)
     is_super_admin = serializers.BooleanField(default=False, required=False)
     permission_codes = serializers.ListField(child=serializers.CharField(), default=list, required=False)
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Email already registered.')
+        return value
+
+    def validate_phone(self, value):
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError('Phone number already registered.')
+        return value
+
+
+class AdminPharmacySerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(source='user.email', read_only=True)
+    user_is_active = serializers.BooleanField(source='user.is_active', read_only=True)
+
+    class Meta:
+        model = Pharmacy
+        fields = ['id', 'name', 'email', 'license_number', 'phone', 'address', 'lat', 'lng', 'is_verified', 'is_active', 'user_is_active', 'created_at']
+        read_only_fields = ['id', 'email', 'user_is_active', 'created_at']
+
+
+class AdminPharmacyCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    phone = serializers.CharField(max_length=20)
+    password = serializers.CharField(min_length=6, write_only=True)
+    license_number = serializers.CharField(max_length=100)
+    address = serializers.CharField()
+    lat = serializers.FloatField()
+    lng = serializers.FloatField()
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Email already registered.')
+        return value
+
+    def validate_phone(self, value):
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError('Phone number already registered.')
+        return value
+
+    def validate_license_number(self, value):
+        if Pharmacy.objects.filter(license_number=value).exists():
+            raise serializers.ValidationError('License number already registered.')
+        return value
+
+
+class AdminDeliveryAgentSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(source='user.full_name', read_only=True)
+    email = serializers.EmailField(source='user.email', read_only=True)
+    user_is_active = serializers.BooleanField(source='user.is_active', read_only=True)
+
+    class Meta:
+        model = DeliveryAgent
+        fields = ['id', 'full_name', 'email', 'phone', 'vehicle_type', 'lat', 'lng', 'is_verified', 'is_online', 'user_is_active', 'created_at']
+        read_only_fields = ['id', 'full_name', 'email', 'is_online', 'user_is_active', 'created_at']
+
+
+class AdminDeliveryAgentCreateSerializer(serializers.Serializer):
+    full_name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    phone = serializers.CharField(max_length=20)
+    password = serializers.CharField(min_length=6, write_only=True)
+    vehicle_type = serializers.CharField(max_length=50, required=False, allow_blank=True)
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():

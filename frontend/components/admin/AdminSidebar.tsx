@@ -21,6 +21,8 @@ const navItems = [
   { label: 'Orders',        href: '/admin/orders',        icon: 'shopping_cart', code: 'manage_orders' },
   { label: 'Customers',     href: '/admin/customers',     icon: 'group',       code: 'manage_customers' },
   { label: 'Delivery',      href: '/admin/delivery',      icon: 'local_shipping', code: 'manage_orders' },
+  { label: 'Pharmacies',    href: '/admin/pharmacies',    icon: 'local_pharmacy', code: 'manage_pharmacies' },
+  { label: 'Delivery Agents', href: '/admin/delivery-agents', icon: 'sports_motorsports', code: 'manage_delivery_agents' },
   { label: 'Wallet',        href: '/admin/wallet',        icon: 'account_balance_wallet', code: 'manage_finance' },
   { label: 'Reports',       href: '/admin/reports',       icon: 'bar_chart',   code: 'view_reports' },
   { label: 'Admins',        href: '/admin/admins',        icon: 'admin_panel_settings', superAdminOnly: true },
@@ -36,7 +38,7 @@ export default function AdminSidebar({ collapsed, onToggle }: Props) {
   const user = useAuthStore((s) => s.user)
 
   const isActive = (href: string) =>
-    href === '/admin/dashboard' ? pathname === '/admin/dashboard' : pathname.startsWith(href)
+    href === '/admin/dashboard' ? pathname === '/admin/dashboard' : pathname === href || pathname.startsWith(href + '/')
 
   const visibleItems = navItems.filter((item) => {
     if (user?.is_super_admin) return true
