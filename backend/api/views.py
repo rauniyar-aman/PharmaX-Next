@@ -27,7 +27,7 @@ from .models import (
     PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
     Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment,
-    PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability,
+    PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
@@ -48,6 +48,7 @@ from .serializers import (
     AdminDeliveryAgentSerializer, AdminDeliveryAgentCreateSerializer,
     PharmacyListingSerializer, PharmacyListingCreateSerializer,
     PharmacyFulfillmentRequestSerializer, PharmacyOrderFulfillmentSerializer,
+    PharmacyTeamMemberSerializer, PharmacyTeamMemberCreateSerializer,
     DeliveryFulfillmentSerializer, DeliveryActiveSerializer,
     AdminPharmacyPayoutSerializer, AdminDeliveryAgentEarningSerializer, AdminDeliveryAgentCodLiabilitySerializer,
 )
@@ -3632,10 +3633,27 @@ class AdminDeliveryAgentDetailView(APIView):
 
 # ─── Pharmacy Dashboard (Stage 5 of the marketplace spec) ─────────────────────
 #
-# Every view below is gated by IsPharmacy (role-only) AND additionally scopes every query to
-# request.user.pharmacy — the two together are what stop Pharmacy A from ever seeing or acting on
-# Pharmacy B's listings/requests. IsPharmacy alone only proves "some pharmacy is logged in"; the
-# ownership filter on each queryset/lookup is what proves "this pharmacy, not just any pharmacy."
+# Every view below is gated by IsPharmacy (role-only) AND additionally scopes every query to the
+# pharmacy resolved by get_managed_pharmacy() — the two together are what stop Pharmacy A from
+# ever seeing or acting on Pharmacy B's listings/requests. IsPharmacy alone only proves "some
+# pharmacy is logged in"; the ownership filter on each queryset/lookup is what proves "this
+# pharmacy, not just any pharmacy."
+
+def get_managed_pharmacy(user):
+    """Resolves the Pharmacy a logged-in PHARMACY-role user acts for: either they ARE the owner
+    (Pharmacy.user, the OneToOneField login identity) or they're one of that owner's up-to-3
+    team members (PharmacyTeamMember.user). Returns None if neither applies (e.g. a team member
+    who was since removed, but whose token is still valid)."""
+    pharmacy = getattr(user, 'pharmacy', None)
+    if pharmacy:
+        return pharmacy
+    membership = getattr(user, 'pharmacy_membership', None)
+    return membership.pharmacy if membership else None
+
+
+def _pharmacy_not_found_response():
+    return Response({'success': False, 'message': 'No pharmacy is associated with this account.'}, status=status.HTTP_403_FORBIDDEN)
+
 
 class PharmacyMedicineListView(APIView):
     """Browse the master Medicine catalog to decide what to carry — read-only, not scoped to any
@@ -3671,12 +3689,18 @@ class PharmacyListingListView(APIView):
     permission_classes = [IsPharmacy]
 
     def get(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
         listings = PharmacyMedicineListing.objects.filter(
-            pharmacy=request.user.pharmacy,
+            pharmacy=pharmacy,
         ).select_related('medicine__category', 'medicine__brand').order_by('medicine__name')
         return Response({'success': True, 'data': {'listings': PharmacyListingSerializer(listings, many=True).data}})
 
     def post(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
         s = PharmacyListingCreateSerializer(data=request.data)
         if not s.is_valid():
             return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
@@ -3690,7 +3714,7 @@ class PharmacyListingListView(APIView):
         # update_or_create keyed on pharmacy+medicine: unique_together already enforces one
         # listing per medicine per pharmacy, so re-submitting the same medicine just updates it.
         listing, created = PharmacyMedicineListing.objects.update_or_create(
-            pharmacy=request.user.pharmacy, medicine=medicine,
+            pharmacy=pharmacy, medicine=medicine,
             defaults={
                 'stock_quantity': d['stock_quantity'],
                 'expiry_date': d['expiry_date'],
@@ -3707,10 +3731,14 @@ class PharmacyListingDetailView(APIView):
     permission_classes = [IsPharmacy]
 
     def patch(self, request, pk):
-        # the pharmacy=request.user.pharmacy filter on this lookup IS the ownership boundary —
-        # Pharmacy B passing Pharmacy A's listing id gets a 404, not someone else's data.
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        # the pharmacy=pharmacy filter on this lookup IS the ownership boundary — Pharmacy B (or
+        # a team member not on this pharmacy) passing this listing id gets a 404, not someone
+        # else's data.
         try:
-            listing = PharmacyMedicineListing.objects.select_related('medicine').get(pk=pk, pharmacy=request.user.pharmacy)
+            listing = PharmacyMedicineListing.objects.select_related('medicine').get(pk=pk, pharmacy=pharmacy)
         except PharmacyMedicineListing.DoesNotExist:
             return Response({'success': False, 'message': 'Listing not found.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -3725,8 +3753,11 @@ class PharmacyListingDetailView(APIView):
         return Response({'success': True, 'data': {'listing': PharmacyListingSerializer(listing).data}, 'message': 'Listing updated.'})
 
     def delete(self, request, pk):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
         try:
-            listing = PharmacyMedicineListing.objects.get(pk=pk, pharmacy=request.user.pharmacy)
+            listing = PharmacyMedicineListing.objects.get(pk=pk, pharmacy=pharmacy)
         except PharmacyMedicineListing.DoesNotExist:
             return Response({'success': False, 'message': 'Listing not found.'}, status=status.HTTP_404_NOT_FOUND)
         listing.delete()
@@ -3734,14 +3765,17 @@ class PharmacyListingDetailView(APIView):
 
 
 class PharmacyRequestListView(APIView):
-    """Incoming FulfillmentRequests still awaiting this pharmacy's response. Scoped to
-    pharmacy=request.user.pharmacy — the query itself is the ownership boundary, there's no way
-    to pass a filter that leaks another pharmacy's PENDING requests."""
+    """Incoming FulfillmentRequests still awaiting this pharmacy's response. Scoped to the
+    resolved pharmacy — the query itself is the ownership boundary, there's no way to pass a
+    filter that leaks another pharmacy's PENDING requests."""
     permission_classes = [IsPharmacy]
 
     def get(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
         requests = FulfillmentRequest.objects.filter(
-            pharmacy=request.user.pharmacy, status='PENDING',
+            pharmacy=pharmacy, status='PENDING',
         ).select_related('order_item__medicine', 'order_item__order__address').order_by('created_at')
         return Response({'success': True, 'data': {'requests': PharmacyFulfillmentRequestSerializer(requests, many=True).data}})
 
@@ -3750,17 +3784,20 @@ class PharmacyRequestAcceptView(APIView):
     permission_classes = [IsPharmacy]
 
     def post(self, request, pk):
-        # ownership check #1: the lookup itself. Pharmacy B supplying Pharmacy A's request id
-        # gets 404 here — the row simply doesn't match pharmacy=request.user.pharmacy.
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        # ownership check #1: the lookup itself. Another pharmacy (or a team member not on this
+        # one) supplying this request id gets 404 here — the row simply doesn't match pharmacy=pharmacy.
         try:
-            req = FulfillmentRequest.objects.select_related('order_item').get(pk=pk, pharmacy=request.user.pharmacy)
+            req = FulfillmentRequest.objects.select_related('order_item').get(pk=pk, pharmacy=pharmacy)
         except FulfillmentRequest.DoesNotExist:
             return Response({'success': False, 'message': 'Request not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         # ownership check #2 (defense in depth): pharmacy_accept_item() is called with the
-        # AUTHENTICATED pharmacy, never anything client-supplied, so even if check #1 were
-        # somehow bypassed there's no path to accept on another pharmacy's behalf.
-        ok, err = pharmacy_accept_item(request.user.pharmacy, req.order_item)
+        # resolved pharmacy, never anything client-supplied, so even if check #1 were somehow
+        # bypassed there's no path to accept on another pharmacy's behalf.
+        ok, err = pharmacy_accept_item(pharmacy, req.order_item)
         if not ok:
             return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'success': True, 'message': 'Accepted — it will show up in your order history.'})
@@ -3770,12 +3807,15 @@ class PharmacyRequestDeclineView(APIView):
     permission_classes = [IsPharmacy]
 
     def post(self, request, pk):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
         try:
-            req = FulfillmentRequest.objects.select_related('order_item').get(pk=pk, pharmacy=request.user.pharmacy)
+            req = FulfillmentRequest.objects.select_related('order_item').get(pk=pk, pharmacy=pharmacy)
         except FulfillmentRequest.DoesNotExist:
             return Response({'success': False, 'message': 'Request not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        ok, err = pharmacy_decline_item(request.user.pharmacy, req.order_item)
+        ok, err = pharmacy_decline_item(pharmacy, req.order_item)
         if not ok:
             return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'success': True, 'message': 'Declined.'})
@@ -3783,14 +3823,93 @@ class PharmacyRequestDeclineView(APIView):
 
 class PharmacyOrderListView(APIView):
     """This pharmacy's own OrderFulfillments (items it won) — scoped the same way as everything
-    else here: pharmacy=request.user.pharmacy directly in the filter."""
+    else here: filtered on the resolved pharmacy."""
     permission_classes = [IsPharmacy]
 
     def get(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
         fulfillments = OrderFulfillment.objects.filter(
-            pharmacy=request.user.pharmacy,
-        ).select_related('order__address', 'delivery_agent__user').prefetch_related('order_items__medicine').order_by('-accepted_at')
+            pharmacy=pharmacy,
+        ).select_related(
+            'order__address', 'delivery_agent__user', 'pharmacy_payout',
+        ).prefetch_related('order_items__medicine').order_by('-accepted_at')
         return Response({'success': True, 'data': {'orders': PharmacyOrderFulfillmentSerializer(fulfillments, many=True).data}})
+
+
+class PharmacyTeamListView(APIView):
+    """List + add team members. Any team member can view (transparency into who else can act on
+    requests); only the owner (Pharmacy.user) can add new ones, capped at 3 beyond the owner."""
+    permission_classes = [IsPharmacy]
+    MAX_TEAM_MEMBERS = 3
+
+    def get(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        members = pharmacy.team_members.select_related('user').order_by('created_at')
+        return Response({
+            'success': True,
+            'data': {
+                'is_owner': pharmacy.user_id == request.user.id,
+                'owner': {'full_name': pharmacy.user.full_name, 'email': pharmacy.user.email},
+                'members': PharmacyTeamMemberSerializer(members, many=True).data,
+                'max_members': self.MAX_TEAM_MEMBERS,
+            },
+        })
+
+    def post(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        if pharmacy.user_id != request.user.id:
+            return Response({'success': False, 'message': 'Only the pharmacy owner can add team members.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if pharmacy.team_members.count() >= self.MAX_TEAM_MEMBERS:
+            return Response({'success': False, 'message': f'You can add up to {self.MAX_TEAM_MEMBERS} team members.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        s = PharmacyTeamMemberCreateSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        d = s.validated_data
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=d['email'], full_name=d['full_name'], phone=d['phone'], password=d['password'],
+                role='PHARMACY', is_active=True, is_email_verified=True,
+            )
+            member = PharmacyTeamMember.objects.create(pharmacy=pharmacy, user=user)
+
+        return Response(
+            {'success': True, 'data': {'member': PharmacyTeamMemberSerializer(member).data}, 'message': 'Team member added.'},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class PharmacyTeamMemberDetailView(APIView):
+    permission_classes = [IsPharmacy]
+
+    def delete(self, request, pk):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        if pharmacy.user_id != request.user.id:
+            return Response({'success': False, 'message': 'Only the pharmacy owner can remove team members.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            member = PharmacyTeamMember.objects.select_related('user').get(pk=pk, pharmacy=pharmacy)
+        except PharmacyTeamMember.DoesNotExist:
+            return Response({'success': False, 'message': 'Team member not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # deactivate rather than hard-delete the User — keeps their name/history intact on any
+        # requests/orders they actioned while active, mirrors how admin suspends other accounts.
+        with transaction.atomic():
+            member.user.is_active = False
+            member.user.save(update_fields=['is_active'])
+            member.delete()
+
+        return Response({'success': True, 'message': 'Team member removed.'})
 
 
 # ─── Delivery Dashboard (Stage 6 of the marketplace spec) ─────────────────────

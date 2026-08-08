@@ -173,6 +173,8 @@ urlpatterns = [
     path('pharmacy/requests/<uuid:pk>/accept/', views.PharmacyRequestAcceptView.as_view(),  name='pharmacy-request-accept'),
     path('pharmacy/requests/<uuid:pk>/decline/', views.PharmacyRequestDeclineView.as_view(), name='pharmacy-request-decline'),
     path('pharmacy/orders/',                    views.PharmacyOrderListView.as_view(),      name='pharmacy-orders'),
+    path('pharmacy/team/',                      views.PharmacyTeamListView.as_view(),       name='pharmacy-team'),
+    path('pharmacy/team/<uuid:pk>/',            views.PharmacyTeamMemberDetailView.as_view(), name='pharmacy-team-member-detail'),
 
     # Delivery dashboard
     path('delivery/requests/',                  views.DeliveryRequestListView.as_view(),    name='delivery-requests'),
