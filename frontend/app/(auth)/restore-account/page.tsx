@@ -75,7 +75,7 @@ function RestoreAccountForm() {
       const { tokens, user } = res.data
       setAuth(user, tokens.access, tokens.refresh)
       toast.success('Account restored! Welcome back.')
-      router.push(user.role === 'ADMIN' ? '/admin/dashboard' : '/dashboard')
+      router.push(user.role === 'ADMIN' ? '/admin/dashboard' : user.role === 'PHARMACY' ? '/pharmacy/inventory' : '/dashboard')
     } catch (err: any) {
       setError(err.response?.data?.message || 'Verification failed. Please try again.')
     } finally {

@@ -3,7 +3,7 @@ export interface User {
   full_name: string
   email: string
   phone?: string | null
-  role: 'CUSTOMER' | 'ADMIN'
+  role: 'CUSTOMER' | 'ADMIN' | 'PHARMACY' | 'DELIVERY_AGENT'
   is_email_verified: boolean
   avatar_url?: string | null
   referral_code?: string | null
@@ -58,6 +58,50 @@ export interface AdminDeliveryAgent {
   is_online: boolean
   user_is_active: boolean
   created_at: string
+}
+
+export interface PharmacyListing {
+  id: string
+  medicine_id: string
+  medicine_name: string
+  medicine_image_url: string | null
+  medicine_price: string
+  stock_quantity: number
+  expiry_date: string
+  is_available: boolean
+  updated_at: string
+}
+
+export interface PharmacyFulfillmentRequest {
+  id: string
+  order_id: string
+  medicine_id: string
+  medicine_name: string
+  medicine_image_url: string | null
+  quantity: number
+  city: string | null
+  province: string | null
+  status: string
+  created_at: string
+}
+
+export interface PharmacyOrderFulfillmentItem {
+  medicine_id: string
+  medicine_name: string
+  quantity: number
+  unit_price: string
+}
+
+export interface PharmacyOrderFulfillment {
+  id: string
+  order_id: string
+  order_placed_at: string
+  status: string
+  items: PharmacyOrderFulfillmentItem[]
+  delivery_agent_name: string | null
+  city: string | null
+  accepted_at: string | null
+  delivered_at: string | null
 }
 
 export interface AuthTokens {

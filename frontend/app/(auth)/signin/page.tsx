@@ -33,7 +33,7 @@ export default function SignIn() {
       const res = await api.post<{ success: boolean; tokens: AuthTokens; user: User }>('/auth/login/', form)
       const { tokens, user } = res.data
       setAuth(user, tokens.access, tokens.refresh)
-      router.push(user.role === 'ADMIN' ? '/admin/dashboard' : '/dashboard')
+      router.push(user.role === 'ADMIN' ? '/admin/dashboard' : user.role === 'PHARMACY' ? '/pharmacy/inventory' : '/dashboard')
     } catch (err: any) {
       const code = err.response?.data?.code
       const msg = err.response?.data?.message

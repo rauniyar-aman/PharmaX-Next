@@ -14,6 +14,14 @@ class IsSuperAdmin(BasePermission):
         return bool(u and u.is_authenticated and u.role == 'ADMIN' and u.is_super_admin)
 
 
+class IsPharmacy(BasePermission):
+    """Pharmacy-dashboard endpoints. Role-only — every view still has to scope its queries to
+    request.user.pharmacy itself (via the OneToOneField on Pharmacy.user); this class doesn't
+    (and can't generically) enforce per-object ownership."""
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role == 'PHARMACY')
+
+
 def require_permission(code: str):
     """Factory: returns a permission class checking for a specific granted permission code.
     Super admins pass automatically regardless of code."""
