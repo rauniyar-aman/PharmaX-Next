@@ -105,6 +105,8 @@ export interface Address {
 }
 
 export type OrderStatus =
+  | 'BROADCASTING'
+  | 'AWAITING_PAYMENT'
   | 'PLACED'
   | 'CONFIRMED'
   | 'PROCESSING'
@@ -142,6 +144,22 @@ export interface Order {
   updated_at: string
   items: OrderItem[]
   shipping_address?: Address | null
+}
+
+export interface FulfillmentSummaryItem {
+  order_item_id: string
+  medicine_id: string
+  medicine_name: string
+  quantity: number
+  unit_price: string
+}
+
+export interface FulfillmentSummary {
+  order_status: OrderStatus
+  accepted_items: FulfillmentSummaryItem[]
+  unfulfilled_items: FulfillmentSummaryItem[]
+  pending_items: FulfillmentSummaryItem[]
+  all_resolved: boolean
 }
 
 export interface Prescription {

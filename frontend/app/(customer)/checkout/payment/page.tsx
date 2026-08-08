@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import { useCart } from '@/hooks/useCart'
+import type { FulfillmentSummary } from '@/types'
 
 const METHODS = [
   { id: 'CASH_ON_DELIVERY', label: 'Cash on Delivery', icon: 'payments', desc: 'Pay when your order arrives' },
@@ -13,9 +13,11 @@ const METHODS = [
 
 export default function CheckoutPaymentPage() {
   const router = useRouter()
-  const { cart } = useCart()
+  const [orderId, setOrderId] = useState<string | null>(null)
+  const [summary, setSummary] = useState<FulfillmentSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [method, setMethod] = useState('CASH_ON_DELIVERY')
-  const [notes, setNotes] = useState('')
   const [placing, setPlacing] = useState(false)
 
   const [couponInput, setCouponInput] = useState('')
@@ -26,20 +28,33 @@ export default function CheckoutPaymentPage() {
   const [useWallet, setUseWallet] = useState(false)
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if (!sessionStorage.getItem('checkoutAllowed')) { router.replace('/cart'); return }
-      if (!sessionStorage.getItem('checkoutAddress')) { router.replace('/checkout/shipping') }
-    }
+    const id = sessionStorage.getItem('checkoutOrderId')
+    if (!id) { router.replace('/checkout/shipping'); return }
+    setOrderId(id)
+
+    api.get<{ data: FulfillmentSummary }>(`/orders/${id}/fulfillment-summary/`)
+      .then((r) => {
+        const data = r.data.data
+        if (data.order_status !== 'AWAITING_PAYMENT') {
+          setLoadError('This order is no longer ready for payment. It may have already been paid, or the checkout session expired.')
+          return
+        }
+        if (data.accepted_items.length === 0) {
+          setLoadError('No items in this order were accepted by a nearby pharmacy — there is nothing to pay for.')
+          return
+        }
+        setSummary(data)
+      })
+      .catch(() => setLoadError('Could not load this order.'))
+      .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
     api.get('/wallet/').then((r) => setWalletBalance(Number(r.data.data.wallet.balance))).catch(() => {})
   }, [])
 
-  const hasRx = cart?.items.some((i) => i.medicine.type === 'Rx')
-
-  const items = cart?.items || []
-  const subtotal = items.reduce((s, i) => s + Number(i.medicine.price) * i.quantity, 0)
+  const items = summary?.accepted_items || []
+  const subtotal = items.reduce((s, i) => s + Number(i.unit_price) * i.quantity, 0)
   const delivery = subtotal >= 500 ? 0 : 50
   const couponDiscount = appliedCoupon ? Number(appliedCoupon.discount_amount) : 0
   const payableBeforeWallet = Math.max(0, subtotal + delivery - couponDiscount)
@@ -78,42 +93,35 @@ export default function CheckoutPaymentPage() {
     form.submit()
   }
 
+  const clearCheckoutSession = () => {
+    sessionStorage.removeItem('checkoutAllowed')
+    sessionStorage.removeItem('checkoutAddress')
+    sessionStorage.removeItem('checkoutNotes')
+    sessionStorage.removeItem('checkoutPrescription')
+    sessionStorage.removeItem('checkoutOrderId')
+  }
+
   const handlePlace = async () => {
-    const addressId = sessionStorage.getItem('checkoutAddress')
-    if (!addressId) { router.replace('/checkout/shipping'); return }
-
-    if (hasRx) {
-      sessionStorage.setItem('checkoutMethod', method)
-      sessionStorage.setItem('checkoutNotes', notes)
-      if (appliedCoupon) sessionStorage.setItem('checkoutCoupon', appliedCoupon.code)
-      else sessionStorage.removeItem('checkoutCoupon')
-      sessionStorage.setItem('checkoutUseWallet', useWallet ? 'true' : 'false')
-      router.push('/checkout/prescription')
-      return
-    }
-
+    if (!orderId) return
     setPlacing(true)
-    const payload: Record<string, any> = { address_id: addressId, notes }
+    const payload: Record<string, any> = { order_id: orderId }
     if (appliedCoupon) payload.coupon_code = appliedCoupon.code
     if (useWallet) payload.use_wallet = true
     try {
       if (method === 'ESEWA') {
         const res = await api.post('/payment/esewa/initiate/', payload)
-        sessionStorage.removeItem('checkoutAllowed')
-        sessionStorage.removeItem('checkoutAddress')
+        clearCheckoutSession()
         submitEsewaForm(res.data.data.formUrl, res.data.data.params)
         return
       }
       if (method === 'KHALTI') {
         const res = await api.post('/payment/khalti/initiate/', payload)
-        sessionStorage.removeItem('checkoutAllowed')
-        sessionStorage.removeItem('checkoutAddress')
+        clearCheckoutSession()
         window.location.href = res.data.data.payment_url
         return
       }
       const res = await api.post('/payment/cod/place/', payload)
-      sessionStorage.removeItem('checkoutAllowed')
-      sessionStorage.removeItem('checkoutAddress')
+      clearCheckoutSession()
       sessionStorage.setItem('lastOrderId', res.data.data.order.id)
       router.push('/checkout/confirmation')
     } catch (err: any) {
@@ -123,27 +131,39 @@ export default function CheckoutPaymentPage() {
     }
   }
 
+  if (loading) return <div className="flex items-center justify-center py-24"><div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
+
+  if (loadError) {
+    return (
+      <div className="max-w-md mx-auto text-center space-y-6 py-12">
+        <div className="w-16 h-16 mx-auto rounded-full bg-error/10 flex items-center justify-center">
+          <span className="material-symbols-outlined ms-filled text-error" style={{ fontSize: '32px' }}>error</span>
+        </div>
+        <div>
+          <h1 className="text-xl font-bold text-on-surface">Can't Continue to Payment</h1>
+          <p className="text-sm text-on-surface-variant mt-2">{loadError}</p>
+        </div>
+        <button onClick={() => { clearCheckoutSession(); router.push('/cart') }}
+          className="w-full py-3 border border-outline-variant text-on-surface-variant text-sm font-semibold rounded-2xl hover:bg-surface-container transition-colors">
+          Back to Cart
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-xl space-y-5">
       <div className="flex items-center gap-3 text-sm text-on-surface-variant">
         <span className="text-on-surface font-medium">1. Shipping</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span className="font-semibold text-primary">2. Payment</span>
+        <span className="text-on-surface font-medium">2. Availability</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span>3. Confirm</span>
+        <span className="font-semibold text-primary">3. Payment</span>
+        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
+        <span>4. Confirm</span>
       </div>
 
       <h1 className="text-2xl font-bold text-on-surface">Payment Method</h1>
-
-      {hasRx && (
-        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-4">
-          <span className="material-symbols-outlined ms-filled text-amber-600 mt-0.5" style={{ fontSize: '20px' }}>warning</span>
-          <div>
-            <p className="text-sm font-semibold text-amber-700">Prescription required</p>
-            <p className="text-xs text-amber-600 mt-0.5">Your cart has Rx medicines. You'll need to upload a prescription before placing the order.</p>
-          </div>
-        </div>
-      )}
 
       <div className="space-y-2">
         {METHODS.map((m) => (
@@ -192,15 +212,9 @@ export default function CheckoutPaymentPage() {
         )}
       </div>
 
-      <div>
-        <label className="text-xs font-medium text-on-surface-variant">Order Notes (optional)</label>
-        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-          placeholder="Any special instructions for delivery..."
-          className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant resize-none focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
-      </div>
-
       <div className="bg-surface rounded-2xl border border-outline-variant p-4 space-y-2 text-sm">
         <p className="font-bold text-on-surface text-sm">Order Total</p>
+        <p className="text-xs text-on-surface-variant">Charging only for the {items.length} item{items.length === 1 ? '' : 's'} a nearby pharmacy accepted.</p>
         <div className="flex justify-between text-on-surface-variant"><span>Subtotal</span><span className="text-on-surface">NPR {subtotal.toFixed(0)}</span></div>
         <div className="flex justify-between text-on-surface-variant"><span>Delivery</span><span className={delivery === 0 ? 'text-primary font-medium' : 'text-on-surface'}>{delivery === 0 ? 'Free' : `NPR ${delivery}`}</span></div>
         {couponDiscount > 0 && (
@@ -214,7 +228,7 @@ export default function CheckoutPaymentPage() {
 
       <button onClick={handlePlace} disabled={placing}
         className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
-        {placing ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />{method === 'ESEWA' ? 'Redirecting to eSewa...' : method === 'KHALTI' ? 'Redirecting to Khalti...' : 'Placing Order...'}</> : hasRx ? 'Continue to Prescription' : method === 'ESEWA' ? 'Pay with eSewa' : method === 'KHALTI' ? 'Pay with Khalti' : 'Place Order'}
+        {placing ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />{method === 'ESEWA' ? 'Redirecting to eSewa...' : method === 'KHALTI' ? 'Redirecting to Khalti...' : 'Placing Order...'}</> : method === 'ESEWA' ? 'Pay with eSewa' : method === 'KHALTI' ? 'Pay with Khalti' : 'Place Order'}
       </button>
     </div>
   )
