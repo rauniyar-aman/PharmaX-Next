@@ -1,25 +1,35 @@
-"""Pharmacy/delivery marketplace matching engine (Stages 2-6 of the marketplace spec).
+"""Pharmacy/delivery marketplace matching engine (Stages 2-7 of the marketplace spec).
 
 broadcast_order(), pharmacy_accept_item(), pharmacy_decline_item(), broadcast_delivery(),
 delivery_agent_accept(), update_agent_location(), collect_cash(), and mark_delivered() are
 internal functions with no logic of their own baked into views.py — Stage 5's pharmacy views call
 the pharmacy functions directly, Stage 6's delivery views call the delivery functions directly.
 The only pieces of this module that aren't called straight through from a thin view wrapper are
-sync_order_status() (called reactively by the functions above) and the admin/cron-callable expiry
-endpoint, which calls expire_stale_fulfillment_requests() and expire_stale_delivery_broadcasts().
+sync_order_status() (called reactively by the functions above), _create_settlement_records()
+(called from sync_order_status()'s PLACED -> DELIVERED transition, not exposed as its own view),
+and the admin/cron-callable expiry endpoint, which calls expire_stale_fulfillment_requests() and
+expire_stale_delivery_broadcasts().
 
 sync_order_status() is the single source of truth for Order.status transitions and is called
 reactively at the end of every function above that can change whether an order's items/deliveries
 are resolved — see its own docstring for the transition table.
+
+calculate_agent_payout() and _create_settlement_records() import _get_setting from .views inside
+the function body rather than at module level — views.py already imports from this module at
+import time, so a top-level `from .views import _get_setting` here would be a circular import.
 """
 from datetime import timedelta
+from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import F, Value, FloatField, ExpressionWrapper
 from django.db.models.functions import Radians, Sin, Cos, ASin, Sqrt, Power
 from django.utils import timezone
 
-from .models import Pharmacy, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, OrderItem, Order, Cart, Notification, DeliveryAgent
+from .models import (
+    Pharmacy, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, OrderItem, Order, Cart, Notification,
+    DeliveryAgent, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability,
+)
 
 BROADCAST_RADIUS_KM = 3
 BROADCAST_WINDOW_MINUTES = 10
@@ -321,6 +331,51 @@ def _all_items_resolved(order):
     return True
 
 
+def calculate_agent_payout(fulfillment):
+    """Isolated on purpose — this is the one function to change if the payout model ever moves
+    from flat-fee to percentage-of-delivery-charge."""
+    from .views import _get_setting
+    return Decimal(_get_setting('delivery_agent_payout_flat', '40'))
+
+
+def _create_settlement_records(order):
+    """Creates the PharmacyPayout (and, if a rider was involved, DeliveryAgentEarning /
+    DeliveryAgentCodLiability) records for every fulfillment on `order`, once — called from
+    sync_order_status()'s PLACED -> DELIVERED transition, which can legitimately fire more than
+    once, so this stays idempotent per fulfillment via the OneToOneField reverse-accessor check
+    below rather than assuming it only ever runs a single time."""
+    from .views import _get_setting
+    commission_rate = Decimal(_get_setting('pharmacy_commission_rate', '10'))
+    is_cod = order.payment_method == 'CASH_ON_DELIVERY'
+
+    for fulfillment in order.fulfillments.all():
+        if hasattr(fulfillment, 'pharmacy_payout'):
+            continue  # already created — sync_order_status can be called more than once, stay idempotent
+
+        gross = sum(i.unit_price * i.quantity for i in fulfillment.order_items.all())
+        commission = (gross * commission_rate / Decimal('100')).quantize(Decimal('0.01'))
+        PharmacyPayout.objects.create(
+            pharmacy=fulfillment.pharmacy, fulfillment=fulfillment,
+            gross_amount=gross, commission_rate=commission_rate, commission_amount=commission,
+            net_payable=gross - commission,
+            funding_source='PLATFORM_FUNDS' if is_cod else 'ORDER_REVENUE',
+        )
+
+        if fulfillment.delivery_agent_id:
+            # Always a real payable now — COD no longer self-settles this (see the liability
+            # record below for the separate, opposite-direction remittance the agent owes back).
+            DeliveryAgentEarning.objects.create(
+                agent=fulfillment.delivery_agent, fulfillment=fulfillment,
+                amount=calculate_agent_payout(fulfillment),
+            )
+
+            if is_cod:
+                DeliveryAgentCodLiability.objects.create(
+                    agent=fulfillment.delivery_agent, fulfillment=fulfillment,
+                    amount_collected=gross + fulfillment.delivery_charge,
+                )
+
+
 def _all_fulfillments_delivered(order):
     """True once the order has at least one OrderFulfillment and every one of them is DELIVERED."""
     fulfillments = list(order.fulfillments.all())
@@ -373,6 +428,7 @@ def sync_order_status(order):
                 order.payment_status = 'PAID'
                 update_fields.append('payment_status')
             order.save(update_fields=update_fields)
+            _create_settlement_records(order)
             Notification.objects.create(
                 user=order.user, type='ORDER_UPDATE', title='Order Delivered',
                 message=f'Your order #{str(order.id)[:8]} has been delivered.',

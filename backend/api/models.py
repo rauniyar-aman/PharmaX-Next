@@ -868,3 +868,69 @@ class FulfillmentRequest(models.Model):
 
     def __str__(self):
         return f'{self.pharmacy.name} — {self.order_item}'
+
+
+class PharmacyPayout(models.Model):
+    """One payout obligation, created when a fulfillment is DELIVERED — not earlier, to avoid
+    paying out on a delivery that could still be cancelled in transit."""
+    STATUS = [('PENDING', 'Pending'), ('PAID', 'Paid')]
+    FUNDING_SOURCE = [
+        ('ORDER_REVENUE', 'Order Revenue'),   # online-paid order — platform actually received this money
+        ('PLATFORM_FUNDS', 'Platform Funds'), # COD order — platform is paying out of its own pocket
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    pharmacy = models.ForeignKey(Pharmacy, on_delete=models.PROTECT, related_name='payouts')
+    fulfillment = models.OneToOneField(OrderFulfillment, on_delete=models.PROTECT, related_name='pharmacy_payout')
+    gross_amount = models.DecimalField(max_digits=10, decimal_places=2)     # medicine subtotal for this fulfillment
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=2)   # snapshot at creation time — rate changes later don't rewrite history
+    commission_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    net_payable = models.DecimalField(max_digits=10, decimal_places=2)      # gross - commission
+    funding_source = models.CharField(max_length=20, choices=FUNDING_SOURCE)
+    status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pharmacy_payouts'
+
+
+class DeliveryAgentEarning(models.Model):
+    """One earning record per completed delivery — always a real payable the platform owes the
+    agent for their delivery work, regardless of payment method. (COD no longer self-settles this —
+    see DeliveryAgentCodLiability for the separate, opposite-direction remittance tracking.)"""
+    STATUS = [('PENDING', 'Pending'), ('PAID', 'Paid')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    agent = models.ForeignKey(DeliveryAgent, on_delete=models.PROTECT, related_name='earnings')
+    fulfillment = models.OneToOneField(OrderFulfillment, on_delete=models.PROTECT, related_name='agent_earning')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'delivery_agent_earnings'
+
+
+class DeliveryAgentCodLiability(models.Model):
+    """The opposite direction from DeliveryAgentEarning: cash the agent is currently holding after
+    a COD delivery, which they owe back to the platform via office deposit or gateway top-up. One
+    per COD OrderFulfillment. This is what answers 'which agent still owes us money' — it did not
+    exist in the prior version of this spec because the business model at the time had agents keep
+    the cash permanently; that's been corrected."""
+    STATUS = [('PENDING', 'Pending'), ('REMITTED', 'Remitted')]
+    METHOD = [('CASH_DEPOSIT', 'Cash Deposit at Office'), ('GATEWAY_TOPUP', 'Gateway Top-up')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    agent = models.ForeignKey(DeliveryAgent, on_delete=models.PROTECT, related_name='cod_liabilities')
+    fulfillment = models.OneToOneField(OrderFulfillment, on_delete=models.PROTECT, related_name='cod_liability')
+    amount_collected = models.DecimalField(max_digits=10, decimal_places=2)  # full COD cash for this leg: medicine + this fulfillment's delivery_charge
+    status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
+    remittance_method = models.CharField(max_length=20, choices=METHOD, null=True, blank=True)
+    reference = models.CharField(max_length=255, null=True, blank=True)  # deposit slip #, gateway transaction id
+    remitted_at = models.DateTimeField(null=True, blank=True)
+    confirmed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'delivery_agent_cod_liabilities'
