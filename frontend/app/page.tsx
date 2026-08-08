@@ -101,6 +101,14 @@ export default function HomePage() {
     setHydrated(true)
   }, [])
 
+  // Every other customer-facing page bounces a logged-in admin to /admin/dashboard (see
+  // app/(customer)/layout.tsx) — this standalone top-level page didn't have that guard, so an
+  // admin browsing to "/" would see the full storefront instead. Logged-out visitors and
+  // customers are unaffected; only an authenticated ADMIN gets redirected.
+  useEffect(() => {
+    if (hydrated && user?.role === 'ADMIN') router.replace('/admin/dashboard')
+  }, [hydrated, user, router])
+
   const { medicines: newLaunches, loading: newLoading } = useMedicineRail({ sortBy: 'newest', limit: 10 })
   const { medicines: dealsPool, loading: dealsLoading } = useMedicineRail({ sortBy: 'price-asc', limit: 30 })
   const { medicines: topRated, loading: topLoading } = useMedicineRail({ sortBy: 'rating', limit: 10 })
@@ -129,6 +137,8 @@ export default function HomePage() {
     if (!user) { router.push('/signin'); return }
     await toggleWishlist(medId)
   }, [hydrated, user, router, toggleWishlist])
+
+  if (hydrated && user?.role === 'ADMIN') return null
 
   return (
     <div className="min-h-screen bg-background text-on-background">

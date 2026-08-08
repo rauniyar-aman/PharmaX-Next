@@ -89,7 +89,13 @@ def broadcast_order(order):
         for listing in eligible:
             # get_or_create rather than create: makes a re-broadcast of the same order safe to
             # call twice (unique_together on order_item+pharmacy would otherwise raise).
-            FulfillmentRequest.objects.get_or_create(order_item=item, pharmacy=listing.pharmacy)
+            _req, req_created = FulfillmentRequest.objects.get_or_create(order_item=item, pharmacy=listing.pharmacy)
+            if req_created:
+                Notification.objects.create(
+                    user=listing.pharmacy.user, type='NEW_FULFILLMENT_REQUEST', title='New Order Request',
+                    message=f'A nearby customer needs {item.medicine.name} × {item.quantity}.',
+                    link='/pharmacy/requests',
+                )
             created_any = True
 
         result['broadcast' if created_any else 'unfulfillable'].append(item.id)

@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { Fragment, useState, useEffect, useCallback } from 'react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
@@ -88,8 +88,8 @@ export default function AdminOrdersPage() {
               ) : orders.map((order) => {
                 const expanded = expandedId === order.id
                 return (
-                <>
-                  <tr key={order.id} onClick={() => setExpandedId(expanded ? null : order.id)}
+                <Fragment key={order.id}>
+                  <tr onClick={() => setExpandedId(expanded ? null : order.id)}
                     className="hover:bg-surface-container-low transition-colors cursor-pointer">
                     <td className="px-4 py-3 font-mono text-xs text-on-surface-variant">
                       <div className="flex items-center gap-1.5">
@@ -154,7 +154,7 @@ export default function AdminOrdersPage() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               )})}
             </tbody>
           </table>
