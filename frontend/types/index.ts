@@ -107,6 +107,8 @@ export interface PharmacyOrderFulfillment {
   payment_status: 'NOT_APPLICABLE' | 'PENDING' | 'PAID' | 'HIDDEN'
   payout_amount: string | null
   payout_paid_at: string | null
+  payout_gross_amount: string | null
+  payout_commission_amount: string | null
 }
 
 export interface PharmacyTeamMember {

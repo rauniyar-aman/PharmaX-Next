@@ -699,6 +699,8 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
     payment_status = serializers.SerializerMethodField()
     payout_amount = serializers.SerializerMethodField()
     payout_paid_at = serializers.SerializerMethodField()
+    payout_gross_amount = serializers.SerializerMethodField()
+    payout_commission_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderFulfillment
@@ -706,6 +708,7 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
             'id', 'order_id', 'order_placed_at', 'status', 'items',
             'delivery_agent_name', 'city', 'accepted_at', 'delivered_at',
             'payment_status', 'payout_amount', 'payout_paid_at',
+            'payout_gross_amount', 'payout_commission_amount',
         ]
 
     def get_payment_status(self, obj):
@@ -731,6 +734,19 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
             return None
         payout = getattr(obj, 'pharmacy_payout', None)
         return payout.paid_at if payout else None
+
+    def get_payout_gross_amount(self, obj):
+        # what the pharmacy actually earned on this order, before the platform's commission cut
+        if not self.context.get('show_finance', True):
+            return None
+        payout = getattr(obj, 'pharmacy_payout', None)
+        return str(payout.gross_amount) if payout else None
+
+    def get_payout_commission_amount(self, obj):
+        if not self.context.get('show_finance', True):
+            return None
+        payout = getattr(obj, 'pharmacy_payout', None)
+        return str(payout.commission_amount) if payout else None
 
     def get_items(self, obj):
         return [
