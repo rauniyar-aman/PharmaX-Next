@@ -5,8 +5,8 @@ import { useRouter, usePathname } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/auth'
 import { useThemeStore } from '@/store/theme'
+import { usePharmacyRequestsStore } from '@/store/pharmacyRequests'
 import Logo from '@/components/common/Logo'
-import api from '@/lib/api'
 import { playNotificationChime } from '@/lib/notificationSound'
 
 const NAV_ITEMS = [
@@ -15,13 +15,7 @@ const NAV_ITEMS = [
   { label: 'Orders',    href: '/pharmacy/orders',    icon: 'receipt_long' },
 ]
 
-const REQUEST_POLL_MS = 5000
-
-interface IncomingRequest {
-  id: string
-  medicine_name: string
-  quantity: number
-}
+const ALERT_TITLE = '🔴 New Request — PharmaX Pharmacy'
 
 function NewRequestToast({ count, onView, onDismiss }: { count: number; onView: () => void; onDismiss: () => void }) {
   return (
@@ -45,15 +39,64 @@ function NewRequestToast({ count, onView, onDismiss }: { count: number; onView: 
   )
 }
 
+function NotificationOptInBanner({ userId, onDismiss }: { userId: string; onDismiss: () => void }) {
+  const [requesting, setRequesting] = useState(false)
+
+  const enable = async () => {
+    setRequesting(true)
+    // Fire the chime synchronously inside this click handler — this is the genuine user gesture
+    // that unlocks the browser's AudioContext. Without it, the *first* real alert chime (the one
+    // that matters most, e.g. right after the pharmacy loads the page and walks away) can fail
+    // silently on browsers that require a gesture before any audio plays.
+    playNotificationChime()
+    try {
+      await Notification.requestPermission()
+    } catch {
+      // permission API unavailable/blocked — the banner still dismisses, chime still works
+    } finally {
+      localStorage.setItem(`pharmax-notif-banner-dismissed:${userId}`, '1')
+      setRequesting(false)
+      onDismiss()
+    }
+  }
+
+  const dismiss = () => {
+    localStorage.setItem(`pharmax-notif-banner-dismissed:${userId}`, '1')
+    onDismiss()
+  }
+
+  return (
+    <div className="bg-primary/5 border-b border-primary/20 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex items-center gap-2.5">
+        <span className="material-symbols-outlined text-primary" style={{ fontSize: '18px' }}>notifications</span>
+        <p className="text-xs sm:text-sm text-on-surface">Enable desktop alerts for new requests?</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={enable} disabled={requesting}
+          className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60">
+          {requesting ? 'Enabling...' : 'Enable'}
+        </button>
+        <button onClick={dismiss} className="px-3 py-1.5 text-xs font-semibold text-on-surface-variant hover:bg-surface-container rounded-lg transition-colors">
+          No thanks
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function PharmacyLayout({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)
-  const [pendingCount, setPendingCount] = useState(0)
+  const [showOptIn, setShowOptIn] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
   const { user, logout } = useAuthStore()
   const { dark, toggle: toggleDark } = useThemeStore()
-  const knownIdsRef = useRef<Set<string> | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const requests = usePharmacyRequestsStore((s) => s.requests)
+  const lastArrival = usePharmacyRequestsStore((s) => s.lastArrival)
+  const startPolling = usePharmacyRequestsStore((s) => s.startPolling)
+  const stopPolling = usePharmacyRequestsStore((s) => s.stopPolling)
+  const pendingCount = requests.length
+  const previousTitleRef = useRef<string | null>(null)
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
@@ -64,52 +107,84 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
     if (hydrated && !user) router.replace('/signin')
   }, [hydrated, user, router])
 
-  // Polls from the layout (not just the Requests page) so a pharmacy sitting on Inventory or
-  // Orders still gets alerted the instant a request comes in — this is the "not looking at the
-  // screen right now" case: the chime plays and a persistent toast appears regardless of which
-  // pharmacy page is open, then routes them to Requests on click.
+  // Single source of truth for the incoming-requests poll lives in the store — started once here
+  // so it runs across every pharmacy page (Inventory, Orders, ...), not just /pharmacy/requests.
   useEffect(() => {
     if (!hydrated || !user || user.role !== 'PHARMACY') return
+    startPolling()
+    return () => stopPolling()
+  }, [hydrated, user, startPolling, stopPolling])
 
-    const poll = async () => {
-      try {
-        const res = await api.get('/pharmacy/requests/')
-        const requests: IncomingRequest[] = res.data.data.requests || []
-        const currentIds = new Set(requests.map((r) => r.id))
-        setPendingCount(currentIds.size)
+  // Show the opt-in banner once per pharmacy account, unless they've already dismissed it or the
+  // browser doesn't support Notifications / already has a permission decision recorded.
+  useEffect(() => {
+    if (!hydrated || !user || user.role !== 'PHARMACY') return
+    if (typeof window === 'undefined' || !('Notification' in window)) return
+    if (Notification.permission !== 'default') return
+    const dismissed = localStorage.getItem(`pharmax-notif-banner-dismissed:${user.id}`)
+    setShowOptIn(!dismissed)
+  }, [hydrated, user])
 
-        if (knownIdsRef.current === null) {
-          // first poll after page load — these already existed, don't alert for them
-          knownIdsRef.current = currentIds
-          return
-        }
-
-        const newOnes = requests.filter((r) => !knownIdsRef.current!.has(r.id))
-        knownIdsRef.current = currentIds
-
-        if (newOnes.length > 0) {
-          playNotificationChime()
-          const toastId = `new-request-${Date.now()}`
-          toast.custom(
-            (t) => (
-              <NewRequestToast
-                count={newOnes.length}
-                onView={() => { toast.dismiss(t.id); router.push('/pharmacy/requests') }}
-                onDismiss={() => toast.dismiss(t.id)}
-              />
-            ),
-            { id: toastId, duration: 15000, position: 'top-right' },
-          )
-        }
-      } catch {
-        // transient network hiccup — next poll tick will retry, no need to alert on this
+  // Revert the flashed tab title once the pharmacy either refocuses the tab or navigates to
+  // Requests themselves — whichever happens first counts as "they've seen it."
+  useEffect(() => {
+    const revert = () => {
+      if (previousTitleRef.current !== null) {
+        document.title = previousTitleRef.current
+        previousTitleRef.current = null
       }
     }
+    const handleVisibility = () => { if (!document.hidden) revert() }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [])
 
-    poll()
-    pollRef.current = setInterval(poll, REQUEST_POLL_MS)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [hydrated, user, router])
+  useEffect(() => {
+    if (pathname === '/pharmacy/requests' && previousTitleRef.current !== null) {
+      document.title = previousTitleRef.current
+      previousTitleRef.current = null
+    }
+  }, [pathname])
+
+  // Fires on every genuinely-new batch of requests (see store): chime + toast always; if the tab
+  // is in the background, also flash the title and — if permission was granted via the opt-in
+  // banner — fire a real OS-level Notification, since neither the chime nor the toast is visible
+  // to someone who isn't looking at this tab at all.
+  useEffect(() => {
+    if (!lastArrival) return
+    playNotificationChime()
+
+    const toastId = `new-request-${lastArrival.at}`
+    toast.custom(
+      (t) => (
+        <NewRequestToast
+          count={lastArrival.items.length}
+          onView={() => { toast.dismiss(t.id); router.push('/pharmacy/requests') }}
+          onDismiss={() => toast.dismiss(t.id)}
+        />
+      ),
+      { id: toastId, duration: 15000, position: 'top-right' },
+    )
+
+    if (typeof document !== 'undefined' && document.hidden) {
+      if (previousTitleRef.current === null) previousTitleRef.current = document.title
+      document.title = ALERT_TITLE
+
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        const first = lastArrival.items[0]
+        const body = lastArrival.items.length > 1
+          ? `${lastArrival.items.length} new requests, including ${first.medicine_name}`
+          : `${first.medicine_name} × ${first.quantity}`
+        const n = new Notification('New Order Request — PharmaX', { body, icon: '/PharmaX_Icon.png', tag: 'pharmax-new-request' })
+        n.onclick = () => {
+          window.focus()
+          router.push('/pharmacy/requests')
+          n.close()
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastArrival])
 
   if (!hydrated || !user) {
     return (
@@ -190,6 +265,7 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
             )
           })}
         </nav>
+        {showOptIn && <NotificationOptInBanner userId={user.id} onDismiss={() => setShowOptIn(false)} />}
       </header>
 
       <main className="max-w-[1200px] mx-auto px-4 sm:px-6 py-6">{children}</main>
