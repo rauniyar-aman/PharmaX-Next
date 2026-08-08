@@ -787,6 +787,23 @@ class Pharmacy(models.Model):
         return self.name
 
 
+class PharmacyTeamMember(models.Model):
+    """An additional login a pharmacy owner can grant to help manage requests/orders. The owner's
+    own login is Pharmacy.user (OneToOneField) — this model is only for the extra seats beyond
+    that, capped at 3 in the view layer. A team member's User row still has role='PHARMACY', so
+    IsPharmacy still gates access; get_managed_pharmacy() resolves which pharmacy they act for."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, related_name='team_members')
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='pharmacy_membership')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pharmacy_team_members'
+
+    def __str__(self):
+        return f'{self.user.full_name} @ {self.pharmacy.name}'
+
+
 class PharmacyMedicineListing(models.Model):
     """A pharmacy's claim that they stock a given medicine, with their own batch expiry/stock."""
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)

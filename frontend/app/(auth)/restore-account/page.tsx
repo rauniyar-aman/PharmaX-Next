@@ -77,7 +77,7 @@ function RestoreAccountForm() {
       toast.success('Account restored! Welcome back.')
       router.push(
         user.role === 'ADMIN' ? '/admin/dashboard'
-        : user.role === 'PHARMACY' ? '/pharmacy/inventory'
+        : user.role === 'PHARMACY' ? '/pharmacy/dashboard'
         : user.role === 'DELIVERY_AGENT' ? '/delivery/requests'
         : '/dashboard'
       )

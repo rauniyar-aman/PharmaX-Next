@@ -35,7 +35,7 @@ export default function SignIn() {
       setAuth(user, tokens.access, tokens.refresh)
       router.push(
         user.role === 'ADMIN' ? '/admin/dashboard'
-        : user.role === 'PHARMACY' ? '/pharmacy/inventory'
+        : user.role === 'PHARMACY' ? '/pharmacy/dashboard'
         : user.role === 'DELIVERY_AGENT' ? '/delivery/requests'
         : '/dashboard'
       )

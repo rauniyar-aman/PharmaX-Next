@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability
+from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -696,13 +696,33 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
     items = serializers.SerializerMethodField()
     delivery_agent_name = serializers.SerializerMethodField()
     city = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
+    payout_amount = serializers.SerializerMethodField()
+    payout_paid_at = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderFulfillment
         fields = [
             'id', 'order_id', 'order_placed_at', 'status', 'items',
             'delivery_agent_name', 'city', 'accepted_at', 'delivered_at',
+            'payment_status', 'payout_amount', 'payout_paid_at',
         ]
+
+    def get_payment_status(self, obj):
+        # PharmacyPayout is only created once the fulfillment is DELIVERED (see
+        # _create_settlement_records) — before that there's nothing to be paid yet.
+        payout = getattr(obj, 'pharmacy_payout', None)
+        if not payout:
+            return 'NOT_APPLICABLE'
+        return payout.status  # 'PENDING' or 'PAID'
+
+    def get_payout_amount(self, obj):
+        payout = getattr(obj, 'pharmacy_payout', None)
+        return str(payout.net_payable) if payout else None
+
+    def get_payout_paid_at(self, obj):
+        payout = getattr(obj, 'pharmacy_payout', None)
+        return payout.paid_at if payout else None
 
     def get_items(self, obj):
         return [
@@ -719,6 +739,35 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
     def get_city(self, obj):
         addr = obj.order.address
         return addr.city if addr else None
+
+
+class PharmacyTeamMemberSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(source='user.full_name', read_only=True)
+    email = serializers.CharField(source='user.email', read_only=True)
+    phone = serializers.CharField(source='user.phone', read_only=True)
+    is_active = serializers.BooleanField(source='user.is_active', read_only=True)
+
+    class Meta:
+        model = PharmacyTeamMember
+        fields = ['id', 'full_name', 'email', 'phone', 'is_active', 'created_at']
+        read_only_fields = fields
+
+
+class PharmacyTeamMemberCreateSerializer(serializers.Serializer):
+    full_name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    phone = serializers.CharField(max_length=20)
+    password = serializers.CharField(min_length=6, write_only=True)
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Email already registered.')
+        return value
+
+    def validate_phone(self, value):
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError('Phone number already registered.')
+        return value
 
 
 # ─── Delivery dashboard (Stage 6) ──────────────────────────────────────────────

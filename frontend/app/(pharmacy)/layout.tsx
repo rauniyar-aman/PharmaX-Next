@@ -3,39 +3,100 @@ import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import toast from 'react-hot-toast'
+import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { useThemeStore } from '@/store/theme'
 import { usePharmacyRequestsStore } from '@/store/pharmacyRequests'
 import Logo from '@/components/common/Logo'
-import { playNotificationChime } from '@/lib/notificationSound'
+import { playNotificationChime, startRepeatingChime, stopRepeatingChime } from '@/lib/notificationSound'
+import type { PharmacyFulfillmentRequest } from '@/types'
 
 const NAV_ITEMS = [
+  { label: 'Dashboard', href: '/pharmacy/dashboard', icon: 'space_dashboard' },
   { label: 'Inventory', href: '/pharmacy/inventory', icon: 'inventory_2' },
   { label: 'Requests',  href: '/pharmacy/requests',  icon: 'inbox' },
   { label: 'Orders',    href: '/pharmacy/orders',    icon: 'receipt_long' },
+  { label: 'Team',      href: '/pharmacy/team',      icon: 'group' },
 ]
 
 const ALERT_TITLE = '🔴 New Request — PharmaX Pharmacy'
 
-function NewRequestToast({ count, onView, onDismiss }: { count: number; onView: () => void; onDismiss: () => void }) {
+/** Large, centered, blocking-by-default alert — replaces the old small top-right toast. Shows
+ * every currently-pending request (not just the newest arrival) with direct Accept/Decline, so
+ * the pharmacy can clear its whole backlog without leaving whatever page it's on. It can be
+ * minimized to a small pill, but the repeating chime (wired in the layout below) keeps playing
+ * regardless of minimized state until every pending request has actually been reviewed. */
+function NewRequestModal({
+  requests, respondingId, onRespond, onMinimize,
+}: {
+  requests: PharmacyFulfillmentRequest[]
+  respondingId: string | null
+  onRespond: (id: string, action: 'accept' | 'decline') => void
+  onMinimize: () => void
+}) {
   return (
-    <div className="flex items-start gap-3 bg-surface border-2 border-primary rounded-2xl shadow-2xl p-4 w-80">
-      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-        <span className="material-symbols-outlined ms-filled text-primary" style={{ fontSize: '22px' }}>notifications_active</span>
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-bold text-on-surface">{count > 1 ? `${count} New Order Requests!` : 'New Order Request!'}</p>
-        <p className="text-xs text-on-surface-variant mt-0.5">A nearby customer needs a medicine you carry.</p>
-        <div className="flex gap-2 mt-2">
-          <button onClick={onView} className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity">
-            Review Now
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="w-full max-w-lg max-h-[85vh] flex flex-col bg-surface border-2 border-primary rounded-3xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex items-start gap-4 p-6 pb-4 border-b border-outline-variant">
+          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <span className="material-symbols-outlined ms-filled text-primary" style={{ fontSize: '30px' }}>notifications_active</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xl font-bold text-on-surface">
+              {requests.length > 1 ? `${requests.length} New Order Requests!` : 'New Order Request!'}
+            </p>
+            <p className="text-sm text-on-surface-variant mt-0.5">Nearby customers need medicines you carry. Review below.</p>
+          </div>
+          <button onClick={onMinimize} title="Minimize (sound continues until reviewed)"
+            className="p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors flex-shrink-0">
+            <span className="material-symbols-outlined" style={{ fontSize: '22px' }}>close</span>
           </button>
-          <button onClick={onDismiss} className="px-3 py-1.5 text-xs font-semibold text-on-surface-variant hover:bg-surface-container rounded-lg transition-colors">
-            Dismiss
-          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {requests.map((req) => (
+            <div key={req.id} className="bg-surface-container-low rounded-2xl p-4 flex items-center justify-between gap-4 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-on-surface">{req.medicine_name} <span className="font-normal text-on-surface-variant">× {req.quantity}</span></p>
+                <p className="text-xs text-on-surface-variant mt-0.5 flex items-center gap-1">
+                  <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>location_on</span>
+                  {req.city || 'Unknown area'}{req.province ? `, ${req.province}` : ''}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => onRespond(req.id, 'accept')} disabled={respondingId === req.id}
+                  className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
+                  Accept
+                </button>
+                <button onClick={() => onRespond(req.id, 'decline')} disabled={respondingId === req.id}
+                  className="px-4 py-2 border border-outline-variant text-on-surface-variant text-xs font-semibold rounded-xl hover:bg-surface-container transition-colors disabled:opacity-60">
+                  Decline
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="px-6 py-3 border-t border-outline-variant bg-surface-container-lowest">
+          <p className="text-[11px] text-on-surface-variant text-center">
+            The alert sound will keep repeating until every request above is accepted or declined.
+          </p>
         </div>
       </div>
     </div>
+  )
+}
+
+/** Small floating pill shown once the modal has been minimized while requests are still pending
+ * — clicking it reopens the full modal. The chime keeps playing whether this or the modal is
+ * showing, so this is purely a "less intrusive but still visible" state, not a dismissal. */
+function MinimizedPill({ count, onClick }: { count: number; onClick: () => void }) {
+  return (
+    <button onClick={onClick}
+      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-2 bg-primary text-on-primary px-5 py-3 rounded-full shadow-2xl hover:opacity-90 transition-opacity animate-pulse">
+      <span className="material-symbols-outlined ms-filled" style={{ fontSize: '20px' }}>notifications_active</span>
+      <span className="text-sm font-bold">{count} pending request{count > 1 ? 's' : ''} — tap to review</span>
+    </button>
   )
 }
 
@@ -87,6 +148,8 @@ function NotificationOptInBanner({ userId, onDismiss }: { userId: string; onDism
 export default function PharmacyLayout({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)
   const [showOptIn, setShowOptIn] = useState(false)
+  const [showModal, setShowModal] = useState(false)
+  const [respondingId, setRespondingId] = useState<string | null>(null)
   const router = useRouter()
   const pathname = usePathname()
   const { user, logout } = useAuthStore()
@@ -95,8 +158,27 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
   const lastArrival = usePharmacyRequestsStore((s) => s.lastArrival)
   const startPolling = usePharmacyRequestsStore((s) => s.startPolling)
   const stopPolling = usePharmacyRequestsStore((s) => s.stopPolling)
+  const removeRequest = usePharmacyRequestsStore((s) => s.removeRequest)
   const pendingCount = requests.length
   const previousTitleRef = useRef<string | null>(null)
+  const hasAutoOpenedRef = useRef(false)
+
+  const respond = async (id: string, action: 'accept' | 'decline') => {
+    setRespondingId(id)
+    try {
+      await api.post(`/pharmacy/requests/${id}/${action}/`)
+      removeRequest(id)
+      toast.success(action === 'accept' ? 'Accepted! Check Orders for pickup details.' : 'Declined.')
+    } catch (err: any) {
+      const msg = err.response?.data?.message || `Failed to ${action}.`
+      // expired, or another team member on this pharmacy already responded — either way it's no
+      // longer actionable, so drop it from the list rather than leaving a dead button.
+      removeRequest(id)
+      toast.error(msg)
+    } finally {
+      setRespondingId(null)
+    }
+  }
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
@@ -146,25 +228,13 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
     }
   }, [pathname])
 
-  // Fires on every genuinely-new batch of requests (see store): chime + toast always; if the tab
-  // is in the background, also flash the title and — if permission was granted via the opt-in
-  // banner — fire a real OS-level Notification, since neither the chime nor the toast is visible
-  // to someone who isn't looking at this tab at all.
+  // Fires on every genuinely-new batch of requests (see store): pop the large centered alert
+  // modal always; if the tab is in the background, also flash the title and — if permission was
+  // granted via the opt-in banner — fire a real OS-level Notification, since none of the on-page
+  // signals are visible to someone who isn't looking at this tab at all.
   useEffect(() => {
     if (!lastArrival) return
-    playNotificationChime()
-
-    const toastId = `new-request-${lastArrival.at}`
-    toast.custom(
-      (t) => (
-        <NewRequestToast
-          count={lastArrival.items.length}
-          onView={() => { toast.dismiss(t.id); router.push('/pharmacy/requests') }}
-          onDismiss={() => toast.dismiss(t.id)}
-        />
-      ),
-      { id: toastId, duration: 15000, position: 'top-right' },
-    )
+    setShowModal(true)
 
     if (typeof document !== 'undefined' && document.hidden) {
       if (previousTitleRef.current === null) previousTitleRef.current = document.title
@@ -185,6 +255,31 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastArrival])
+
+  // Auto-open the modal once if there's already a backlog waiting when the dashboard first loads
+  // (not just on a fresh arrival) — a pharmacy that logs in to 4 pending requests should see them
+  // immediately, not just find out from the nav badge.
+  useEffect(() => {
+    if (hasAutoOpenedRef.current) return
+    if (pendingCount > 0) {
+      hasAutoOpenedRef.current = true
+      setShowModal(true)
+    }
+  }, [pendingCount])
+
+  // The alert sound repeats — independent of whether the modal is open, minimized, or the
+  // pharmacy has navigated elsewhere entirely — until every pending request is actually accepted
+  // or declined (pendingCount hits 0), per the "play sound until reviewed" requirement.
+  useEffect(() => {
+    if (pendingCount > 0) startRepeatingChime()
+    else stopRepeatingChime()
+  }, [pendingCount])
+  useEffect(() => () => stopRepeatingChime(), [])
+
+  // Once the backlog clears (last one accepted/declined), close the modal automatically.
+  useEffect(() => {
+    if (pendingCount === 0) setShowModal(false)
+  }, [pendingCount])
 
   if (!hydrated || !user) {
     return (
@@ -269,6 +364,18 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
       </header>
 
       <main className="max-w-[1200px] mx-auto px-4 sm:px-6 py-6">{children}</main>
+
+      {showModal && pendingCount > 0 && (
+        <NewRequestModal
+          requests={requests}
+          respondingId={respondingId}
+          onRespond={respond}
+          onMinimize={() => setShowModal(false)}
+        />
+      )}
+      {!showModal && pendingCount > 0 && (
+        <MinimizedPill count={pendingCount} onClick={() => setShowModal(true)} />
+      )}
     </div>
   )
 }
