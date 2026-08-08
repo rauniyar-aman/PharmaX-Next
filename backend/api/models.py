@@ -21,7 +21,7 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    ROLES = [('CUSTOMER', 'Customer'), ('ADMIN', 'Admin')]
+    ROLES = [('CUSTOMER', 'Customer'), ('ADMIN', 'Admin'), ('PHARMACY', 'Pharmacy'), ('DELIVERY_AGENT', 'Delivery Agent')]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     full_name = models.CharField(max_length=255)
@@ -221,6 +221,8 @@ class CartItem(models.Model):
 
 class Order(models.Model):
     ORDER_STATUS = [
+        ('BROADCASTING', 'Broadcasting'),
+        ('AWAITING_PAYMENT', 'Awaiting Payment'),
         ('PLACED', 'Placed'),
         ('CONFIRMED', 'Confirmed'),
         ('PROCESSING', 'Processing'),
@@ -271,6 +273,7 @@ class OrderItem(models.Model):
     quantity = models.IntegerField()
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
     prescription = models.ForeignKey(Prescription, on_delete=models.SET_NULL, null=True, blank=True, related_name='order_items')
+    fulfillment = models.ForeignKey('OrderFulfillment', on_delete=models.SET_NULL, null=True, blank=True, related_name='order_items')
 
     class Meta:
         db_table = 'order_items'
@@ -760,3 +763,107 @@ class SystemSetting(models.Model):
 
     def __str__(self):
         return self.key
+
+
+# ─── Marketplace: Pharmacies & Delivery ────────────────────────────────────────
+
+class Pharmacy(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='pharmacy')  # login identity
+    name = models.CharField(max_length=255)
+    license_number = models.CharField(max_length=100, unique=True)
+    phone = models.CharField(max_length=20)
+    address = models.TextField()
+    lat = models.FloatField()
+    lng = models.FloatField()
+    is_verified = models.BooleanField(default=False)   # admin must verify before it can receive orders
+    is_active = models.BooleanField(default=True)       # pharmacy can toggle themselves offline
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pharmacies'
+
+    def __str__(self):
+        return self.name
+
+
+class PharmacyMedicineListing(models.Model):
+    """A pharmacy's claim that they stock a given medicine, with their own batch expiry/stock."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, related_name='listings')
+    medicine = models.ForeignKey(Medicine, on_delete=models.CASCADE, related_name='pharmacy_listings')
+    stock_quantity = models.PositiveIntegerField(default=0)
+    expiry_date = models.DateField()
+    is_available = models.BooleanField(default=True)   # pharmacy can pause a listing without deleting it
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'pharmacy_medicine_listings'
+        unique_together = ('pharmacy', 'medicine')
+        indexes = [models.Index(fields=['medicine', 'is_available'])]
+
+    def __str__(self):
+        return f'{self.pharmacy.name} — {self.medicine.name}'
+
+
+class DeliveryAgent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='delivery_agent')
+    phone = models.CharField(max_length=20)
+    vehicle_type = models.CharField(max_length=50, blank=True, null=True)  # bike, scooter, etc
+    lat = models.FloatField(null=True, blank=True)   # live/last-known location
+    lng = models.FloatField(null=True, blank=True)
+    is_verified = models.BooleanField(default=False)
+    is_online = models.BooleanField(default=False)    # agent toggles this to receive requests at all
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'delivery_agents'
+
+    def __str__(self):
+        return self.user.full_name
+
+
+class OrderFulfillment(models.Model):
+    """One pharmacy's slice of an Order. An Order with items split across 2 pharmacies has 2 of these."""
+    STATUS = [
+        ('BROADCASTING', 'Broadcasting'),      # request sent to nearby pharmacies, awaiting response
+        ('ACCEPTED', 'Accepted'),               # pharmacy confirmed, awaiting overall order payment
+        ('NO_PHARMACY_FOUND', 'No Pharmacy Found'),
+        ('AWAITING_DELIVERY', 'Awaiting Delivery'),  # paid/COD-confirmed, needs a rider
+        ('OUT_FOR_DELIVERY', 'Out for Delivery'),
+        ('DELIVERED', 'Delivered'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='fulfillments')
+    pharmacy = models.ForeignKey(Pharmacy, on_delete=models.PROTECT, null=True, blank=True, related_name='fulfillments')
+    delivery_agent = models.ForeignKey(DeliveryAgent, on_delete=models.SET_NULL, null=True, blank=True, related_name='fulfillments')
+    status = models.CharField(max_length=20, choices=STATUS, default='BROADCASTING')
+    delivery_charge = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'order_fulfillments'
+
+    def __str__(self):
+        return f'Fulfillment {self.id} — Order {self.order_id}'
+
+
+class FulfillmentRequest(models.Model):
+    """One broadcast: one medicine, from one order, offered to one nearby pharmacy."""
+    STATUS = [('PENDING', 'Pending'), ('ACCEPTED', 'Accepted'), ('DECLINED', 'Declined'), ('EXPIRED', 'Expired')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    order_item = models.ForeignKey(OrderItem, on_delete=models.CASCADE, related_name='fulfillment_requests')
+    pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, related_name='fulfillment_requests')
+    status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
+    responded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'fulfillment_requests'
+        unique_together = ('order_item', 'pharmacy')
+
+    def __str__(self):
+        return f'{self.pharmacy.name} — {self.order_item}'
