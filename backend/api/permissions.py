@@ -22,6 +22,14 @@ class IsPharmacy(BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.role == 'PHARMACY')
 
 
+class IsDeliveryAgent(BasePermission):
+    """Delivery-dashboard endpoints. Same shape as IsPharmacy — role-only. Every view still has
+    to scope to request.user.delivery_agent itself (via the OneToOneField on
+    DeliveryAgent.user)."""
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role == 'DELIVERY_AGENT')
+
+
 def require_permission(code: str):
     """Factory: returns a permission class checking for a specific granted permission code.
     Super admins pass automatically regardless of code."""
