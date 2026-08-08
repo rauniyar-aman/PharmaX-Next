@@ -7,6 +7,8 @@ import { useThemeStore } from '@/store/theme'
 import { resolveImg } from '@/lib/resolveImg'
 import api from '@/lib/api'
 import AdminSidebar from '@/components/admin/AdminSidebar'
+import { useNotifications } from '@/hooks/useNotifications'
+import NotificationPanel from '@/components/notifications/NotificationPanel'
 
 const PAGE_TITLES: Record<string, { title: string; icon: string }> = {
   '/admin/dashboard':     { title: 'Dashboard',           icon: 'dashboard' },
@@ -32,10 +34,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [collapsed, setCollapsed] = useState(false)
   const [hydrated, setHydrated] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [notifOpen, setNotifOpen] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
   const { user, logout } = useAuthStore()
   const { dark, toggle: toggleDark } = useThemeStore()
+  const { notifs, loading: notifLoading, unread, markRead, markAllRead, deleteOne, clearAll } = useNotifications()
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
@@ -109,46 +113,75 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 {dark ? 'light_mode' : 'dark_mode'}
               </span>
             </button>
-          </div>
 
-          <div className="relative">
-            <button onClick={() => setUserMenuOpen((o) => !o)}
-              className="flex items-center gap-2.5 pl-1 pr-3 py-1.5 rounded-xl hover:bg-surface-container transition-colors">
-              <div className="w-8 h-8 rounded-full bg-primary text-on-primary flex items-center justify-center text-sm font-bold flex-shrink-0 overflow-hidden">
-                {avatarSrc ? <img src={avatarSrc} className="w-full h-full object-cover" alt="" /> : user.full_name?.[0]?.toUpperCase() || 'A'}
-              </div>
-              <div className="hidden md:block text-left">
-                <p className="text-sm font-bold text-on-surface leading-tight">{user.full_name}</p>
-                <p className="text-[10px] text-on-surface-variant leading-tight">Administrator</p>
-              </div>
-            </button>
-            {userMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                <div className="absolute right-0 top-12 w-52 bg-surface border border-outline-variant rounded-2xl shadow-xl z-50 overflow-hidden py-1.5">
-                  <Link href="/admin/profile" onClick={() => setUserMenuOpen(false)}
-                    className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-on-surface hover:bg-surface-container-low transition-colors">
-                    <span className="material-symbols-outlined" style={{ fontSize: '19px' }}>manage_accounts</span>
-                    Profile
-                  </Link>
-                  {user.is_super_admin && (
-                    <Link href="/admin/settings" onClick={() => setUserMenuOpen(false)}
-                      className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-on-surface hover:bg-surface-container-low transition-colors">
-                      <span className="material-symbols-outlined" style={{ fontSize: '19px' }}>settings</span>
-                      Settings
-                    </Link>
-                  )}
-                  <div className="my-1 border-t border-outline-variant" />
-                  <button
-                    onClick={() => { setUserMenuOpen(false); logout(); router.push('/signin') }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-error hover:bg-error-container transition-colors"
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: '19px' }}>logout</span>
-                    Logout
-                  </button>
+            <div className="relative">
+              <button onClick={() => setNotifOpen((o) => !o)}
+                className="relative p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors">
+                <span className="material-symbols-outlined" style={{ fontSize: '22px' }}>notifications</span>
+                {unread > 0 && (
+                  <span className="absolute top-1 right-1 min-w-[16px] h-4 bg-error text-white text-[9px] font-bold rounded-full flex items-center justify-center px-1 leading-none border-2 border-surface-container-lowest">
+                    {unread > 9 ? '9+' : unread}
+                  </span>
+                )}
+              </button>
+              {notifOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
+                  <div className="absolute right-0 top-12 w-80 bg-surface border border-outline-variant rounded-2xl shadow-xl z-50 overflow-hidden">
+                    <NotificationPanel
+                      notifs={notifs}
+                      loading={notifLoading}
+                      unread={unread}
+                      onMarkRead={markRead}
+                      onMarkAllRead={markAllRead}
+                      onDeleteOne={deleteOne}
+                      onClearAll={clearAll}
+                      onClose={() => setNotifOpen(false)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="relative">
+              <button onClick={() => setUserMenuOpen((o) => !o)}
+                className="flex items-center gap-2.5 pl-1 pr-3 py-1.5 rounded-xl hover:bg-surface-container transition-colors">
+                <div className="w-8 h-8 rounded-full bg-primary text-on-primary flex items-center justify-center text-sm font-bold flex-shrink-0 overflow-hidden">
+                  {avatarSrc ? <img src={avatarSrc} className="w-full h-full object-cover" alt="" /> : user.full_name?.[0]?.toUpperCase() || 'A'}
                 </div>
-              </>
-            )}
+                <div className="hidden md:block text-left">
+                  <p className="text-sm font-bold text-on-surface leading-tight">{user.full_name}</p>
+                  <p className="text-[10px] text-on-surface-variant leading-tight">Administrator</p>
+                </div>
+              </button>
+              {userMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
+                  <div className="absolute right-0 top-12 w-52 bg-surface border border-outline-variant rounded-2xl shadow-xl z-50 overflow-hidden py-1.5">
+                    <Link href="/admin/profile" onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-on-surface hover:bg-surface-container-low transition-colors">
+                      <span className="material-symbols-outlined" style={{ fontSize: '19px' }}>manage_accounts</span>
+                      Profile
+                    </Link>
+                    {user.is_super_admin && (
+                      <Link href="/admin/settings" onClick={() => setUserMenuOpen(false)}
+                        className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-on-surface hover:bg-surface-container-low transition-colors">
+                        <span className="material-symbols-outlined" style={{ fontSize: '19px' }}>settings</span>
+                        Settings
+                      </Link>
+                    )}
+                    <div className="my-1 border-t border-outline-variant" />
+                    <button
+                      onClick={() => { setUserMenuOpen(false); logout(); router.push('/signin') }}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-error hover:bg-error-container transition-colors"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: '19px' }}>logout</span>
+                      Logout
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </header>
 

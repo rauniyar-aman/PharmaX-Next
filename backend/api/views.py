@@ -811,6 +811,12 @@ class PrescriptionListView(APIView):
             for f in files
         ]
 
+        _notify_admins(
+            'manage_prescriptions', 'NEW_PRESCRIPTION', 'New Prescription Uploaded',
+            f'{request.user.full_name} uploaded {len(created)} prescription{"s" if len(created) != 1 else ""} for review.',
+            link='/admin/prescriptions',
+        )
+
         data = PrescriptionSerializer(created, many=True, context={'request': request}).data
         return Response(
             {'success': True, 'data': {'prescriptions': data, 'prescription': data[0]}},
@@ -854,6 +860,17 @@ def _has_active_plus(user):
     except PlusMembership.DoesNotExist:
         return False
     return membership.is_active
+
+
+def _notify_admins(permission_code, notif_type, title, message, link=None):
+    """Notifies every admin who holds `permission_code`, plus every super admin."""
+    admins = User.objects.filter(role='ADMIN', is_active=True).filter(
+        Q(is_super_admin=True) | Q(permissions__code=permission_code)
+    ).distinct()
+    Notification.objects.bulk_create([
+        Notification(user=admin, type=notif_type, title=title, message=message, link=link)
+        for admin in admins
+    ])
 
 
 def _validate_coupon(code, user, subtotal):
@@ -1041,6 +1058,11 @@ def _create_order_from_cart(user, address_id, prescription_id, payment_method, n
         message=f'Your order #{str(order.id)[:8]} has been placed successfully.',
         link=f'/orders/{order.id}',
     )
+    _notify_admins(
+        'manage_orders', 'NEW_ORDER', 'New Order',
+        f'{user.full_name} placed a new order #{str(order.id)[:8]} for NPR {order.total_amount}.',
+        link='/admin/orders',
+    )
     return order, None
 
 
@@ -1207,6 +1229,11 @@ def _finalize_paid_order(order):
         message=f'Payment for order #{str(order.id)[:8]} was received successfully.',
         link=f'/orders/{order.id}',
     )
+    _notify_admins(
+        'manage_orders', 'PAYMENT_UPDATE', 'Payment Received',
+        f'Payment received for order #{str(order.id)[:8]} from {order.user.full_name} (NPR {order.total_amount}).',
+        link='/admin/orders',
+    )
 
 
 def _cancel_unpaid_order(order):
@@ -1272,7 +1299,7 @@ class EsewaFailureView(APIView):
 
 def _khalti_post(path, body):
     resp = requests.post(f'{KHALTI_API_URL}{path}', json=body, headers={
-        'Authorization': f'Key {KHALTI_SECRET_KEY}',
+        'Authorization': f'key {KHALTI_SECRET_KEY}',
         'Content-Type': 'application/json',
     }, timeout=15)
     return resp.json()
@@ -1295,6 +1322,12 @@ class PaymentKhaltiInitiateView(APIView):
             return err
 
         amount_paisa = int(round(float(order.total_amount) * 100))
+        if amount_paisa < 1000:
+            _release_order_holds(order)
+            Notification.objects.filter(user=request.user, link=f'/orders/{order.id}').delete()
+            order.delete()
+            return Response({'success': False, 'message': 'Khalti requires a minimum payable amount of NPR 10. Please choose another payment method.'}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             khalti_res = _khalti_post('/epayment/initiate/', {
                 'return_url': f'{BACKEND_URL}/api/payment/khalti/verify/',
@@ -1310,11 +1343,13 @@ class PaymentKhaltiInitiateView(APIView):
             })
         except Exception:
             _release_order_holds(order)
+            Notification.objects.filter(user=request.user, link=f'/orders/{order.id}').delete()
             order.delete()
             return Response({'success': False, 'message': 'Failed to reach Khalti.'}, status=status.HTTP_502_BAD_GATEWAY)
 
         if not khalti_res.get('pidx'):
             _release_order_holds(order)
+            Notification.objects.filter(user=request.user, link=f'/orders/{order.id}').delete()
             order.delete()
             return Response({'success': False, 'message': khalti_res.get('detail') or khalti_res.get('message') or 'Khalti initiation failed.'}, status=status.HTTP_502_BAD_GATEWAY)
 
@@ -1469,6 +1504,12 @@ class LabTestBookingListCreateView(APIView):
         )
         lab_test.total_bookings = F('total_bookings') + 1
         lab_test.save(update_fields=['total_bookings'])
+
+        _notify_admins(
+            'manage_lab_tests', 'NEW_LAB_BOOKING', 'New Lab Test Booking',
+            f'{request.user.full_name} booked {lab_test.name} for {booking.scheduled_date}.',
+            link='/admin/lab-tests',
+        )
 
         return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Lab test booked!'}, status=status.HTTP_201_CREATED)
 
@@ -1694,6 +1735,12 @@ class AppointmentListCreateView(APIView):
         )
         doctor.total_consultations = F('total_consultations') + 1
         doctor.save(update_fields=['total_consultations'])
+
+        _notify_admins(
+            'manage_doctors', 'NEW_APPOINTMENT', 'New Doctor Appointment',
+            f'{request.user.full_name} booked an appointment with Dr. {doctor.name} for {appt.scheduled_date}.',
+            link='/admin/doctor-consult',
+        )
 
         return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment booked!'}, status=status.HTTP_201_CREATED)
 
@@ -2876,7 +2923,7 @@ class AdminOrderListView(APIView):
     permission_classes = [require_permission('manage_orders')]
 
     def get(self, request):
-        qs = Order.objects.select_related('user').prefetch_related('items').order_by('-placed_at')
+        qs = Order.objects.select_related('user').prefetch_related('items__medicine__category', 'items__medicine__brand').order_by('-placed_at')
         status_filter = request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)
