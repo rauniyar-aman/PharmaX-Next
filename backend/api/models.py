@@ -843,6 +843,7 @@ class OrderFulfillment(models.Model):
     delivery_charge = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
     accepted_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
+    delivery_broadcast_at = models.DateTimeField(null=True, blank=True)  # set when broadcast_delivery() runs; used to detect a stale delivery broadcast (no per-agent request model exists to check PENDING-ness against, unlike FulfillmentRequest in Stage 2)
 
     class Meta:
         db_table = 'order_fulfillments'

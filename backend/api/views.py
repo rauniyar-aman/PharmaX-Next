@@ -46,7 +46,7 @@ from .serializers import (
 from .utils import generate_otp, send_otp_email_async, get_store_name
 from .permissions import IsAdmin, IsSuperAdmin, require_permission
 from .throttles import AuthRateThrottle
-from .matching import broadcast_order, sync_order_status, expire_stale_fulfillment_requests
+from .matching import broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
@@ -3060,21 +3060,25 @@ class AdminSubscriptionRenewView(APIView):
 
 
 class AdminExpireFulfillmentRequestsView(APIView):
-    """Cron/admin-callable sweep for the pharmacy broadcast window (Stage 2 of the marketplace
-    spec) — same manual-trigger pattern as AdminSubscriptionRenewView until real task
-    infrastructure exists. Expires stale PENDING FulfillmentRequests and reports which
-    OrderItems ended up with no acceptance in time."""
+    """Cron/admin-callable sweep for both the pharmacy broadcast window (Stage 2) and the delivery
+    broadcast window (Stage 4) — same manual-trigger pattern as AdminSubscriptionRenewView until
+    real task infrastructure exists. Expires stale PENDING FulfillmentRequests and reports which
+    OrderItems ended up with no acceptance in time, plus which OrderFulfillments have sat
+    AWAITING_DELIVERY too long with no rider accepting (reported only — see
+    expire_stale_delivery_broadcasts()'s docstring for why there's nothing to flip there)."""
     permission_classes = [require_permission('manage_pharmacies')]
 
     def post(self, request):
         expired_count, unfulfillable_item_ids = expire_stale_fulfillment_requests()
+        stale_delivery_fulfillment_ids = expire_stale_delivery_broadcasts()
         return Response({
             'success': True,
             'data': {
                 'expired_requests': expired_count,
                 'unfulfillable_item_ids': [str(i) for i in unfulfillable_item_ids],
+                'stale_delivery_fulfillment_ids': [str(i) for i in stale_delivery_fulfillment_ids],
             },
-            'message': f'Expired {expired_count} stale fulfillment request(s).',
+            'message': f'Expired {expired_count} stale fulfillment request(s); {len(stale_delivery_fulfillment_ids)} delivery broadcast(s) still stale.',
         })
 
 

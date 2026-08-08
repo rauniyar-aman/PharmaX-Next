@@ -1,14 +1,15 @@
-"""Pharmacy/delivery marketplace matching engine (Stages 2-3 of the marketplace spec).
+"""Pharmacy/delivery marketplace matching engine (Stages 2-4 of the marketplace spec).
 
-broadcast_order(), pharmacy_accept_item(), and pharmacy_decline_item() are internal functions —
-no HTTP layer of their own (Stage 3's checkout view in views.py calls broadcast_order(); a
-pharmacy-facing accept/decline API is a later stage). The only HTTP-facing piece of this module is
-the admin/cron-callable expiry endpoint in views.py, which just calls
-expire_stale_fulfillment_requests().
+broadcast_order(), pharmacy_accept_item(), pharmacy_decline_item(), broadcast_delivery(),
+delivery_agent_accept(), update_agent_location(), and collect_cash() are internal functions — no
+HTTP layer of their own (Stage 3's checkout view in views.py calls broadcast_order() and, via
+sync_order_status(), broadcast_delivery(); pharmacy/rider-facing accept/decline APIs are Stage 5/6).
+The only HTTP-facing piece of this module is the admin/cron-callable expiry endpoint in views.py,
+which calls expire_stale_fulfillment_requests() and expire_stale_delivery_broadcasts().
 
 sync_order_status() is the single source of truth for Order.status transitions and is called
-reactively at the end of every function above that can change whether an order's items are
-resolved — see its own docstring for the transition table.
+reactively at the end of every function above that can change whether an order's items/deliveries
+are resolved — see its own docstring for the transition table.
 """
 from datetime import timedelta
 
@@ -17,7 +18,7 @@ from django.db.models import F, Value, FloatField, ExpressionWrapper
 from django.db.models.functions import Radians, Sin, Cos, ASin, Sqrt, Power
 from django.utils import timezone
 
-from .models import Pharmacy, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, OrderItem, Order, Cart, Notification
+from .models import Pharmacy, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, OrderItem, Order, Cart, Notification, DeliveryAgent
 
 BROADCAST_RADIUS_KM = 3
 BROADCAST_WINDOW_MINUTES = 10
@@ -179,6 +180,114 @@ def expire_stale_fulfillment_requests():
     return expired_count, unfulfillable_item_ids
 
 
+def broadcast_delivery(fulfillment):
+    """Moves one OrderFulfillment (a single pharmacy pickup leg) into AWAITING_DELIVERY and
+    notifies every verified, online DeliveryAgent within BROADCAST_RADIUS_KM of the pickup
+    pharmacy — not the customer's delivery address, the rider has to get to the pharmacy first.
+
+    Unlike broadcast_order()/FulfillmentRequest, there's no per-agent request row: any eligible
+    agent can call delivery_agent_accept() at any time while status stays AWAITING_DELIVERY —
+    eligibility is re-checked live at accept time instead of being frozen at broadcast time.
+    Returns the list of notified DeliveryAgent ids.
+    """
+    fulfillment.status = 'AWAITING_DELIVERY'
+    fulfillment.delivery_broadcast_at = timezone.now()
+    fulfillment.save(update_fields=['status', 'delivery_broadcast_at'])
+
+    pharmacy = fulfillment.pharmacy
+    if pharmacy is None or pharmacy.lat is None or pharmacy.lng is None:
+        return []
+
+    nearby_agents = _annotate_distance_km(
+        DeliveryAgent.objects.filter(is_verified=True, is_online=True),
+        pharmacy.lat, pharmacy.lng,
+    ).filter(distance_km__lte=BROADCAST_RADIUS_KM)
+
+    notified_ids = []
+    notifications = []
+    for agent in nearby_agents.select_related('user'):
+        notifications.append(Notification(
+            user=agent.user, type='DELIVERY_REQUEST', title='New Delivery Available',
+            message=f'A delivery pickup is available near you at {pharmacy.name}.',
+            link='/delivery/requests',
+        ))
+        notified_ids.append(agent.id)
+    if notifications:
+        Notification.objects.bulk_create(notifications)
+
+    return notified_ids
+
+
+def _agent_eligible_for(agent, fulfillment):
+    """The live eligibility gate delivery_agent_accept() uses in place of a frozen request row:
+    verified, online, and currently within range of the pickup pharmacy."""
+    if not (agent.is_verified and agent.is_online):
+        return False
+    pharmacy = fulfillment.pharmacy
+    if pharmacy is None or pharmacy.lat is None or pharmacy.lng is None:
+        return False
+    if agent.lat is None or agent.lng is None:
+        return False
+    qs = _annotate_distance_km(DeliveryAgent.objects.filter(pk=agent.pk), pharmacy.lat, pharmacy.lng)
+    return qs.filter(distance_km__lte=BROADCAST_RADIUS_KM).exists()
+
+
+@transaction.atomic
+def delivery_agent_accept(agent, fulfillment):
+    """First-accept-wins, same pattern as pharmacy_accept_item(): locks the OrderFulfillment row
+    itself (the row every competing rider shares, since there's no per-agent request row here) so
+    two riders racing on the same delivery are genuinely serialized under concurrent callers.
+    """
+    ful = OrderFulfillment.objects.select_for_update().get(pk=fulfillment.pk)
+
+    if ful.status != 'AWAITING_DELIVERY':
+        return False, 'This delivery is no longer available.'
+
+    if not _agent_eligible_for(agent, ful):
+        return False, 'You are not eligible to accept this delivery (must be verified, online, and near the pickup pharmacy).'
+
+    ful.delivery_agent = agent
+    ful.status = 'OUT_FOR_DELIVERY'
+    ful.save(update_fields=['delivery_agent', 'status'])
+
+    return True, None
+
+
+def update_agent_location(agent, lat, lng):
+    """No websockets yet — a simple field update, meant to be called on an interval from the
+    rider's side (Stage 6)."""
+    agent.lat = lat
+    agent.lng = lng
+    agent.save(update_fields=['lat', 'lng'])
+
+
+def collect_cash(fulfillment):
+    """Marks a fulfillment DELIVERED (COD cash collected at the doorstep). The single conditional
+    UPDATE (WHERE status='OUT_FOR_DELIVERY') is already atomic — no lock needed, since only the
+    one rider already assigned to this fulfillment would ever call this, unlike accept()."""
+    updated = OrderFulfillment.objects.filter(pk=fulfillment.pk, status='OUT_FOR_DELIVERY').update(
+        status='DELIVERED', delivered_at=timezone.now(),
+    )
+    if not updated:
+        return False, 'This delivery is not out for delivery.'
+    fulfillment.refresh_from_db()
+    sync_order_status(fulfillment.order)
+    return True, None
+
+
+def expire_stale_delivery_broadcasts():
+    """Reports (does not auto-retry) OrderFulfillments that have sat in AWAITING_DELIVERY longer
+    than BROADCAST_WINDOW_MINUTES with no rider accepting. There's no per-agent request row to
+    flip to EXPIRED here — AWAITING_DELIVERY already means "still up for grabs" — so this is purely
+    a visibility report for admin follow-up (e.g. manually re-broadcasting or widening the radius),
+    not a state change of its own."""
+    cutoff = timezone.now() - timedelta(minutes=BROADCAST_WINDOW_MINUTES)
+    stale = OrderFulfillment.objects.filter(
+        status='AWAITING_DELIVERY', delivery_broadcast_at__lt=cutoff,
+    )
+    return list(stale.values_list('id', flat=True))
+
+
 def _all_items_resolved(order):
     """True once every OrderItem in the order either has `fulfillment` set (a pharmacy won it),
     or has no PENDING FulfillmentRequest left (every pharmacy that was asked has declined/expired,
@@ -191,16 +300,19 @@ def _all_items_resolved(order):
     return True
 
 
-def sync_order_status(order):
-    """Single source of truth for Order.status transitions driven by marketplace/payment state —
-    called reactively after broadcast_order(), pharmacy_accept_item(), pharmacy_decline_item(),
-    and expire_stale_fulfillment_requests() (chosen over a separate polling endpoint: the customer
-    already polls GET /orders/<id>/fulfillment-summary/, which just reflects whatever `order.status`
-    currently is, so a second polling mechanism on the backend would be redundant).
+def _all_fulfillments_delivered(order):
+    """True once the order has at least one OrderFulfillment and every one of them is DELIVERED."""
+    fulfillments = list(order.fulfillments.all())
+    return bool(fulfillments) and all(f.status == 'DELIVERED' for f in fulfillments)
 
-    Stage 3 only exercises the first two transitions below. Stage 4 will extend this function to
-    also roll up PLACED→...→DELIVERED from the order's OrderFulfillment statuses — that rollup
-    isn't implemented yet since delivery broadcast doesn't exist until Stage 4.
+
+def sync_order_status(order):
+    """Single source of truth for Order.status transitions driven by marketplace/payment/delivery
+    state — called reactively after broadcast_order(), pharmacy_accept_item(),
+    pharmacy_decline_item(), expire_stale_fulfillment_requests(), and collect_cash() (chosen over a
+    separate polling endpoint: the customer already polls GET /orders/<id>/fulfillment-summary/,
+    which just reflects whatever `order.status` currently is, so a second polling mechanism on the
+    backend would be redundant).
     """
     if order.status == 'BROADCASTING':
         if _all_items_resolved(order):
@@ -227,4 +339,21 @@ def sync_order_status(order):
                 message=f'Your order #{str(order.id)[:8]} has been placed successfully.',
                 link=f'/orders/{order.id}',
             )
-            # TODO: Stage 4 - trigger delivery broadcast here
+            for fulfillment in order.fulfillments.all():
+                broadcast_delivery(fulfillment)
+
+    elif order.status == 'PLACED':
+        if _all_fulfillments_delivered(order):
+            order.status = 'DELIVERED'
+            update_fields = ['status']
+            # COD has no gateway payment event — full delivery + cash collection IS the
+            # confirmation that payment was received, same reasoning as the PLACED transition.
+            if order.payment_method == 'CASH_ON_DELIVERY' and order.payment_status == 'PENDING':
+                order.payment_status = 'PAID'
+                update_fields.append('payment_status')
+            order.save(update_fields=update_fields)
+            Notification.objects.create(
+                user=order.user, type='ORDER_UPDATE', title='Order Delivered',
+                message=f'Your order #{str(order.id)[:8]} has been delivered.',
+                link=f'/orders/{order.id}',
+            )
