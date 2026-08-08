@@ -181,4 +181,14 @@ urlpatterns = [
     path('delivery/active/<uuid:pk>/collect-cash/', views.DeliveryCollectCashView.as_view(), name='delivery-collect-cash'),
     path('delivery/active/<uuid:pk>/mark-delivered/', views.DeliveryMarkDeliveredView.as_view(), name='delivery-mark-delivered'),
     path('delivery/agent/location/',            views.DeliveryLocationUpdateView.as_view(), name='delivery-location'),
+
+    # Admin finance / settlement ledgers
+    path('admin/finance/pharmacy-payouts/',                  views.AdminPharmacyPayoutListView.as_view(),         name='admin-finance-pharmacy-payouts'),
+    path('admin/finance/pharmacy-payouts/<uuid:pk>/mark-paid/', views.AdminPharmacyPayoutMarkPaidView.as_view(),  name='admin-finance-pharmacy-payout-mark-paid'),
+    path('admin/finance/agent-earnings/',                     views.AdminAgentEarningListView.as_view(),           name='admin-finance-agent-earnings'),
+    path('admin/finance/agent-earnings/<uuid:pk>/mark-paid/', views.AdminAgentEarningMarkPaidView.as_view(),       name='admin-finance-agent-earning-mark-paid'),
+    path('admin/finance/cod-liabilities/',                    views.AdminCodLiabilityListView.as_view(),           name='admin-finance-cod-liabilities'),
+    path('admin/finance/cod-liabilities/<uuid:pk>/confirm-remittance/', views.AdminCodLiabilityConfirmRemittanceView.as_view(), name='admin-finance-cod-liability-confirm-remittance'),
+    path('admin/finance/agents/<uuid:pk>/',                   views.AdminAgentFinanceProfileView.as_view(),        name='admin-finance-agent-profile'),
+    path('admin/finance/summary/',                            views.AdminFinanceSummaryView.as_view(),             name='admin-finance-summary'),
 ]

@@ -58,6 +58,7 @@ export interface AdminDeliveryAgent {
   is_verified: boolean
   is_online: boolean
   user_is_active: boolean
+  outstanding_cod_balance: string
   created_at: string
 }
 
@@ -534,4 +535,79 @@ export interface DeliveryActiveFulfillment {
   payment_method: string | null
   items: DeliveryFulfillmentItem[]
   accepted_at: string | null
+}
+
+export type PayoutStatus = 'PENDING' | 'PAID'
+export type CodLiabilityStatus = 'PENDING' | 'REMITTED'
+export type FundingSource = 'ORDER_REVENUE' | 'PLATFORM_FUNDS'
+export type RemittanceMethod = 'CASH_DEPOSIT' | 'GATEWAY_TOPUP'
+
+export interface PharmacyPayout {
+  id: string
+  pharmacy: string
+  pharmacy_name: string
+  fulfillment: string
+  order_id: string
+  gross_amount: string
+  commission_rate: string
+  commission_amount: string
+  net_payable: string
+  funding_source: FundingSource
+  status: PayoutStatus
+  paid_at: string | null
+  paid_by_name: string | null
+  created_at: string
+}
+
+export interface DeliveryAgentEarning {
+  id: string
+  agent: string
+  agent_name: string
+  fulfillment: string
+  order_id: string
+  amount: string
+  status: PayoutStatus
+  paid_at: string | null
+  paid_by_name: string | null
+  created_at: string
+}
+
+export interface DeliveryAgentCodLiability {
+  id: string
+  agent: string
+  agent_name: string
+  fulfillment: string
+  order_id: string
+  amount_collected: string
+  status: CodLiabilityStatus
+  remittance_method: RemittanceMethod | null
+  reference: string | null
+  remitted_at: string | null
+  confirmed_by_name: string | null
+  days_outstanding: number | null
+  created_at: string
+}
+
+export interface AgentFinanceProfile {
+  agent: AdminDeliveryAgent
+  cod_record: {
+    liabilities: DeliveryAgentCodLiability[]
+    total_collected: string
+    total_outstanding: string
+    oldest_unremitted_age_days: number | null
+  }
+  earnings_record: {
+    earnings: DeliveryAgentEarning[]
+    total_earned: string
+    total_pending: string
+    total_paid: string
+  }
+}
+
+export interface FinanceSummary {
+  total_commission_earned: string
+  pending_pharmacy_payouts: { order_revenue: string; platform_funds: string }
+  pending_agent_earnings: string
+  outstanding_cod: { total: string; by_agent: { agent_id: string; agent_name: string; amount: string }[] }
+  coupon_cost_this_month: string
 }

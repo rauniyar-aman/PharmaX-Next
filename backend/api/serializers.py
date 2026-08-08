@@ -1,6 +1,9 @@
+from decimal import Decimal
 from rest_framework import serializers
 from django.contrib.auth import authenticate
-from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment
+from django.db.models import Sum
+from django.utils import timezone
+from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -168,11 +171,21 @@ class AdminDeliveryAgentSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='user.full_name', read_only=True)
     email = serializers.EmailField(source='user.email', read_only=True)
     user_is_active = serializers.BooleanField(source='user.is_active', read_only=True)
+    outstanding_cod_balance = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryAgent
-        fields = ['id', 'full_name', 'email', 'phone', 'vehicle_type', 'lat', 'lng', 'is_verified', 'is_online', 'user_is_active', 'created_at']
-        read_only_fields = ['id', 'full_name', 'email', 'is_online', 'user_is_active', 'created_at']
+        fields = [
+            'id', 'full_name', 'email', 'phone', 'vehicle_type', 'lat', 'lng', 'is_verified', 'is_online',
+            'user_is_active', 'outstanding_cod_balance', 'created_at',
+        ]
+        read_only_fields = ['id', 'full_name', 'email', 'is_online', 'user_is_active', 'outstanding_cod_balance', 'created_at']
+
+    def get_outstanding_cod_balance(self, obj):
+        # surfaced here (not just in the finance section) so an admin verifying/suspending an
+        # agent can see at a glance whether they're currently holding platform cash.
+        total = obj.cod_liabilities.filter(status='PENDING').aggregate(t=Sum('amount_collected'))['t']
+        return str(total or Decimal('0'))
 
 
 class AdminDeliveryAgentCreateSerializer(serializers.Serializer):
@@ -783,3 +796,51 @@ class DeliveryActiveSerializer(serializers.ModelSerializer):
 
     def get_items(self, obj):
         return [{'medicine_name': i.medicine.name, 'quantity': i.quantity} for i in obj.order_items.select_related('medicine').all()]
+
+
+# ─── Admin: Finance / Settlement Ledgers (Stage 8) ─────────────────────────────
+
+class AdminPharmacyPayoutSerializer(serializers.ModelSerializer):
+    pharmacy_name = serializers.CharField(source='pharmacy.name', read_only=True)
+    order_id = serializers.UUIDField(source='fulfillment.order_id', read_only=True)
+    paid_by_name = serializers.CharField(source='paid_by.full_name', read_only=True)
+
+    class Meta:
+        model = PharmacyPayout
+        fields = [
+            'id', 'pharmacy', 'pharmacy_name', 'fulfillment', 'order_id',
+            'gross_amount', 'commission_rate', 'commission_amount', 'net_payable',
+            'funding_source', 'status', 'paid_at', 'paid_by_name', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class AdminDeliveryAgentEarningSerializer(serializers.ModelSerializer):
+    agent_name = serializers.CharField(source='agent.user.full_name', read_only=True)
+    order_id = serializers.UUIDField(source='fulfillment.order_id', read_only=True)
+    paid_by_name = serializers.CharField(source='paid_by.full_name', read_only=True)
+
+    class Meta:
+        model = DeliveryAgentEarning
+        fields = ['id', 'agent', 'agent_name', 'fulfillment', 'order_id', 'amount', 'status', 'paid_at', 'paid_by_name', 'created_at']
+        read_only_fields = fields
+
+
+class AdminDeliveryAgentCodLiabilitySerializer(serializers.ModelSerializer):
+    agent_name = serializers.CharField(source='agent.user.full_name', read_only=True)
+    order_id = serializers.UUIDField(source='fulfillment.order_id', read_only=True)
+    confirmed_by_name = serializers.CharField(source='confirmed_by.full_name', read_only=True)
+    days_outstanding = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DeliveryAgentCodLiability
+        fields = [
+            'id', 'agent', 'agent_name', 'fulfillment', 'order_id', 'amount_collected', 'status',
+            'remittance_method', 'reference', 'remitted_at', 'confirmed_by_name', 'days_outstanding', 'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_days_outstanding(self, obj):
+        if obj.status != 'PENDING':
+            return None
+        return (timezone.now() - obj.created_at).days
