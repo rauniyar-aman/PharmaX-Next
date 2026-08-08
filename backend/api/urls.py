@@ -130,6 +130,7 @@ urlpatterns = [
     path('admin/blog/<uuid:pk>/',               views.AdminBlogPostDetailView.as_view(),    name='admin-blog-post-detail'),
     path('admin/subscriptions/',                views.AdminSubscriptionListView.as_view(),  name='admin-subscriptions'),
     path('admin/subscriptions/<uuid:pk>/renew/', views.AdminSubscriptionRenewView.as_view(), name='admin-subscription-renew'),
+    path('admin/fulfillment-requests/expire-stale/', views.AdminExpireFulfillmentRequestsView.as_view(), name='admin-expire-fulfillment-requests'),
     path('admin/doctors/',                      views.AdminDoctorListView.as_view(),        name='admin-doctors'),
     path('admin/doctors/<uuid:pk>/',            views.AdminDoctorDetailView.as_view(),      name='admin-doctor-detail'),
     path('admin/appointments/',                 views.AdminAppointmentListView.as_view(),   name='admin-appointments'),
