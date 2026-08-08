@@ -9,6 +9,7 @@ export interface User {
   referral_code?: string | null
   is_super_admin?: boolean
   permission_codes?: string[]   // only present when role === 'ADMIN'
+  delivery_agent_verified?: boolean | null   // only present when role === 'DELIVERY_AGENT'
   created_at: string
   updated_at: string
 }
@@ -498,4 +499,39 @@ export interface Referral {
   reward_amount?: string | null
   created_at: string
   rewarded_at?: string | null
+}
+
+export interface DeliveryFulfillmentItem {
+  medicine_name: string
+  quantity: number
+}
+
+export interface DeliveryFulfillment {
+  id: string
+  order_id: string
+  pharmacy_name: string
+  pharmacy_address: string
+  pharmacy_lat: number
+  pharmacy_lng: number
+  city: string | null
+  items: DeliveryFulfillmentItem[]
+  delivery_broadcast_at: string | null
+}
+
+export interface DeliveryActiveFulfillment {
+  id: string
+  order_id: string
+  status: string
+  pharmacy_name: string
+  pharmacy_address: string
+  pharmacy_lat: number
+  pharmacy_lng: number
+  customer_name: string | null
+  customer_phone: string | null
+  delivery_address: string | null
+  delivery_lat: number | null
+  delivery_lng: number | null
+  payment_method: string | null
+  items: DeliveryFulfillmentItem[]
+  accepted_at: string | null
 }

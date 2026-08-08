@@ -52,6 +52,7 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     permission_codes = serializers.SerializerMethodField()
+    delivery_agent_verified = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -60,12 +61,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'blood_group', 'allergies', 'avatar_url', 'referral_code', 'role', 'is_active',
             'is_email_verified', 'notif_order_updates',
             'notif_prescription_alerts', 'notif_promotions',
-            'is_super_admin', 'permission_codes',
+            'is_super_admin', 'permission_codes', 'delivery_agent_verified',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'email', 'referral_code', 'role', 'is_active', 'is_email_verified',
-            'is_super_admin', 'permission_codes', 'created_at', 'updated_at',
+            'is_super_admin', 'permission_codes', 'delivery_agent_verified', 'created_at', 'updated_at',
         ]
 
     def get_permission_codes(self, obj):
@@ -73,11 +74,19 @@ class UserProfileSerializer(serializers.ModelSerializer):
             return []
         return list(obj.permissions.values_list('code', flat=True))
 
+    def get_delivery_agent_verified(self, obj):
+        if obj.role != 'DELIVERY_AGENT':
+            return None
+        agent = getattr(obj, 'delivery_agent', None)
+        return agent.is_verified if agent else False
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         if instance.role != 'ADMIN':
             data.pop('is_super_admin', None)
             data.pop('permission_codes', None)
+        if instance.role != 'DELIVERY_AGENT':
+            data.pop('delivery_agent_verified', None)
         return data
 
 
@@ -697,3 +706,80 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
     def get_city(self, obj):
         addr = obj.order.address
         return addr.city if addr else None
+
+
+# ─── Delivery dashboard (Stage 6) ──────────────────────────────────────────────
+
+class DeliveryFulfillmentSerializer(serializers.ModelSerializer):
+    """Available-to-accept deliveries. Shows the full pickup (pharmacy) location — that's not
+    sensitive, it's where the rider needs to go to even accept the job — but deliberately excludes
+    the customer entirely, same "don't reveal until you've won it" principle as Stage 5's
+    PharmacyFulfillmentRequestSerializer."""
+    order_id = serializers.UUIDField(read_only=True)
+    pharmacy_name = serializers.CharField(source='pharmacy.name', read_only=True)
+    pharmacy_address = serializers.CharField(source='pharmacy.address', read_only=True)
+    pharmacy_lat = serializers.FloatField(source='pharmacy.lat', read_only=True)
+    pharmacy_lng = serializers.FloatField(source='pharmacy.lng', read_only=True)
+    city = serializers.SerializerMethodField()
+    items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrderFulfillment
+        fields = [
+            'id', 'order_id', 'pharmacy_name', 'pharmacy_address', 'pharmacy_lat', 'pharmacy_lng',
+            'city', 'items', 'delivery_broadcast_at',
+        ]
+
+    def get_city(self, obj):
+        addr = obj.order.address
+        return addr.city if addr else None
+
+    def get_items(self, obj):
+        return [{'medicine_name': i.medicine.name, 'quantity': i.quantity} for i in obj.order_items.select_related('medicine').all()]
+
+
+class DeliveryActiveSerializer(serializers.ModelSerializer):
+    """A delivery this agent has already won — now it's appropriate to show the full drop-off
+    (customer) address/phone, since the agent has to actually get there."""
+    pharmacy_name = serializers.CharField(source='pharmacy.name', read_only=True)
+    pharmacy_address = serializers.CharField(source='pharmacy.address', read_only=True)
+    pharmacy_lat = serializers.FloatField(source='pharmacy.lat', read_only=True)
+    pharmacy_lng = serializers.FloatField(source='pharmacy.lng', read_only=True)
+    customer_name = serializers.SerializerMethodField()
+    customer_phone = serializers.SerializerMethodField()
+    delivery_address = serializers.SerializerMethodField()
+    delivery_lat = serializers.SerializerMethodField()
+    delivery_lng = serializers.SerializerMethodField()
+    payment_method = serializers.CharField(source='order.payment_method', read_only=True)
+    items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrderFulfillment
+        fields = [
+            'id', 'order_id', 'status', 'pharmacy_name', 'pharmacy_address', 'pharmacy_lat', 'pharmacy_lng',
+            'customer_name', 'customer_phone', 'delivery_address', 'delivery_lat', 'delivery_lng',
+            'payment_method', 'items', 'accepted_at',
+        ]
+
+    def get_customer_name(self, obj):
+        addr = obj.order.address
+        return addr.name if addr else None
+
+    def get_customer_phone(self, obj):
+        addr = obj.order.address
+        return addr.phone if addr else None
+
+    def get_delivery_address(self, obj):
+        addr = obj.order.address
+        return f'{addr.address}, {addr.city}, {addr.province}' if addr else None
+
+    def get_delivery_lat(self, obj):
+        addr = obj.order.address
+        return addr.lat if addr else None
+
+    def get_delivery_lng(self, obj):
+        addr = obj.order.address
+        return addr.lng if addr else None
+
+    def get_items(self, obj):
+        return [{'medicine_name': i.medicine.name, 'quantity': i.quantity} for i in obj.order_items.select_related('medicine').all()]

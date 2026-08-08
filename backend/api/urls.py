@@ -173,4 +173,12 @@ urlpatterns = [
     path('pharmacy/requests/<uuid:pk>/accept/', views.PharmacyRequestAcceptView.as_view(),  name='pharmacy-request-accept'),
     path('pharmacy/requests/<uuid:pk>/decline/', views.PharmacyRequestDeclineView.as_view(), name='pharmacy-request-decline'),
     path('pharmacy/orders/',                    views.PharmacyOrderListView.as_view(),      name='pharmacy-orders'),
+
+    # Delivery dashboard
+    path('delivery/requests/',                  views.DeliveryRequestListView.as_view(),    name='delivery-requests'),
+    path('delivery/requests/<uuid:pk>/accept/', views.DeliveryRequestAcceptView.as_view(),  name='delivery-request-accept'),
+    path('delivery/active/',                    views.DeliveryActiveListView.as_view(),     name='delivery-active'),
+    path('delivery/active/<uuid:pk>/collect-cash/', views.DeliveryCollectCashView.as_view(), name='delivery-collect-cash'),
+    path('delivery/active/<uuid:pk>/mark-delivered/', views.DeliveryMarkDeliveredView.as_view(), name='delivery-mark-delivered'),
+    path('delivery/agent/location/',            views.DeliveryLocationUpdateView.as_view(), name='delivery-location'),
 ]

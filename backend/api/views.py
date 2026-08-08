@@ -47,13 +47,15 @@ from .serializers import (
     AdminDeliveryAgentSerializer, AdminDeliveryAgentCreateSerializer,
     PharmacyListingSerializer, PharmacyListingCreateSerializer,
     PharmacyFulfillmentRequestSerializer, PharmacyOrderFulfillmentSerializer,
+    DeliveryFulfillmentSerializer, DeliveryActiveSerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
-from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, require_permission
+from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, require_permission
 from .throttles import AuthRateThrottle
 from .matching import (
     broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts,
     pharmacy_accept_item, pharmacy_decline_item,
+    delivery_agent_accept, update_agent_location, collect_cash, mark_delivered, _agent_eligible_for,
 )
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
@@ -3787,3 +3789,104 @@ class PharmacyOrderListView(APIView):
             pharmacy=request.user.pharmacy,
         ).select_related('order__address', 'delivery_agent__user').prefetch_related('order_items__medicine').order_by('-accepted_at')
         return Response({'success': True, 'data': {'orders': PharmacyOrderFulfillmentSerializer(fulfillments, many=True).data}})
+
+
+# ─── Delivery Dashboard (Stage 6 of the marketplace spec) ─────────────────────
+#
+# Same ownership discipline as the pharmacy views above, with one structural difference worth
+# noting: there's no per-agent request row (Stage 4 deliberately didn't add one — see
+# broadcast_delivery()'s docstring), so "ownership" before acceptance isn't a row to filter by,
+# it's a live eligibility check (_agent_eligible_for(), reused here rather than reimplemented).
+# Any eligible agent can legitimately see/accept the same AWAITING_DELIVERY fulfillment — that's
+# correct first-accept-wins behavior, not a leak, mirroring how two pharmacies can both see the
+# same broadcast order in Stage 2. Ownership starts existing only once a fulfillment has a
+# delivery_agent — GET /delivery/active/, collect-cash, and mark-delivered all filter on
+# delivery_agent=request.user.delivery_agent, the same FK-filter pattern as Stage 5.
+
+class DeliveryRequestListView(APIView):
+    """Available-to-accept deliveries — every AWAITING_DELIVERY fulfillment this specific agent
+    currently qualifies for, per the same live eligibility check delivery_agent_accept() uses."""
+    permission_classes = [IsDeliveryAgent]
+
+    def get(self, request):
+        agent = request.user.delivery_agent
+        candidates = OrderFulfillment.objects.filter(status='AWAITING_DELIVERY').select_related('pharmacy', 'order__address').prefetch_related('order_items__medicine')
+        eligible = [f for f in candidates if _agent_eligible_for(agent, f)]
+        return Response({'success': True, 'data': {'requests': DeliveryFulfillmentSerializer(eligible, many=True).data}})
+
+
+class DeliveryRequestAcceptView(APIView):
+    permission_classes = [IsDeliveryAgent]
+
+    def post(self, request, pk):
+        try:
+            fulfillment = OrderFulfillment.objects.get(pk=pk, status='AWAITING_DELIVERY')
+        except OrderFulfillment.DoesNotExist:
+            return Response({'success': False, 'message': 'Delivery not found or no longer available.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ok, err = delivery_agent_accept(request.user.delivery_agent, fulfillment)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'message': 'Accepted! Head to the pharmacy for pickup.'})
+
+
+class DeliveryActiveListView(APIView):
+    """This agent's own active deliveries — scoped by delivery_agent=request.user.delivery_agent,
+    the ownership boundary that only exists once a fulfillment has actually been won."""
+    permission_classes = [IsDeliveryAgent]
+
+    def get(self, request):
+        fulfillments = OrderFulfillment.objects.filter(
+            delivery_agent=request.user.delivery_agent, status='OUT_FOR_DELIVERY',
+        ).select_related('order__address', 'pharmacy').prefetch_related('order_items__medicine').order_by('accepted_at')
+        return Response({'success': True, 'data': {'deliveries': DeliveryActiveSerializer(fulfillments, many=True).data}})
+
+
+class DeliveryCollectCashView(APIView):
+    permission_classes = [IsDeliveryAgent]
+
+    def post(self, request, pk):
+        # the delivery_agent=request.user.delivery_agent filter on this lookup IS the ownership
+        # boundary — Agent B passing Agent A's fulfillment id gets a 404, not someone else's delivery.
+        try:
+            fulfillment = OrderFulfillment.objects.select_related('order').get(pk=pk, delivery_agent=request.user.delivery_agent)
+        except OrderFulfillment.DoesNotExist:
+            return Response({'success': False, 'message': 'Delivery not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ok, err = collect_cash(fulfillment)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'message': 'Cash collected — delivery complete.'})
+
+
+class DeliveryMarkDeliveredView(APIView):
+    permission_classes = [IsDeliveryAgent]
+
+    def post(self, request, pk):
+        try:
+            fulfillment = OrderFulfillment.objects.select_related('order').get(pk=pk, delivery_agent=request.user.delivery_agent)
+        except OrderFulfillment.DoesNotExist:
+            return Response({'success': False, 'message': 'Delivery not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ok, err = mark_delivered(fulfillment)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'message': 'Marked as delivered.'})
+
+
+class DeliveryLocationUpdateView(APIView):
+    """No pk in the URL at all — this always operates on request.user.delivery_agent, so there's
+    no id a rider could even supply to target another agent's location."""
+    permission_classes = [IsDeliveryAgent]
+
+    def patch(self, request):
+        lat, lng = request.data.get('lat'), request.data.get('lng')
+        if lat is None or lng is None:
+            return Response({'success': False, 'message': 'lat and lng are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            lat, lng = float(lat), float(lng)
+        except (TypeError, ValueError):
+            return Response({'success': False, 'message': 'lat and lng must be numbers.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        update_agent_location(request.user.delivery_agent, lat, lng)
+        return Response({'success': True, 'message': 'Location updated.'})

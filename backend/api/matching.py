@@ -1,11 +1,12 @@
-"""Pharmacy/delivery marketplace matching engine (Stages 2-4 of the marketplace spec).
+"""Pharmacy/delivery marketplace matching engine (Stages 2-6 of the marketplace spec).
 
 broadcast_order(), pharmacy_accept_item(), pharmacy_decline_item(), broadcast_delivery(),
-delivery_agent_accept(), update_agent_location(), and collect_cash() are internal functions — no
-HTTP layer of their own (Stage 3's checkout view in views.py calls broadcast_order() and, via
-sync_order_status(), broadcast_delivery(); pharmacy/rider-facing accept/decline APIs are Stage 5/6).
-The only HTTP-facing piece of this module is the admin/cron-callable expiry endpoint in views.py,
-which calls expire_stale_fulfillment_requests() and expire_stale_delivery_broadcasts().
+delivery_agent_accept(), update_agent_location(), collect_cash(), and mark_delivered() are
+internal functions with no logic of their own baked into views.py — Stage 5's pharmacy views call
+the pharmacy functions directly, Stage 6's delivery views call the delivery functions directly.
+The only pieces of this module that aren't called straight through from a thin view wrapper are
+sync_order_status() (called reactively by the functions above) and the admin/cron-callable expiry
+endpoint, which calls expire_stale_fulfillment_requests() and expire_stale_delivery_broadcasts().
 
 sync_order_status() is the single source of truth for Order.status transitions and is called
 reactively at the end of every function above that can change whether an order's items/deliveries
@@ -261,10 +262,12 @@ def update_agent_location(agent, lat, lng):
     agent.save(update_fields=['lat', 'lng'])
 
 
-def collect_cash(fulfillment):
-    """Marks a fulfillment DELIVERED (COD cash collected at the doorstep). The single conditional
-    UPDATE (WHERE status='OUT_FOR_DELIVERY') is already atomic — no lock needed, since only the
-    one rider already assigned to this fulfillment would ever call this, unlike accept()."""
+def _deliver_fulfillment(fulfillment):
+    """Shared mechanics for marking one fulfillment DELIVERED — used by both collect_cash() and
+    mark_delivered(), since flipping the status, stamping delivered_at, and rolling the order up
+    doesn't actually depend on payment method; only the validation in front of it does. The single
+    conditional UPDATE (WHERE status='OUT_FOR_DELIVERY') is already atomic — no lock needed, since
+    only the one rider already assigned to this fulfillment would ever call this, unlike accept()."""
     updated = OrderFulfillment.objects.filter(pk=fulfillment.pk, status='OUT_FOR_DELIVERY').update(
         status='DELIVERED', delivered_at=timezone.now(),
     )
@@ -273,6 +276,24 @@ def collect_cash(fulfillment):
     fulfillment.refresh_from_db()
     sync_order_status(fulfillment.order)
     return True, None
+
+
+def collect_cash(fulfillment):
+    """Marks a COD fulfillment DELIVERED after cash is collected at the doorstep. Only valid for
+    CASH_ON_DELIVERY orders — for an already-paid (Khalti/eSewa) order there's no cash to collect,
+    use mark_delivered() instead."""
+    if fulfillment.order.payment_method != 'CASH_ON_DELIVERY':
+        return False, 'This order was already paid online — use mark_delivered instead.'
+    return _deliver_fulfillment(fulfillment)
+
+
+def mark_delivered(fulfillment):
+    """Marks a non-COD (already-paid) fulfillment DELIVERED — same mechanics as collect_cash(),
+    just without pretending cash was collected. Rejects CASH_ON_DELIVERY orders the other way, so
+    a rider can't accidentally skip actually collecting the cash by hitting the wrong button."""
+    if fulfillment.order.payment_method == 'CASH_ON_DELIVERY':
+        return False, 'This is a Cash on Delivery order — use collect_cash instead.'
+    return _deliver_fulfillment(fulfillment)
 
 
 def expire_stale_delivery_broadcasts():
