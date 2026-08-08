@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 
 const STATUSES = ['ALL', 'PLACED', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']
 const STATUS_COLORS: Record<string, string> = {
@@ -22,6 +23,7 @@ export default function AdminOrdersPage() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const fetchOrders = useCallback(() => {
     setLoading(true)
@@ -83,34 +85,77 @@ export default function AdminOrdersPage() {
                 [...Array(8)].map((_, i) => <tr key={i}><td colSpan={8} className="px-4 py-3"><div className="h-6 bg-surface-container-low rounded animate-pulse" /></td></tr>)
               ) : orders.length === 0 ? (
                 <tr><td colSpan={8} className="px-4 py-12 text-center text-on-surface-variant">No orders found</td></tr>
-              ) : orders.map((order) => (
-                <tr key={order.id} className="hover:bg-surface-container-low transition-colors">
-                  <td className="px-4 py-3 font-mono text-xs text-on-surface-variant">#{order.id?.slice(0, 8).toUpperCase()}</td>
-                  <td className="px-4 py-3">
-                    <p className="text-sm font-medium text-on-surface">{order.user?.full_name}</p>
-                    <p className="text-xs text-on-surface-variant">{order.user?.email}</p>
-                  </td>
-                  <td className="px-4 py-3 text-on-surface">{order.items?.length}</td>
-                  <td className="px-4 py-3 font-semibold text-on-surface">NPR {Number(order.total_amount).toFixed(0)}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-medium capitalize ${order.payment_status === 'PAID' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                      {order.payment_status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_COLORS[order.status] || 'bg-surface-container text-on-surface-variant'}`}>
-                      {order.status?.replace(/_/g, ' ')}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-on-surface-variant whitespace-nowrap">{new Date(order.placed_at).toLocaleDateString()}</td>
-                  <td className="px-4 py-3">
-                    <select value={order.status} onChange={(e) => updateStatus(order.id, e.target.value)} disabled={updating === order.id}
-                      className="text-xs border border-outline-variant rounded-lg px-2 py-1.5 bg-surface text-on-surface focus:outline-none focus:border-secondary transition disabled:opacity-60">
-                      {STATUSES.slice(1).map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
-                    </select>
-                  </td>
-                </tr>
-              ))}
+              ) : orders.map((order) => {
+                const expanded = expandedId === order.id
+                return (
+                <>
+                  <tr key={order.id} onClick={() => setExpandedId(expanded ? null : order.id)}
+                    className="hover:bg-surface-container-low transition-colors cursor-pointer">
+                    <td className="px-4 py-3 font-mono text-xs text-on-surface-variant">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`material-symbols-outlined text-on-surface-variant transition-transform ${expanded ? 'rotate-90' : ''}`} style={{ fontSize: '16px' }}>chevron_right</span>
+                        #{order.id?.slice(0, 8).toUpperCase()}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="text-sm font-medium text-on-surface">{order.user?.full_name}</p>
+                      <p className="text-xs text-on-surface-variant">{order.user?.email}</p>
+                    </td>
+                    <td className="px-4 py-3 text-on-surface">{order.items?.length}</td>
+                    <td className="px-4 py-3 font-semibold text-on-surface">NPR {Number(order.total_amount).toFixed(0)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-medium capitalize ${order.payment_status === 'PAID' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {order.payment_status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_COLORS[order.status] || 'bg-surface-container text-on-surface-variant'}`}>
+                        {order.status?.replace(/_/g, ' ')}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-on-surface-variant whitespace-nowrap">{new Date(order.placed_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <select value={order.status} onChange={(e) => updateStatus(order.id, e.target.value)} disabled={updating === order.id}
+                        className="text-xs border border-outline-variant rounded-lg px-2 py-1.5 bg-surface text-on-surface focus:outline-none focus:border-secondary transition disabled:opacity-60">
+                        {STATUSES.slice(1).map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                  {expanded && (
+                    <tr key={`${order.id}-detail`} className="bg-surface-container-low">
+                      <td colSpan={8} className="px-4 py-3">
+                        <div className="space-y-2">
+                          {(order.items || []).map((item: any) => (
+                            <div key={item.id} className="flex items-center gap-3 bg-surface rounded-xl border border-outline-variant p-2.5">
+                              {item.medicine?.image_url ? (
+                                <img src={resolveImg(item.medicine.image_url) || undefined} alt={item.medicine.name}
+                                  className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
+                              ) : (
+                                <div className="w-10 h-10 rounded-lg bg-surface-container-low flex items-center justify-center flex-shrink-0">
+                                  <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '18px' }}>medication</span>
+                                </div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-on-surface truncate">{item.medicine?.name || 'Medicine removed'}</p>
+                                <p className="text-xs text-on-surface-variant">{item.medicine?.brand_name}</p>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="text-xs text-on-surface-variant">{item.quantity} × NPR {Number(item.unit_price).toFixed(0)}</p>
+                                <p className="text-sm font-semibold text-on-surface">NPR {(item.quantity * Number(item.unit_price)).toFixed(0)}</p>
+                              </div>
+                            </div>
+                          ))}
+                          {order.shipping_address && (
+                            <p className="text-xs text-on-surface-variant pt-1">
+                              Deliver to: {order.shipping_address.address_line1}, {order.shipping_address.city}
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              )})}
             </tbody>
           </table>
         </div>
