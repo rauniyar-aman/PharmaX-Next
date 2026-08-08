@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { useCart } from '@/hooks/useCart'
 import type { Address } from '@/types'
 import type { PickedLocation } from '@/components/map/MapPicker'
 
@@ -18,6 +19,7 @@ const MapPicker = dynamic(() => import('@/components/map/MapPicker'), {
 
 export default function CheckoutShippingPage() {
   const router = useRouter()
+  const { cart } = useCart()
   const [addresses, setAddresses] = useState<Address[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
@@ -26,6 +28,7 @@ export default function CheckoutShippingPage() {
   const [saving, setSaving] = useState(false)
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
   const [form, setForm] = useState({ full_name: '', phone: '', address_line1: '', address_line2: '', city: '', state: '', is_default: false })
+  const [notes, setNotes] = useState('')
 
   const handleMapPick = (loc: PickedLocation) => {
     setCoords({ lat: loc.lat, lng: loc.lng })
@@ -74,7 +77,9 @@ export default function CheckoutShippingPage() {
   const handleContinue = () => {
     if (!selected) { toast.error('Please select a delivery address.'); return }
     sessionStorage.setItem('checkoutAddress', selected)
-    router.push('/checkout/payment')
+    sessionStorage.setItem('checkoutNotes', notes)
+    const hasRx = cart?.items.some((i) => i.medicine.type === 'Rx')
+    router.push(hasRx ? '/checkout/prescription' : '/checkout/broadcasting')
   }
 
   if (loading) return <div className="flex items-center justify-center py-24"><div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
@@ -84,9 +89,11 @@ export default function CheckoutShippingPage() {
       <div className="flex items-center gap-3 text-sm text-on-surface-variant">
         <span className="font-semibold text-primary">1. Shipping</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span>2. Payment</span>
+        <span>2. Availability</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span>3. Confirm</span>
+        <span>3. Payment</span>
+        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
+        <span>4. Confirm</span>
       </div>
 
       <h1 className="text-2xl font-bold text-on-surface">Delivery Address</h1>
@@ -159,9 +166,16 @@ export default function CheckoutShippingPage() {
         )}
       </div>
 
+      <div>
+        <label className="text-xs font-medium text-on-surface-variant">Order Notes (optional)</label>
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
+          placeholder="Any special instructions for delivery..."
+          className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant resize-none focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+      </div>
+
       <button onClick={handleContinue} disabled={!selected}
         className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60">
-        Continue to Payment
+        Continue
       </button>
     </div>
   )

@@ -11,12 +11,13 @@ export default function CheckoutPrescriptionPage() {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
-  const [placing, setPlacing] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      if (!sessionStorage.getItem('checkoutAllowed')) { router.replace('/cart'); return }
+      if (!sessionStorage.getItem('checkoutAllowed') || !sessionStorage.getItem('checkoutAddress')) {
+        router.replace('/checkout/shipping'); return
+      }
     }
     api.get('/prescriptions/').then((r) => {
       const usable = (r.data.data.prescriptions || []).filter((p: Prescription) => p.status === 'VERIFIED' || p.status === 'PENDING')
@@ -44,63 +45,10 @@ export default function CheckoutPrescriptionPage() {
     }
   }
 
-  const submitEsewaForm = (formUrl: string, params: Record<string, string>) => {
-    const form = document.createElement('form')
-    form.method = 'POST'
-    form.action = formUrl
-    Object.entries(params).forEach(([key, value]) => {
-      const input = document.createElement('input')
-      input.type = 'hidden'
-      input.name = key
-      input.value = value
-      form.appendChild(input)
-    })
-    document.body.appendChild(form)
-    form.submit()
-  }
-
-  const handlePlaceOrder = async () => {
-    const addressId = sessionStorage.getItem('checkoutAddress')
-    const method = sessionStorage.getItem('checkoutMethod') || 'CASH_ON_DELIVERY'
-    const notes = sessionStorage.getItem('checkoutNotes') || ''
-    const couponCode = sessionStorage.getItem('checkoutCoupon') || ''
-    const useWallet = sessionStorage.getItem('checkoutUseWallet') === 'true'
-    if (!addressId) { router.replace('/checkout/shipping'); return }
+  const handleContinue = () => {
     if (!selected) { toast.error('Please select or upload a prescription.'); return }
-    setPlacing(true)
-    const clearCheckoutState = () => {
-      sessionStorage.removeItem('checkoutAllowed')
-      sessionStorage.removeItem('checkoutAddress')
-      sessionStorage.removeItem('checkoutMethod')
-      sessionStorage.removeItem('checkoutNotes')
-      sessionStorage.removeItem('checkoutCoupon')
-      sessionStorage.removeItem('checkoutUseWallet')
-    }
-    const payload: Record<string, any> = { address_id: addressId, notes, prescription_id: selected }
-    if (couponCode) payload.coupon_code = couponCode
-    if (useWallet) payload.use_wallet = true
-    try {
-      if (method === 'ESEWA') {
-        const res = await api.post('/payment/esewa/initiate/', payload)
-        clearCheckoutState()
-        submitEsewaForm(res.data.data.formUrl, res.data.data.params)
-        return
-      }
-      if (method === 'KHALTI') {
-        const res = await api.post('/payment/khalti/initiate/', payload)
-        clearCheckoutState()
-        window.location.href = res.data.data.payment_url
-        return
-      }
-      const res = await api.post('/payment/cod/place/', payload)
-      clearCheckoutState()
-      sessionStorage.setItem('lastOrderId', res.data.data.order.id)
-      router.push('/checkout/confirmation')
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to place order.')
-    } finally {
-      setPlacing(false)
-    }
+    sessionStorage.setItem('checkoutPrescription', selected)
+    router.push('/checkout/broadcasting')
   }
 
   return (
@@ -108,9 +56,13 @@ export default function CheckoutPrescriptionPage() {
       <div className="flex items-center gap-3 text-sm text-on-surface-variant">
         <span className="text-on-surface font-medium">1. Shipping</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span className="text-on-surface font-medium">2. Payment</span>
+        <span className="font-semibold text-primary">2. Prescription</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span className="font-semibold text-primary">3. Prescription</span>
+        <span>3. Availability</span>
+        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
+        <span>4. Payment</span>
+        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
+        <span>5. Confirm</span>
       </div>
 
       <h1 className="text-2xl font-bold text-on-surface">Upload Prescription</h1>
@@ -141,9 +93,9 @@ export default function CheckoutPrescriptionPage() {
         </div>
       )}
 
-      <button onClick={handlePlaceOrder} disabled={placing}
-        className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
-        {placing ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />Placing Order...</> : 'Place Order'}
+      <button onClick={handleContinue}
+        className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60">
+        Continue
       </button>
     </div>
   )
