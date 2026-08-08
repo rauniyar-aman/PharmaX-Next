@@ -594,6 +594,9 @@ class MedicineReviewsView(APIView):
             defaults={'rating': int(rating), 'comment': comment},
         )
         _recalc_medicine_rating(medicine)
+        if created:
+            _notify_admins('manage_inventory', 'NEW_REVIEW', 'New Product Review',
+                            f'{request.user.full_name} left a {rating}-star review on {medicine.name}.', link='/admin/medicines')
 
         return Response({'success': True, 'data': {'review': ReviewSerializer(review, context={'request': request}).data}}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
@@ -1127,6 +1130,8 @@ class OrderCancelView(APIView):
             message=f'Your order #{str(order.id)[:8]} has been cancelled.',
             link=f'/orders/{order.id}',
         )
+        _notify_admins('manage_orders', 'ORDER_CANCELLED', 'Order Cancelled',
+                        f'{request.user.full_name} cancelled order #{str(order.id)[:8]}.', link='/admin/orders')
         return Response({'success': True, 'data': {'order': OrderSerializer(order).data}, 'message': 'Order cancelled.'})
 
 
@@ -1627,6 +1632,8 @@ class SubscriptionListCreateView(APIView):
             frequency_days=frequency_days,
             next_delivery_date=timezone.now().date() + timedelta(days=frequency_days),
         )
+        _notify_admins('manage_subscriptions', 'NEW_SUBSCRIPTION', 'New Subscription',
+                        f'{request.user.full_name} subscribed to {medicine.name}.', link='/admin/subscriptions')
         return Response({'success': True, 'data': {'subscription': MedicineSubscriptionSerializer(sub).data}, 'message': 'Subscribed for auto-refill!'}, status=status.HTTP_201_CREATED)
 
 
@@ -1894,6 +1901,8 @@ class PlusMembershipView(APIView):
             message=f'Your {plan.name} membership is active until {membership.expires_at.date()}.',
             link='/plus-membership',
         )
+        _notify_admins('manage_plus_membership', 'NEW_PLUS_MEMBER', 'New Plus Member',
+                        f'{request.user.full_name} subscribed to {plan.name}.', link='/admin/plus-membership')
         return Response({'success': True, 'data': {'membership': PlusMembershipSerializer(membership).data}, 'message': 'Membership activated!'})
 
 
