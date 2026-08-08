@@ -27,6 +27,7 @@ from .models import (
     PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
     Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment,
+    PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
@@ -48,6 +49,7 @@ from .serializers import (
     PharmacyListingSerializer, PharmacyListingCreateSerializer,
     PharmacyFulfillmentRequestSerializer, PharmacyOrderFulfillmentSerializer,
     DeliveryFulfillmentSerializer, DeliveryActiveSerializer,
+    AdminPharmacyPayoutSerializer, AdminDeliveryAgentEarningSerializer, AdminDeliveryAgentCodLiabilitySerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, require_permission
@@ -3890,3 +3892,237 @@ class DeliveryLocationUpdateView(APIView):
 
         update_agent_location(request.user.delivery_agent, lat, lng)
         return Response({'success': True, 'message': 'Location updated.'})
+
+
+# ─── Admin: Finance / Settlement Ledgers (Stage 8 of the financial ledger spec) ────
+#
+# All gated by manage_finance, same permission AdminWalletListView/AdminWalletAdjustView already
+# use — no new permission code needed for this stage.
+
+class AdminPharmacyPayoutListView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def get(self, request):
+        qs = PharmacyPayout.objects.select_related('pharmacy', 'fulfillment__order', 'paid_by').order_by('-created_at')
+        pharmacy_id = request.query_params.get('pharmacy')
+        if pharmacy_id:
+            qs = qs.filter(pharmacy_id=pharmacy_id)
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        funding_source = request.query_params.get('funding_source')
+        if funding_source:
+            qs = qs.filter(funding_source=funding_source)
+
+        page = max(1, int(request.query_params.get('page', 1)))
+        limit = min(50, int(request.query_params.get('limit', 20)))
+        total = qs.count()
+        payouts = qs[(page - 1) * limit: page * limit]
+        return Response({
+            'success': True,
+            'data': {
+                'payouts': AdminPharmacyPayoutSerializer(payouts, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+
+class AdminPharmacyPayoutMarkPaidView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def post(self, request, pk):
+        try:
+            payout = PharmacyPayout.objects.get(pk=pk)
+        except PharmacyPayout.DoesNotExist:
+            return Response({'success': False, 'message': 'Payout not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if payout.status == 'PAID':
+            return Response({'success': False, 'message': 'This payout is already marked paid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        payout.status = 'PAID'
+        payout.paid_at = timezone.now()
+        payout.paid_by = request.user
+        payout.save(update_fields=['status', 'paid_at', 'paid_by'])
+        return Response({'success': True, 'data': {'payout': AdminPharmacyPayoutSerializer(payout).data}, 'message': 'Marked as paid.'})
+
+
+class AdminAgentEarningListView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def get(self, request):
+        qs = DeliveryAgentEarning.objects.select_related('agent__user', 'fulfillment__order', 'paid_by').order_by('-created_at')
+        agent_id = request.query_params.get('agent')
+        if agent_id:
+            qs = qs.filter(agent_id=agent_id)
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        page = max(1, int(request.query_params.get('page', 1)))
+        limit = min(50, int(request.query_params.get('limit', 20)))
+        total = qs.count()
+        earnings = qs[(page - 1) * limit: page * limit]
+        return Response({
+            'success': True,
+            'data': {
+                'earnings': AdminDeliveryAgentEarningSerializer(earnings, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+
+class AdminAgentEarningMarkPaidView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def post(self, request, pk):
+        try:
+            earning = DeliveryAgentEarning.objects.get(pk=pk)
+        except DeliveryAgentEarning.DoesNotExist:
+            return Response({'success': False, 'message': 'Earning not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if earning.status == 'PAID':
+            return Response({'success': False, 'message': 'This earning is already marked paid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        earning.status = 'PAID'
+        earning.paid_at = timezone.now()
+        earning.paid_by = request.user
+        earning.save(update_fields=['status', 'paid_at', 'paid_by'])
+        return Response({'success': True, 'data': {'earning': AdminDeliveryAgentEarningSerializer(earning).data}, 'message': 'Marked as paid.'})
+
+
+class AdminCodLiabilityListView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def get(self, request):
+        qs = DeliveryAgentCodLiability.objects.select_related('agent__user', 'fulfillment__order', 'confirmed_by').order_by('-created_at')
+        agent_id = request.query_params.get('agent')
+        if agent_id:
+            qs = qs.filter(agent_id=agent_id)
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        page = max(1, int(request.query_params.get('page', 1)))
+        limit = min(50, int(request.query_params.get('limit', 20)))
+        total = qs.count()
+        liabilities = qs[(page - 1) * limit: page * limit]
+        return Response({
+            'success': True,
+            'data': {
+                'liabilities': AdminDeliveryAgentCodLiabilitySerializer(liabilities, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+
+class AdminCodLiabilityConfirmRemittanceView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def post(self, request, pk):
+        try:
+            liability = DeliveryAgentCodLiability.objects.get(pk=pk)
+        except DeliveryAgentCodLiability.DoesNotExist:
+            return Response({'success': False, 'message': 'Liability not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if liability.status == 'REMITTED':
+            return Response({'success': False, 'message': 'This liability is already remitted.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        method = request.data.get('remittance_method')
+        valid_methods = dict(DeliveryAgentCodLiability.METHOD)
+        if method not in valid_methods:
+            return Response({'success': False, 'message': f'remittance_method must be one of: {", ".join(valid_methods)}.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        liability.status = 'REMITTED'
+        liability.remittance_method = method
+        liability.reference = (request.data.get('reference') or '').strip() or None
+        liability.remitted_at = timezone.now()
+        liability.confirmed_by = request.user
+        liability.save(update_fields=['status', 'remittance_method', 'reference', 'remitted_at', 'confirmed_by'])
+        return Response({'success': True, 'data': {'liability': AdminDeliveryAgentCodLiabilitySerializer(liability).data}, 'message': 'Remittance confirmed.'})
+
+
+class AdminAgentFinanceProfileView(APIView):
+    """The combined per-agent financial profile — both ledgers together, since reviewing one
+    agent almost always means wanting both sides at once: what they owe the platform (COD
+    liabilities) and what the platform owes them (earnings)."""
+    permission_classes = [require_permission('manage_finance')]
+
+    def get(self, request, pk):
+        try:
+            agent = DeliveryAgent.objects.select_related('user').get(pk=pk)
+        except DeliveryAgent.DoesNotExist:
+            return Response({'success': False, 'message': 'Delivery agent not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        liabilities = DeliveryAgentCodLiability.objects.filter(agent=agent).select_related('fulfillment__order', 'confirmed_by').order_by('-created_at')
+        earnings = DeliveryAgentEarning.objects.filter(agent=agent).select_related('fulfillment__order', 'paid_by').order_by('-created_at')
+
+        pending_liabilities = liabilities.filter(status='PENDING')
+        total_collected = liabilities.aggregate(t=Sum('amount_collected'))['t'] or Decimal('0')
+        total_outstanding = pending_liabilities.aggregate(t=Sum('amount_collected'))['t'] or Decimal('0')
+        oldest_pending = pending_liabilities.order_by('created_at').first()
+        oldest_age_days = (timezone.now() - oldest_pending.created_at).days if oldest_pending else None
+
+        total_earned = earnings.aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        total_pending_earnings = earnings.filter(status='PENDING').aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        total_paid_earnings = earnings.filter(status='PAID').aggregate(t=Sum('amount'))['t'] or Decimal('0')
+
+        return Response({
+            'success': True,
+            'data': {
+                'agent': AdminDeliveryAgentSerializer(agent).data,
+                'cod_record': {
+                    'liabilities': AdminDeliveryAgentCodLiabilitySerializer(liabilities, many=True).data,
+                    'total_collected': str(total_collected),
+                    'total_outstanding': str(total_outstanding),
+                    'oldest_unremitted_age_days': oldest_age_days,
+                },
+                'earnings_record': {
+                    'earnings': AdminDeliveryAgentEarningSerializer(earnings, many=True).data,
+                    'total_earned': str(total_earned),
+                    'total_pending': str(total_pending_earnings),
+                    'total_paid': str(total_paid_earnings),
+                },
+            },
+        })
+
+
+class AdminFinanceSummaryView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def get(self, request):
+        total_commission = PharmacyPayout.objects.aggregate(t=Sum('commission_amount'))['t'] or Decimal('0')
+
+        pending_payouts = PharmacyPayout.objects.filter(status='PENDING')
+        pending_payout_order_revenue = pending_payouts.filter(funding_source='ORDER_REVENUE').aggregate(t=Sum('net_payable'))['t'] or Decimal('0')
+        pending_payout_platform_funds = pending_payouts.filter(funding_source='PLATFORM_FUNDS').aggregate(t=Sum('net_payable'))['t'] or Decimal('0')
+
+        pending_agent_earnings = DeliveryAgentEarning.objects.filter(status='PENDING').aggregate(t=Sum('amount'))['t'] or Decimal('0')
+
+        outstanding_rows = list(
+            DeliveryAgentCodLiability.objects.filter(status='PENDING')
+            .values('agent_id', 'agent__user__full_name')
+            .annotate(total=Sum('amount_collected'))
+            .order_by('-total')
+        )
+        outstanding_cod_by_agent = [
+            {'agent_id': str(r['agent_id']), 'agent_name': r['agent__user__full_name'], 'amount': str(r['total'])}
+            for r in outstanding_rows
+        ]
+        total_outstanding_cod = sum((r['total'] for r in outstanding_rows), Decimal('0'))
+
+        month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        coupon_cost_this_month = CouponUsage.objects.filter(used_at__gte=month_start).aggregate(t=Sum('discount_amount'))['t'] or Decimal('0')
+
+        return Response({
+            'success': True,
+            'data': {
+                'total_commission_earned': str(total_commission),
+                'pending_pharmacy_payouts': {
+                    'order_revenue': str(pending_payout_order_revenue),
+                    'platform_funds': str(pending_payout_platform_funds),
+                },
+                'pending_agent_earnings': str(pending_agent_earnings),
+                'outstanding_cod': {
+                    'total': str(total_outstanding_cod),
+                    'by_agent': outstanding_cod_by_agent,
+                },
+                'coupon_cost_this_month': str(coupon_cost_this_month),
+            },
+        })

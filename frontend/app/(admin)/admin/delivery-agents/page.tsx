@@ -44,17 +44,19 @@ export default function AdminDeliveryAgentsPage() {
           <table className="w-full text-sm">
             <thead className="bg-surface-container-low border-b border-outline-variant">
               <tr>
-                {['Name', 'Email', 'Vehicle', 'Verified', 'Online', 'Account'].map((h) => (
+                {['Name', 'Email', 'Vehicle', 'Verified', 'Online', 'Outstanding COD', 'Account'].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-on-surface-variant whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant">
               {loading ? (
-                [...Array(4)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><div className="h-6 bg-surface-container-low rounded animate-pulse" /></td></tr>)
+                [...Array(4)].map((_, i) => <tr key={i}><td colSpan={7} className="px-4 py-3"><div className="h-6 bg-surface-container-low rounded animate-pulse" /></td></tr>)
               ) : agents.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-12 text-center text-on-surface-variant">No delivery agents yet</td></tr>
-              ) : agents.map((a) => (
+                <tr><td colSpan={7} className="px-4 py-12 text-center text-on-surface-variant">No delivery agents yet</td></tr>
+              ) : agents.map((a) => {
+                const outstanding = Number(a.outstanding_cod_balance)
+                return (
                 <tr key={a.id} className="hover:bg-surface-container-low transition-colors">
                   <td className="px-4 py-3 font-medium text-on-surface whitespace-nowrap">{a.full_name}</td>
                   <td className="px-4 py-3 text-on-surface-variant">{a.email}</td>
@@ -72,6 +74,12 @@ export default function AdminDeliveryAgentsPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
+                    <Link href={`/admin/finance/agents/${a.id}`}
+                      className={`text-xs font-semibold hover:underline whitespace-nowrap ${outstanding > 0 ? 'text-error' : 'text-on-surface-variant'}`}>
+                      NPR {outstanding.toFixed(0)} {outstanding > 0 && '⚠'}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3">
                     <button disabled={updatingId === a.id}
                       onClick={() => patch(a.id, { user_is_active: !a.user_is_active }, a.user_is_active ? 'Rider account suspended.' : 'Rider account reactivated.')}
                       className={`text-[10px] font-semibold px-2.5 py-1 rounded-full transition-colors disabled:opacity-50 ${a.user_is_active ? 'bg-primary/10 text-primary hover:bg-primary/20' : 'bg-error/10 text-error hover:bg-error/20'}`}>
@@ -79,7 +87,7 @@ export default function AdminDeliveryAgentsPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>

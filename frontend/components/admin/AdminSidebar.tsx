@@ -24,6 +24,7 @@ const navItems = [
   { label: 'Pharmacies',    href: '/admin/pharmacies',    icon: 'local_pharmacy', code: 'manage_pharmacies' },
   { label: 'Delivery Agents', href: '/admin/delivery-agents', icon: 'sports_motorsports', code: 'manage_delivery_agents' },
   { label: 'Wallet',        href: '/admin/wallet',        icon: 'account_balance_wallet', code: 'manage_finance' },
+  { label: 'Finance',       href: '/admin/finance',       icon: 'payments', code: 'manage_finance' },
   { label: 'Reports',       href: '/admin/reports',       icon: 'bar_chart',   code: 'view_reports' },
   { label: 'Admins',        href: '/admin/admins',        icon: 'admin_panel_settings', superAdminOnly: true },
 ]
