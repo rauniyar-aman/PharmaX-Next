@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
-from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent
+from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -616,3 +616,84 @@ class DoctorAppointmentSerializer(serializers.ModelSerializer):
 
     def get_user(self, obj):
         return {'id': str(obj.user_id), 'full_name': obj.user.full_name, 'email': obj.user.email, 'phone': obj.user.phone}
+
+
+# ─── Pharmacy dashboard (Stage 5) ──────────────────────────────────────────────
+
+class PharmacyListingSerializer(serializers.ModelSerializer):
+    medicine_id = serializers.UUIDField(source='medicine.id', read_only=True)
+    medicine_name = serializers.CharField(source='medicine.name', read_only=True)
+    medicine_image_url = serializers.CharField(source='medicine.image_url', read_only=True)
+    medicine_price = serializers.DecimalField(source='medicine.price', max_digits=10, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = PharmacyMedicineListing
+        fields = [
+            'id', 'medicine_id', 'medicine_name', 'medicine_image_url', 'medicine_price',
+            'stock_quantity', 'expiry_date', 'is_available', 'updated_at',
+        ]
+        read_only_fields = ['id', 'medicine_id', 'medicine_name', 'medicine_image_url', 'medicine_price', 'updated_at']
+
+
+class PharmacyListingCreateSerializer(serializers.Serializer):
+    medicine_id = serializers.UUIDField()
+    stock_quantity = serializers.IntegerField(min_value=0)
+    expiry_date = serializers.DateField()
+    is_available = serializers.BooleanField(default=True, required=False)
+
+
+class PharmacyFulfillmentRequestSerializer(serializers.ModelSerializer):
+    """Deliberately excludes the customer's exact address, name, and phone — a pharmacy only
+    needs city/area-level context to decide whether to accept, until it actually wins the item."""
+    order_id = serializers.UUIDField(source='order_item.order_id', read_only=True)
+    medicine_id = serializers.UUIDField(source='order_item.medicine_id', read_only=True)
+    medicine_name = serializers.CharField(source='order_item.medicine.name', read_only=True)
+    medicine_image_url = serializers.CharField(source='order_item.medicine.image_url', read_only=True)
+    quantity = serializers.IntegerField(source='order_item.quantity', read_only=True)
+    city = serializers.SerializerMethodField()
+    province = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FulfillmentRequest
+        fields = [
+            'id', 'order_id', 'medicine_id', 'medicine_name', 'medicine_image_url',
+            'quantity', 'city', 'province', 'status', 'created_at',
+        ]
+
+    def get_city(self, obj):
+        addr = obj.order_item.order.address
+        return addr.city if addr else None
+
+    def get_province(self, obj):
+        addr = obj.order_item.order.address
+        return addr.province if addr else None
+
+
+class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
+    order_placed_at = serializers.DateTimeField(source='order.placed_at', read_only=True)
+    items = serializers.SerializerMethodField()
+    delivery_agent_name = serializers.SerializerMethodField()
+    city = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrderFulfillment
+        fields = [
+            'id', 'order_id', 'order_placed_at', 'status', 'items',
+            'delivery_agent_name', 'city', 'accepted_at', 'delivered_at',
+        ]
+
+    def get_items(self, obj):
+        return [
+            {
+                'medicine_id': str(i.medicine_id), 'medicine_name': i.medicine.name,
+                'quantity': i.quantity, 'unit_price': str(i.unit_price),
+            }
+            for i in obj.order_items.select_related('medicine').all()
+        ]
+
+    def get_delivery_agent_name(self, obj):
+        return obj.delivery_agent.user.full_name if obj.delivery_agent else None
+
+    def get_city(self, obj):
+        addr = obj.order.address
+        return addr.city if addr else None

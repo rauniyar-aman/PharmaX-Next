@@ -26,7 +26,7 @@ from .models import (
     LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment,
     PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
-    Pharmacy, DeliveryAgent,
+    Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
@@ -45,11 +45,16 @@ from .serializers import (
     PermissionSerializer, AdminUserSerializer, AdminUserCreateSerializer,
     AdminPharmacySerializer, AdminPharmacyCreateSerializer,
     AdminDeliveryAgentSerializer, AdminDeliveryAgentCreateSerializer,
+    PharmacyListingSerializer, PharmacyListingCreateSerializer,
+    PharmacyFulfillmentRequestSerializer, PharmacyOrderFulfillmentSerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
-from .permissions import IsAdmin, IsSuperAdmin, require_permission
+from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, require_permission
 from .throttles import AuthRateThrottle
-from .matching import broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts
+from .matching import (
+    broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts,
+    pharmacy_accept_item, pharmacy_decline_item,
+)
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
@@ -3619,3 +3624,166 @@ class AdminDeliveryAgentDetailView(APIView):
             agent.user.save(update_fields=['is_active'])
 
         return Response({'success': True, 'data': {'agent': AdminDeliveryAgentSerializer(agent).data}, 'message': 'Delivery agent updated.'})
+
+
+# ─── Pharmacy Dashboard (Stage 5 of the marketplace spec) ─────────────────────
+#
+# Every view below is gated by IsPharmacy (role-only) AND additionally scopes every query to
+# request.user.pharmacy — the two together are what stop Pharmacy A from ever seeing or acting on
+# Pharmacy B's listings/requests. IsPharmacy alone only proves "some pharmacy is logged in"; the
+# ownership filter on each queryset/lookup is what proves "this pharmacy, not just any pharmacy."
+
+class PharmacyMedicineListView(APIView):
+    """Browse the master Medicine catalog to decide what to carry — read-only, not scoped to any
+    pharmacy (there's nothing to own here yet; PharmacyListingListView is where ownership starts)."""
+    permission_classes = [IsPharmacy]
+
+    def get(self, request):
+        qs = Medicine.objects.select_related('category', 'brand').order_by('name')
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(brand__name__icontains=search))
+
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+            limit = min(100, max(1, int(request.query_params.get('limit', 24))))
+        except ValueError:
+            page, limit = 1, 24
+
+        total = qs.count()
+        start = (page - 1) * limit
+        medicines = qs[start:start + limit]
+
+        return Response({
+            'success': True,
+            'data': {
+                'medicines': MedicineListSerializer(medicines, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+
+class PharmacyListingListView(APIView):
+    permission_classes = [IsPharmacy]
+
+    def get(self, request):
+        listings = PharmacyMedicineListing.objects.filter(
+            pharmacy=request.user.pharmacy,
+        ).select_related('medicine__category', 'medicine__brand').order_by('medicine__name')
+        return Response({'success': True, 'data': {'listings': PharmacyListingSerializer(listings, many=True).data}})
+
+    def post(self, request):
+        s = PharmacyListingCreateSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        d = s.validated_data
+
+        try:
+            medicine = Medicine.objects.get(id=d['medicine_id'])
+        except Medicine.DoesNotExist:
+            return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # update_or_create keyed on pharmacy+medicine: unique_together already enforces one
+        # listing per medicine per pharmacy, so re-submitting the same medicine just updates it.
+        listing, created = PharmacyMedicineListing.objects.update_or_create(
+            pharmacy=request.user.pharmacy, medicine=medicine,
+            defaults={
+                'stock_quantity': d['stock_quantity'],
+                'expiry_date': d['expiry_date'],
+                'is_available': d.get('is_available', True),
+            },
+        )
+        return Response(
+            {'success': True, 'data': {'listing': PharmacyListingSerializer(listing).data}, 'message': 'Listing saved.'},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class PharmacyListingDetailView(APIView):
+    permission_classes = [IsPharmacy]
+
+    def patch(self, request, pk):
+        # the pharmacy=request.user.pharmacy filter on this lookup IS the ownership boundary —
+        # Pharmacy B passing Pharmacy A's listing id gets a 404, not someone else's data.
+        try:
+            listing = PharmacyMedicineListing.objects.select_related('medicine').get(pk=pk, pharmacy=request.user.pharmacy)
+        except PharmacyMedicineListing.DoesNotExist:
+            return Response({'success': False, 'message': 'Listing not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'stock_quantity' in request.data:
+            listing.stock_quantity = request.data['stock_quantity']
+        if 'expiry_date' in request.data:
+            listing.expiry_date = request.data['expiry_date']
+        if 'is_available' in request.data:
+            listing.is_available = bool(request.data['is_available'])
+        listing.save()
+
+        return Response({'success': True, 'data': {'listing': PharmacyListingSerializer(listing).data}, 'message': 'Listing updated.'})
+
+    def delete(self, request, pk):
+        try:
+            listing = PharmacyMedicineListing.objects.get(pk=pk, pharmacy=request.user.pharmacy)
+        except PharmacyMedicineListing.DoesNotExist:
+            return Response({'success': False, 'message': 'Listing not found.'}, status=status.HTTP_404_NOT_FOUND)
+        listing.delete()
+        return Response({'success': True, 'message': 'Stopped carrying this medicine.'})
+
+
+class PharmacyRequestListView(APIView):
+    """Incoming FulfillmentRequests still awaiting this pharmacy's response. Scoped to
+    pharmacy=request.user.pharmacy — the query itself is the ownership boundary, there's no way
+    to pass a filter that leaks another pharmacy's PENDING requests."""
+    permission_classes = [IsPharmacy]
+
+    def get(self, request):
+        requests = FulfillmentRequest.objects.filter(
+            pharmacy=request.user.pharmacy, status='PENDING',
+        ).select_related('order_item__medicine', 'order_item__order__address').order_by('created_at')
+        return Response({'success': True, 'data': {'requests': PharmacyFulfillmentRequestSerializer(requests, many=True).data}})
+
+
+class PharmacyRequestAcceptView(APIView):
+    permission_classes = [IsPharmacy]
+
+    def post(self, request, pk):
+        # ownership check #1: the lookup itself. Pharmacy B supplying Pharmacy A's request id
+        # gets 404 here — the row simply doesn't match pharmacy=request.user.pharmacy.
+        try:
+            req = FulfillmentRequest.objects.select_related('order_item').get(pk=pk, pharmacy=request.user.pharmacy)
+        except FulfillmentRequest.DoesNotExist:
+            return Response({'success': False, 'message': 'Request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # ownership check #2 (defense in depth): pharmacy_accept_item() is called with the
+        # AUTHENTICATED pharmacy, never anything client-supplied, so even if check #1 were
+        # somehow bypassed there's no path to accept on another pharmacy's behalf.
+        ok, err = pharmacy_accept_item(request.user.pharmacy, req.order_item)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'message': 'Accepted — it will show up in your order history.'})
+
+
+class PharmacyRequestDeclineView(APIView):
+    permission_classes = [IsPharmacy]
+
+    def post(self, request, pk):
+        try:
+            req = FulfillmentRequest.objects.select_related('order_item').get(pk=pk, pharmacy=request.user.pharmacy)
+        except FulfillmentRequest.DoesNotExist:
+            return Response({'success': False, 'message': 'Request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ok, err = pharmacy_decline_item(request.user.pharmacy, req.order_item)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'message': 'Declined.'})
+
+
+class PharmacyOrderListView(APIView):
+    """This pharmacy's own OrderFulfillments (items it won) — scoped the same way as everything
+    else here: pharmacy=request.user.pharmacy directly in the filter."""
+    permission_classes = [IsPharmacy]
+
+    def get(self, request):
+        fulfillments = OrderFulfillment.objects.filter(
+            pharmacy=request.user.pharmacy,
+        ).select_related('order__address', 'delivery_agent__user').prefetch_related('order_items__medicine').order_by('-accepted_at')
+        return Response({'success': True, 'data': {'orders': PharmacyOrderFulfillmentSerializer(fulfillments, many=True).data}})
