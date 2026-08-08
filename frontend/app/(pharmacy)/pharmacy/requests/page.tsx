@@ -1,42 +1,26 @@
 'use client'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState } from 'react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import type { PharmacyFulfillmentRequest } from '@/types'
-
-const POLL_INTERVAL_MS = 4000
+import { usePharmacyRequestsStore } from '@/store/pharmacyRequests'
 
 export default function PharmacyRequestsPage() {
-  const [requests, setRequests] = useState<PharmacyFulfillmentRequest[]>([])
-  const [loading, setLoading] = useState(true)
+  const requests = usePharmacyRequestsStore((s) => s.requests)
+  const loading = usePharmacyRequestsStore((s) => s.loading)
+  const removeRequest = usePharmacyRequestsStore((s) => s.removeRequest)
   const [respondingId, setRespondingId] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const load = useCallback((silent = false) => {
-    if (!silent) setLoading(true)
-    api.get('/pharmacy/requests/')
-      .then((r) => setRequests(r.data.data.requests || []))
-      .catch(() => { if (!silent) toast.error('Failed to load requests.') })
-      .finally(() => { if (!silent) setLoading(false) })
-  }, [])
-
-  useEffect(() => {
-    load()
-    pollRef.current = setInterval(() => load(true), POLL_INTERVAL_MS)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [load])
 
   const respond = async (id: string, action: 'accept' | 'decline') => {
     setRespondingId(id)
     try {
       await api.post(`/pharmacy/requests/${id}/${action}/`)
-      setRequests((prev) => prev.filter((r) => r.id !== id))
+      removeRequest(id)
       toast.success(action === 'accept' ? 'Accepted! Check Orders for pickup details.' : 'Declined.')
     } catch (err: any) {
       const msg = err.response?.data?.message || `Failed to ${action}.`
       // the request expired or someone else on this pharmacy's team already responded — either
       // way it's no longer actionable, so drop it from the list rather than leaving a dead button.
-      setRequests((prev) => prev.filter((r) => r.id !== id))
+      removeRequest(id)
       toast.error(msg)
     } finally {
       setRespondingId(null)
