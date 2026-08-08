@@ -31,6 +31,35 @@ export interface AdminUser {
   created_at: string
 }
 
+export interface AdminPharmacy {
+  id: string
+  name: string
+  email: string
+  license_number: string
+  phone: string
+  address: string
+  lat: number
+  lng: number
+  is_verified: boolean
+  is_active: boolean
+  user_is_active: boolean
+  created_at: string
+}
+
+export interface AdminDeliveryAgent {
+  id: string
+  full_name: string
+  email: string
+  phone: string
+  vehicle_type: string | null
+  lat: number | null
+  lng: number | null
+  is_verified: boolean
+  is_online: boolean
+  user_is_active: boolean
+  created_at: string
+}
+
 export interface AuthTokens {
   access: string
   refresh: string

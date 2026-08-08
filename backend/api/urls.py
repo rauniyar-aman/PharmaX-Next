@@ -160,4 +160,8 @@ urlpatterns = [
     path('admin/permissions/',                  views.PermissionListView.as_view(),         name='admin-permissions'),
     path('admin/admins/',                       views.AdminUserListView.as_view(),          name='admin-users'),
     path('admin/admins/<uuid:pk>/',             views.AdminUserDetailView.as_view(),        name='admin-user-detail'),
+    path('admin/pharmacies/',                   views.AdminPharmacyListView.as_view(),      name='admin-pharmacies'),
+    path('admin/pharmacies/<uuid:pk>/',         views.AdminPharmacyDetailView.as_view(),    name='admin-pharmacy-detail'),
+    path('admin/delivery-agents/',              views.AdminDeliveryAgentListView.as_view(), name='admin-delivery-agents'),
+    path('admin/delivery-agents/<uuid:pk>/',    views.AdminDeliveryAgentDetailView.as_view(), name='admin-delivery-agent-detail'),
 ]

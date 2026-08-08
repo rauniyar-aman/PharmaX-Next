@@ -26,6 +26,7 @@ from .models import (
     LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment,
     PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
+    Pharmacy, DeliveryAgent,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
@@ -42,6 +43,8 @@ from .serializers import (
     MedicineReminderSerializer, ReminderLogSerializer,
     CouponSerializer, WalletSerializer, WalletTransactionSerializer, ReferralSerializer,
     PermissionSerializer, AdminUserSerializer, AdminUserCreateSerializer,
+    AdminPharmacySerializer, AdminPharmacyCreateSerializer,
+    AdminDeliveryAgentSerializer, AdminDeliveryAgentCreateSerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
 from .permissions import IsAdmin, IsSuperAdmin, require_permission
@@ -3498,3 +3501,121 @@ class AdminUserDetailView(APIView):
             admin.permissions.set(Permission.objects.filter(code__in=codes))
 
         return Response({'success': True, 'data': {'admin': AdminUserSerializer(admin).data}, 'message': 'Admin updated.'})
+
+
+# ─── Admin: Pharmacies & Delivery Agents (marketplace account management) ─────
+
+class AdminPharmacyListView(APIView):
+    permission_classes = [require_permission('manage_pharmacies')]
+
+    def get(self, request):
+        pharmacies = Pharmacy.objects.select_related('user').order_by('name')
+        return Response({'success': True, 'data': {'pharmacies': AdminPharmacySerializer(pharmacies, many=True).data}})
+
+    def post(self, request):
+        s = AdminPharmacyCreateSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        d = s.validated_data
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=d['email'], full_name=d['name'], phone=d['phone'], password=d['password'],
+                role='PHARMACY', is_active=True, is_email_verified=True,
+            )
+            pharmacy = Pharmacy.objects.create(
+                user=user, name=d['name'], license_number=d['license_number'], phone=d['phone'],
+                address=d['address'], lat=d['lat'], lng=d['lng'],
+            )
+
+        return Response({'success': True, 'data': {'pharmacy': AdminPharmacySerializer(pharmacy).data}, 'message': 'Pharmacy account created — remember to verify it before it can receive orders.'}, status=status.HTTP_201_CREATED)
+
+
+class AdminPharmacyDetailView(APIView):
+    permission_classes = [require_permission('manage_pharmacies')]
+
+    def get(self, request, pk):
+        try:
+            pharmacy = Pharmacy.objects.select_related('user').get(id=pk)
+        except Pharmacy.DoesNotExist:
+            return Response({'success': False, 'message': 'Pharmacy not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'pharmacy': AdminPharmacySerializer(pharmacy).data}})
+
+    def patch(self, request, pk):
+        try:
+            pharmacy = Pharmacy.objects.select_related('user').get(id=pk)
+        except Pharmacy.DoesNotExist:
+            return Response({'success': False, 'message': 'Pharmacy not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        for field in ('name', 'phone', 'address', 'lat', 'lng'):
+            if field in request.data:
+                setattr(pharmacy, field, request.data[field])
+        if 'is_verified' in request.data:
+            pharmacy.is_verified = bool(request.data['is_verified'])
+        if 'is_active' in request.data:
+            pharmacy.is_active = bool(request.data['is_active'])
+        pharmacy.save()
+
+        # a suspended pharmacy account shouldn't be able to log in at all, not just stop
+        # receiving broadcasts — is_active vs user_is_active are deliberately separate:
+        # is_active is the pharmacy's own "we're closed right now" toggle (Stage 5+), this is
+        # the admin's harder suspension switch.
+        if 'user_is_active' in request.data:
+            pharmacy.user.is_active = bool(request.data['user_is_active'])
+            pharmacy.user.save(update_fields=['is_active'])
+
+        return Response({'success': True, 'data': {'pharmacy': AdminPharmacySerializer(pharmacy).data}, 'message': 'Pharmacy updated.'})
+
+
+class AdminDeliveryAgentListView(APIView):
+    permission_classes = [require_permission('manage_delivery_agents')]
+
+    def get(self, request):
+        agents = DeliveryAgent.objects.select_related('user').order_by('user__full_name')
+        return Response({'success': True, 'data': {'agents': AdminDeliveryAgentSerializer(agents, many=True).data}})
+
+    def post(self, request):
+        s = AdminDeliveryAgentCreateSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        d = s.validated_data
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=d['email'], full_name=d['full_name'], phone=d['phone'], password=d['password'],
+                role='DELIVERY_AGENT', is_active=True, is_email_verified=True,
+            )
+            agent = DeliveryAgent.objects.create(user=user, phone=d['phone'], vehicle_type=d.get('vehicle_type', ''))
+
+        return Response({'success': True, 'data': {'agent': AdminDeliveryAgentSerializer(agent).data}, 'message': 'Delivery agent account created — remember to verify it before they can accept deliveries.'}, status=status.HTTP_201_CREATED)
+
+
+class AdminDeliveryAgentDetailView(APIView):
+    permission_classes = [require_permission('manage_delivery_agents')]
+
+    def get(self, request, pk):
+        try:
+            agent = DeliveryAgent.objects.select_related('user').get(id=pk)
+        except DeliveryAgent.DoesNotExist:
+            return Response({'success': False, 'message': 'Delivery agent not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'agent': AdminDeliveryAgentSerializer(agent).data}})
+
+    def patch(self, request, pk):
+        try:
+            agent = DeliveryAgent.objects.select_related('user').get(id=pk)
+        except DeliveryAgent.DoesNotExist:
+            return Response({'success': False, 'message': 'Delivery agent not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'vehicle_type' in request.data:
+            agent.vehicle_type = request.data['vehicle_type']
+        if 'is_verified' in request.data:
+            agent.is_verified = bool(request.data['is_verified'])
+        agent.save()
+
+        # same reasoning as AdminPharmacyDetailView: user_is_active is the admin's suspension
+        # switch, separate from is_online (the rider's own go-online/offline toggle, Stage 6+).
+        if 'user_is_active' in request.data:
+            agent.user.is_active = bool(request.data['user_is_active'])
+            agent.user.save(update_fields=['is_active'])
+
+        return Response({'success': True, 'data': {'agent': AdminDeliveryAgentSerializer(agent).data}, 'message': 'Delivery agent updated.'})
