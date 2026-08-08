@@ -33,12 +33,16 @@ function StatCard({ icon, label, value, href, tone = 'default' }: {
 export default function PharmacyDashboardPage() {
   const [orders, setOrders] = useState<PharmacyOrderFulfillment[]>([])
   const [listings, setListings] = useState<PharmacyListing[]>([])
+  const [showFinance, setShowFinance] = useState(true)
   const [loading, setLoading] = useState(true)
   const pendingRequests = usePharmacyRequestsStore((s) => s.requests.length)
 
   useEffect(() => {
     Promise.all([
-      api.get('/pharmacy/orders/').then((r) => setOrders(r.data.data.orders || [])),
+      api.get('/pharmacy/orders/').then((r) => {
+        setOrders(r.data.data.orders || [])
+        setShowFinance(r.data.data.show_finance !== false)
+      }),
       api.get('/pharmacy/listings/').then((r) => setListings(r.data.data.listings || [])),
     ]).finally(() => setLoading(false))
   }, [])
@@ -68,8 +72,12 @@ export default function PharmacyDashboardPage() {
           <StatCard icon="inbox" label="Pending Requests" value={String(pendingRequests)} href="/pharmacy/requests" tone={pendingRequests > 0 ? 'warning' : 'default'} />
           <StatCard icon="local_shipping" label="Active Orders" value={String(stats.active)} href="/pharmacy/orders" />
           <StatCard icon="check_circle" label="Delivered" value={String(stats.delivered)} href="/pharmacy/orders" tone="success" />
-          <StatCard icon="account_balance_wallet" label="Pending Payout" value={`NPR ${stats.pendingPayout.toFixed(0)}`} href="/pharmacy/orders" tone={stats.pendingPayout > 0 ? 'warning' : 'default'} />
-          <StatCard icon="paid" label="Total Paid Out" value={`NPR ${stats.totalPaid.toFixed(0)}`} tone="success" />
+          {showFinance && (
+            <>
+              <StatCard icon="account_balance_wallet" label="Pending Payout" value={`NPR ${stats.pendingPayout.toFixed(0)}`} href="/pharmacy/orders" tone={stats.pendingPayout > 0 ? 'warning' : 'default'} />
+              <StatCard icon="paid" label="Total Paid Out" value={`NPR ${stats.totalPaid.toFixed(0)}`} tone="success" />
+            </>
+          )}
           <StatCard icon="production_quantity_limits" label="Low / Out of Stock" value={String(stats.lowStock)} href="/pharmacy/inventory" tone={stats.lowStock > 0 ? 'warning' : 'default'} />
         </div>
       )}

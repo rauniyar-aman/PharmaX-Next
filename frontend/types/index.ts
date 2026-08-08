@@ -104,7 +104,7 @@ export interface PharmacyOrderFulfillment {
   city: string | null
   accepted_at: string | null
   delivered_at: string | null
-  payment_status: 'NOT_APPLICABLE' | 'PENDING' | 'PAID'
+  payment_status: 'NOT_APPLICABLE' | 'PENDING' | 'PAID' | 'HIDDEN'
   payout_amount: string | null
   payout_paid_at: string | null
 }
@@ -115,6 +115,7 @@ export interface PharmacyTeamMember {
   email: string
   phone: string
   is_active: boolean
+  can_view_finance: boolean
   created_at: string
 }
 
