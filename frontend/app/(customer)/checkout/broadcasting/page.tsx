@@ -70,8 +70,18 @@ export default function CheckoutBroadcastingPage() {
           if (pollRef.current) clearInterval(pollRef.current)
           setPhase('resolved')
         }
-      } catch {
-        // transient network hiccup — keep polling, don't fail the whole page over one bad request
+      } catch (err: any) {
+        if (err.response?.status === 404) {
+          // the order this tab was watching no longer exists (e.g. removed on the backend) —
+          // this is not transient, retrying forever would just spin the "Checking..." screen
+          // eternally with no way out, so stop polling and send them back to restart checkout.
+          if (pollRef.current) clearInterval(pollRef.current)
+          sessionStorage.removeItem('checkoutOrderId')
+          setErrorMessage('This order is no longer available. Please start checkout again.')
+          setPhase('error')
+          return
+        }
+        // any other error (network blip, 5xx) — transient, keep polling
       }
     }
 
