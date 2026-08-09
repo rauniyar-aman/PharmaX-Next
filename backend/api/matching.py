@@ -18,6 +18,7 @@ calculate_agent_payout() and _create_settlement_records() import _get_setting fr
 the function body rather than at module level — views.py already imports from this module at
 import time, so a top-level `from .views import _get_setting` here would be a circular import.
 """
+import math
 from datetime import timedelta
 from decimal import Decimal
 
@@ -51,6 +52,16 @@ def _annotate_distance_km(queryset, lat, lng, lat_field='lat', lng_field='lng'):
     radius = Value(EARTH_RADIUS_KM, output_field=FloatField())
 
     return queryset.annotate(distance_km=ExpressionWrapper(c * radius, output_field=FloatField()))
+
+
+def _haversine_km(lat1, lng1, lat2, lng2):
+    """Plain-Python great-circle distance between two points, in km — same haversine formula and
+    EARTH_RADIUS_KM as _annotate_distance_km() above, but as a normal function rather than a
+    queryset annotation: for the one-rider-to-one-address distance in _tracking_payload(), not
+    for filtering/ranking many rows."""
+    lat1, lng1, lat2, lng2 = (math.radians(v) for v in (lat1, lng1, lat2, lng2))
+    a = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lng2 - lng1) / 2) ** 2
+    return EARTH_RADIUS_KM * 2 * math.asin(math.sqrt(a))
 
 
 def broadcast_order(order):
@@ -370,6 +381,31 @@ def update_agent_location(agent, lat, lng):
     agent.lat = lat
     agent.lng = lng
     agent.save(update_fields=['lat', 'lng'])
+
+
+def _tracking_payload(fulfillment):
+    """Shared shape returned by all three tracking endpoints below. Agent location/distance/ETA
+    only make sense once a rider is actually en route — before that (or after DELIVERED) `agent`
+    is just null, not stale coordinates from whenever they last updated their location."""
+    agent = fulfillment.delivery_agent
+    data = {
+        'fulfillment_id': str(fulfillment.id),
+        'status': fulfillment.status,
+        'pharmacy_name': fulfillment.pharmacy.name if fulfillment.pharmacy else None,
+    }
+    if agent and fulfillment.status == 'OUT_FOR_DELIVERY':
+        data['agent'] = {
+            'name': agent.user.full_name, 'phone': agent.phone,
+            'lat': agent.lat, 'lng': agent.lng,
+        }
+        address = fulfillment.order.address
+        if agent.lat is not None and agent.lng is not None and address is not None and address.lat is not None and address.lng is not None:
+            distance_km = _haversine_km(agent.lat, agent.lng, address.lat, address.lng)
+            data['distance_km'] = round(distance_km, 1)
+            data['eta_minutes'] = round((distance_km / 20) * 60)  # rough estimate, 20km/h assumed
+    else:
+        data['agent'] = None
+    return data
 
 
 def _deliver_fulfillment(fulfillment):
