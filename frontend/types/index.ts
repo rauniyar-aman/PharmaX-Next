@@ -98,6 +98,7 @@ export interface PharmacyOrderFulfillment {
   id: string
   order_id: string
   order_placed_at: string
+  order_status: string
   status: string
   items: PharmacyOrderFulfillmentItem[]
   delivery_agent_name: string | null
