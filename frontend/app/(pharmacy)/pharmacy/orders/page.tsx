@@ -147,7 +147,15 @@ export default function PharmacyOrdersPage() {
       ) : (
         <div className="space-y-3">
           {filtered.map((o) => {
-            const cfg = STATUS_CFG[o.status] || { label: o.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+            // A fulfillment sits in ACCEPTED/PREPARED/PACKED the instant a pharmacy accepts a
+            // request — well before the customer has actually paid or chosen COD. The prep-stage
+            // labels ("Preparing", "Prepared", "Packed") would be misleading during that window
+            // since the pharmacy is blocked from acting on it (see pharmacy_advance_fulfillment()
+            // on the backend), so show "Awaiting Payment" instead until order_status is PLACED.
+            const awaitingPayment = !!ADVANCE_ACTION[o.status] && o.order_status !== 'PLACED'
+            const cfg = awaitingPayment
+              ? { label: 'Awaiting Payment', color: 'bg-amber-50 text-amber-600', icon: 'hourglass_top' }
+              : STATUS_CFG[o.status] || { label: o.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
             const payCfg = PAYMENT_CFG[o.payment_status]
             return (
               <div key={o.id} className="bg-surface rounded-2xl border border-outline-variant p-4">
@@ -178,23 +186,20 @@ export default function PharmacyOrdersPage() {
                   ))}
                 </div>
 
-                {ADVANCE_ACTION[o.status] ? (() => {
-                  const awaitingPayment = o.status === 'PACKED' && o.order_status !== 'PLACED'
-                  return (
-                    <div className="mt-2 flex items-center gap-2 flex-wrap">
-                      <button onClick={() => advanceStatus(o.id)} disabled={advancingId === o.id || awaitingPayment}
-                        className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50">
-                        {advancingId === o.id ? 'Updating…' : ADVANCE_ACTION[o.status]}
-                      </button>
-                      {awaitingPayment && (
-                        <p className="text-[11px] text-amber-600 flex items-center gap-1">
-                          <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
-                          Waiting for the customer's payment to be confirmed
-                        </p>
-                      )}
-                    </div>
-                  )
-                })() : o.status === 'AWAITING_DELIVERY' && (
+                {ADVANCE_ACTION[o.status] ? (
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <button onClick={() => advanceStatus(o.id)} disabled={advancingId === o.id || awaitingPayment}
+                      className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50">
+                      {advancingId === o.id ? 'Updating…' : ADVANCE_ACTION[o.status]}
+                    </button>
+                    {awaitingPayment && (
+                      <p className="text-[11px] text-amber-600 flex items-center gap-1">
+                        <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
+                        Waiting for the customer's payment to be confirmed
+                      </p>
+                    )}
+                  </div>
+                ) : o.status === 'AWAITING_DELIVERY' && (
                   <p className="mt-2 text-[11px] text-blue-600 flex items-center gap-1">
                     <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
                     Waiting for a nearby rider to accept this delivery
