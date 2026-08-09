@@ -63,7 +63,7 @@ from .matching import (
     broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts,
     pharmacy_accept_item, pharmacy_decline_item, pharmacy_advance_fulfillment,
     delivery_agent_accept, update_agent_location, collect_cash, mark_delivered, _agent_eligible_for,
-    _tracking_payload,
+    _tracking_payload, widen_stale_priority_broadcasts,
 )
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
@@ -4245,6 +4245,12 @@ class PharmacyRequestListView(APIView):
         pharmacy = get_managed_pharmacy(request.user)
         if not pharmacy:
             return _pharmacy_not_found_response()
+        # Polled every few seconds by every pharmacy's dashboard — the natural,
+        # infrastructure-free trigger for widen_stale_priority_broadcasts() (see its docstring:
+        # no real scheduler exists anywhere in this project). Called here so a pharmacy that only
+        # qualifies once an order's full-coverage priority window has lapsed sees it on their very
+        # next poll, not an arbitrary amount of time later.
+        widen_stale_priority_broadcasts()
         requests = FulfillmentRequest.objects.filter(
             pharmacy=pharmacy, status='PENDING',
         ).select_related('order_item__medicine', 'order_item__order__address').order_by('created_at')
@@ -4469,12 +4475,21 @@ class PharmacyTeamMemberDetailView(APIView):
 
 class DeliveryRequestListView(APIView):
     """Available-to-accept deliveries — every AWAITING_DELIVERY fulfillment this specific agent
-    currently qualifies for, per the same live eligibility check delivery_agent_accept() uses."""
+    currently qualifies for, per the same live eligibility check delivery_agent_accept() uses.
+
+    delivery_broadcast_at__isnull=False matters here, not just status='AWAITING_DELIVERY': a
+    fulfillment reaches AWAITING_DELIVERY the moment ITS OWN pharmacy finishes packing, but
+    _maybe_broadcast_delivery_for_order() only actually broadcasts (sets delivery_broadcast_at)
+    once EVERY leg on a split order is ready. Without this filter, a still-half-ready combined
+    pickup — one pharmacy done, the other not — would already show up here and be acceptable,
+    defeating the entire point of waiting for every leg."""
     permission_classes = [IsDeliveryAgent]
 
     def get(self, request):
         agent = request.user.delivery_agent
-        candidates = OrderFulfillment.objects.filter(status='AWAITING_DELIVERY').select_related('pharmacy', 'order__address').prefetch_related('order_items__medicine')
+        candidates = OrderFulfillment.objects.filter(
+            status='AWAITING_DELIVERY', delivery_broadcast_at__isnull=False,
+        ).select_related('pharmacy', 'order__address').prefetch_related('order_items__medicine')
         eligible = [f for f in candidates if _agent_eligible_for(agent, f)]
         return Response({'success': True, 'data': {'requests': DeliveryFulfillmentSerializer(eligible, many=True).data}})
 

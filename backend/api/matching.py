@@ -34,6 +34,12 @@ from .models import (
 
 BROADCAST_RADIUS_KM = 3
 BROADCAST_WINDOW_MINUTES = 10
+# How long a pharmacy that can fulfill EVERY item in an order gets first dibs before the order
+# falls back to broadcast_order()'s old per-item behavior (broadcasting to every eligible pharmacy
+# regardless of whether they cover the whole order) — see widen_stale_priority_broadcasts().
+# Deliberately much shorter than BROADCAST_WINDOW_MINUTES: this is a head start, not the whole
+# window an item can sit unanswered before it's unfulfillable.
+PRIORITY_WINDOW_MINUTES = 2
 EARTH_RADIUS_KM = 6371.0
 
 
@@ -64,6 +70,44 @@ def _haversine_km(lat1, lng1, lat2, lng2):
     return EARTH_RADIUS_KM * 2 * math.asin(math.sqrt(a))
 
 
+def _eligible_pharmacies_for_item(item, address):
+    """PharmacyMedicineListings within BROADCAST_RADIUS_KM of `address` that can cover `item`:
+    verified + active pharmacy, listing available, enough stock, not expired. Shared by
+    broadcast_order() and widen_stale_priority_broadcasts() so both use the exact same
+    eligibility rule."""
+    nearby_pharmacies = _annotate_distance_km(
+        Pharmacy.objects.filter(is_verified=True, is_active=True),
+        address.lat, address.lng,
+    ).filter(distance_km__lte=BROADCAST_RADIUS_KM)
+
+    return PharmacyMedicineListing.objects.filter(
+        pharmacy__in=nearby_pharmacies,
+        medicine=item.medicine,
+        is_available=True,
+        stock_quantity__gte=item.quantity,
+        expiry_date__gt=timezone.now().date(),
+    ).select_related('pharmacy')
+
+
+def _create_requests_for_item(item, listings):
+    """Creates a FulfillmentRequest (and notifies the pharmacy) for every listing not already
+    requested for this item. get_or_create makes this safe to call more than once for the same
+    item — a re-broadcast, or widen_stale_priority_broadcasts() topping up the pool later, only
+    ever adds the gap, never duplicates or disturbs an existing PENDING/ACCEPTED/etc. request.
+    Returns True if `item` ended up with at least one request (existing or newly created)."""
+    created_any = False
+    for listing in listings:
+        _req, req_created = FulfillmentRequest.objects.get_or_create(order_item=item, pharmacy=listing.pharmacy)
+        if req_created:
+            Notification.objects.create(
+                user=listing.pharmacy.user, type='NEW_FULFILLMENT_REQUEST', title='New Order Request',
+                message=f'A nearby customer needs {item.medicine.name} × {item.quantity}.',
+                link='/pharmacy/requests',
+            )
+        created_any = True
+    return created_any
+
+
 def broadcast_order(order):
     """For every OrderItem in the order, find pharmacies within BROADCAST_RADIUS_KM that list
     that medicine, with sufficient stock, verified + active, and create a FulfillmentRequest for
@@ -72,6 +116,19 @@ def broadcast_order(order):
     There's no persisted "unfulfillable" flag on OrderItem — Stage 1 deliberately didn't add one.
     An item with zero FulfillmentRequest rows (and no `fulfillment` set) IS the unfulfillable
     state; this return value is just a convenience summary for the caller.
+
+    Full-coverage priority: if some pharmacy can fulfill EVERY item in this order, only that
+    pharmacy (or set of pharmacies) gets broadcast to at first — otherwise a multi-item order
+    routinely splits across pharmacies purely because whichever pharmacy happens to accept first
+    per item wins, even when one nearby pharmacy could have covered the whole thing (real order
+    observed: a pharmacy stocking all 3 items still lost 2 of them to a pharmacy that only had
+    those 2, because both were broadcast the per-item request simultaneously). Falls straight
+    through to broadcasting everyone immediately — no staging, no delay — for a single-item order,
+    for an order where the full-coverage pool and "everyone eligible" pool are the same anyway, or
+    (the case that matters most) when NO pharmacy covers every item: an empty full-coverage pool
+    can never become non-empty by waiting, so there's nothing to gain from a delay there.
+    widen_stale_priority_broadcasts() is what promotes a genuinely-staged order to the full pool
+    once PRIORITY_WINDOW_MINUTES passes with no full-coverage acceptance.
     """
     result = {'broadcast': [], 'unfulfillable': []}
     address = order.address
@@ -82,39 +139,62 @@ def broadcast_order(order):
         sync_order_status(order)
         return result
 
-    nearby_pharmacies = _annotate_distance_km(
-        Pharmacy.objects.filter(is_verified=True, is_active=True),
-        address.lat, address.lng,
-    ).filter(distance_km__lte=BROADCAST_RADIUS_KM)
+    items = list(order.items.select_related('medicine'))
+    listings_by_item = {item.id: list(_eligible_pharmacies_for_item(item, address)) for item in items}
+    ids_by_item = {item_id: {l.pharmacy_id for l in listings} for item_id, listings in listings_by_item.items()}
 
-    for item in order.items.select_related('medicine'):
-        eligible = PharmacyMedicineListing.objects.filter(
-            pharmacy__in=nearby_pharmacies,
-            medicine=item.medicine,
-            is_available=True,
-            stock_quantity__gte=item.quantity,
-            expiry_date__gt=timezone.now().date(),
-        ).select_related('pharmacy')
+    full_coverage_ids = set.intersection(*ids_by_item.values()) if ids_by_item else set()
+    all_eligible_ids = set().union(*ids_by_item.values()) if ids_by_item else set()
+    stage_priority = len(items) > 1 and bool(full_coverage_ids) and full_coverage_ids < all_eligible_ids
 
-        created_any = False
-        for listing in eligible:
-            # get_or_create rather than create: makes a re-broadcast of the same order safe to
-            # call twice (unique_together on order_item+pharmacy would otherwise raise).
-            _req, req_created = FulfillmentRequest.objects.get_or_create(order_item=item, pharmacy=listing.pharmacy)
-            if req_created:
-                Notification.objects.create(
-                    user=listing.pharmacy.user, type='NEW_FULFILLMENT_REQUEST', title='New Order Request',
-                    message=f'A nearby customer needs {item.medicine.name} × {item.quantity}.',
-                    link='/pharmacy/requests',
-                )
-            created_any = True
-
+    for item in items:
+        listings = listings_by_item[item.id]
+        if stage_priority:
+            listings = [l for l in listings if l.pharmacy_id in full_coverage_ids]
+        created_any = _create_requests_for_item(item, listings)
         result['broadcast' if created_any else 'unfulfillable'].append(item.id)
 
     # covers the edge case where every item had zero eligible pharmacies from the start —
     # there's nothing PENDING to wait on, so the order is already "resolved" right now.
     sync_order_status(order)
     return result
+
+
+def widen_stale_priority_broadcasts():
+    """Opportunistic top-up sweep for the full-coverage priority stage above — there's no real
+    task scheduler anywhere in this project (the existing "admin/cron-callable"
+    AdminExpireFulfillmentRequestsView, calling expire_stale_fulfillment_requests() below, is
+    never actually invoked from anywhere, including its own admin UI — a pre-existing gap, not one
+    introduced here), so this is instead called opportunistically from endpoints that are already
+    polled every few seconds in practice (PharmacyRequestListView, OrderFulfillmentSummaryView).
+    Known limitation: if literally nobody has a relevant page open, an order can sit in its
+    priority-only stage past PRIORITY_WINDOW_MINUTES until someone does — no worse than the
+    pre-existing (also-orphaned) expiry mechanism this mirrors.
+
+    For every still-unresolved OrderItem (no fulfillment yet) on a still-BROADCASTING order whose
+    oldest PENDING request has aged past the window, (re-)broadcasts to that item's FULL eligible
+    pool — not just whatever full-coverage-only pool broadcast_order() may have started with.
+    _create_requests_for_item()'s get_or_create makes this idempotent: pharmacies already in the
+    pool are untouched, only the gap (partial-coverage pharmacies) gets added.
+    """
+    cutoff = timezone.now() - timedelta(minutes=PRIORITY_WINDOW_MINUTES)
+    stale_item_ids = FulfillmentRequest.objects.filter(
+        status='PENDING', created_at__lt=cutoff,
+    ).values_list('order_item_id', flat=True).distinct()
+
+    items = OrderItem.objects.filter(
+        id__in=stale_item_ids, fulfillment__isnull=True, order__status='BROADCASTING',
+    ).select_related('order__address', 'medicine')
+
+    widened_item_ids = []
+    for item in items:
+        address = item.order.address
+        if address is None or address.lat is None or address.lng is None:
+            continue
+        listings = _eligible_pharmacies_for_item(item, address)
+        if _create_requests_for_item(item, listings):
+            widened_item_ids.append(item.id)
+    return widened_item_ids
 
 
 @transaction.atomic
@@ -231,7 +311,11 @@ def pharmacy_advance_fulfillment(pharmacy, fulfillment):
     next_status = FULFILLMENT_PREP_SEQUENCE[FULFILLMENT_PREP_SEQUENCE.index(current) + 1]
 
     if next_status == 'AWAITING_DELIVERY':
-        broadcast_delivery(fulfillment)
+        fulfillment.status = next_status
+        fulfillment.save(update_fields=['status'])
+        # Doesn't broadcast to riders on its own — see _maybe_broadcast_delivery_for_order()'s
+        # docstring for why a split order waits on every pharmacy leg before any of them go out.
+        _maybe_broadcast_delivery_for_order(fulfillment.order)
         return True, None
 
     fulfillment.status = next_status
@@ -272,19 +356,54 @@ def expire_stale_fulfillment_requests():
     return expired_count, unfulfillable_item_ids
 
 
+def _maybe_broadcast_delivery_for_order(order):
+    """Gates broadcast_delivery() so a split order across N pharmacies only ever goes out as ONE
+    combined pickup job for a single rider, not N independent broadcasts that different riders
+    could pick off piecemeal (the exact bug that prompted this: a real 3-item order split across
+    two pharmacies, and the first one to finish packing would previously have been broadcast to
+    riders immediately, on its own, regardless of whether the other pharmacy had even started).
+
+    Looks at every non-CANCELLED OrderFulfillment on the order. If any hasn't independently
+    reached AWAITING_DELIVERY yet, does nothing — a fulfillment that gets there first just sits
+    with its status set but delivery_broadcast_at still None (so
+    expire_stale_delivery_broadcasts(), which only compares delivery_broadcast_at, correctly never
+    flags it as a stale broadcast — nothing has actually been broadcast yet). Once every leg is
+    ready, broadcasts all of them.
+
+    KNOWN GAP, accepted for now, not an oversight: if no single delivery agent is ever verified,
+    online, AND within BROADCAST_RADIUS_KM of EVERY pharmacy in the set (see
+    _agent_eligible_for()'s docstring for why that's the right bar), this combined job can sit
+    AWAITING_DELIVERY indefinitely with nobody ever eligible to accept it — there is currently no
+    fallback that re-splits it back into independently-broadcast legs.
+    expire_stale_delivery_broadcasts() only REPORTS a stale broadcast for admin follow-up, it
+    doesn't recover one. Expected to be rare in practice (pharmacies both within
+    BROADCAST_RADIUS_KM of the same customer are usually reasonably close to each other too), but
+    a real limitation worth remembering if delivery pickups start silently stalling.
+    """
+    fulfillments = list(order.fulfillments.exclude(status='CANCELLED'))
+    if not fulfillments or any(f.status != 'AWAITING_DELIVERY' for f in fulfillments):
+        return
+    for f in fulfillments:
+        if f.delivery_broadcast_at is None:
+            broadcast_delivery(f)
+
+
 def broadcast_delivery(fulfillment):
-    """Moves one OrderFulfillment (a single pharmacy pickup leg) into AWAITING_DELIVERY and
-    notifies every verified, online DeliveryAgent within BROADCAST_RADIUS_KM of the pickup
-    pharmacy — not the customer's delivery address, the rider has to get to the pharmacy first.
+    """Marks one OrderFulfillment (already AWAITING_DELIVERY — see
+    _maybe_broadcast_delivery_for_order(), the only caller) as actually broadcast, and notifies
+    every currently-eligible DeliveryAgent (_agent_eligible_for() — verified, online, and within
+    BROADCAST_RADIUS_KM of every pharmacy on this fulfillment's order, not just this one leg's).
 
     Unlike broadcast_order()/FulfillmentRequest, there's no per-agent request row: any eligible
     agent can call delivery_agent_accept() at any time while status stays AWAITING_DELIVERY —
     eligibility is re-checked live at accept time instead of being frozen at broadcast time.
-    Returns the list of notified DeliveryAgent ids.
+    Called once per leg on a split order (so a 2-pharmacy order fires this twice) — each pharmacy
+    still gets its own "ready for pickup" admin notification either way, which is the simpler
+    option explicitly allowed over a single merged notification. Returns the list of notified
+    DeliveryAgent ids.
     """
-    fulfillment.status = 'AWAITING_DELIVERY'
     fulfillment.delivery_broadcast_at = timezone.now()
-    fulfillment.save(update_fields=['status', 'delivery_broadcast_at'])
+    fulfillment.save(update_fields=['delivery_broadcast_at'])
 
     pharmacy = fulfillment.pharmacy
     if pharmacy is not None:
@@ -297,14 +416,16 @@ def broadcast_delivery(fulfillment):
     if pharmacy is None or pharmacy.lat is None or pharmacy.lng is None:
         return []
 
-    nearby_agents = _annotate_distance_km(
-        DeliveryAgent.objects.filter(is_verified=True, is_online=True),
-        pharmacy.lat, pharmacy.lng,
-    ).filter(distance_km__lte=BROADCAST_RADIUS_KM)
+    # Python-side filter through _agent_eligible_for() rather than a single DB-side proximity
+    # query (as this used to be) — the eligibility rule is no longer "near this one pharmacy", it
+    # depends on every pharmacy on the order, so there's one source of truth for it (also used by
+    # DeliveryRequestListView and delivery_agent_accept()) instead of duplicating the logic here.
+    candidate_agents = DeliveryAgent.objects.filter(is_verified=True, is_online=True).select_related('user')
+    eligible_agents = [a for a in candidate_agents if _agent_eligible_for(a, fulfillment)]
 
     notified_ids = []
     notifications = []
-    for agent in nearby_agents.select_related('user'):
+    for agent in eligible_agents:
         notifications.append(Notification(
             user=agent.user, type='DELIVERY_REQUEST', title='New Delivery Available',
             message=f'A delivery pickup is available near you at {pharmacy.name}.',
@@ -319,58 +440,91 @@ def broadcast_delivery(fulfillment):
 
 def _agent_eligible_for(agent, fulfillment):
     """The live eligibility gate delivery_agent_accept() uses in place of a frozen request row:
-    verified, online, and currently within range of the pickup pharmacy."""
+    verified, online, and currently within range of EVERY pharmacy on this fulfillment's order —
+    not just this one leg's pharmacy. A split order is bundled into one combined pickup job (see
+    _maybe_broadcast_delivery_for_order()), so an agent only qualifies if they're realistically
+    positioned for the WHOLE route, not just its nearest stop: two pharmacies can each
+    independently be up to BROADCAST_RADIUS_KM from the same customer address while being up to
+    2 × BROADCAST_RADIUS_KM from each other, so "near just one of them" could hand a rider a
+    combined trip that's actually more total travel than splitting the legs across two separate
+    riders would have been — defeating the entire point of bundling. For a single-pharmacy
+    fulfillment this is exactly the original one-pharmacy check, unchanged.
+    """
     if not (agent.is_verified and agent.is_online):
-        return False
-    pharmacy = fulfillment.pharmacy
-    if pharmacy is None or pharmacy.lat is None or pharmacy.lng is None:
         return False
     if agent.lat is None or agent.lng is None:
         return False
-    qs = _annotate_distance_km(DeliveryAgent.objects.filter(pk=agent.pk), pharmacy.lat, pharmacy.lng)
-    return qs.filter(distance_km__lte=BROADCAST_RADIUS_KM).exists()
+    pharmacies = [f.pharmacy for f in fulfillment.order.fulfillments.exclude(status='CANCELLED') if f.pharmacy_id]
+    if not pharmacies:
+        return False
+    for pharmacy in pharmacies:
+        if pharmacy.lat is None or pharmacy.lng is None:
+            return False
+        qs = _annotate_distance_km(DeliveryAgent.objects.filter(pk=agent.pk), pharmacy.lat, pharmacy.lng)
+        if not qs.filter(distance_km__lte=BROADCAST_RADIUS_KM).exists():
+            return False
+    return True
 
 
 @transaction.atomic
 def delivery_agent_accept(agent, fulfillment):
-    """First-accept-wins, same pattern as pharmacy_accept_item(): locks the OrderFulfillment row
-    itself (the row every competing rider shares, since there's no per-agent request row here) so
-    two riders racing on the same delivery are genuinely serialized under concurrent callers.
+    """First-accept-wins, same pattern as pharmacy_accept_item(): locks every non-CANCELLED
+    OrderFulfillment on the SAME order (not just the one the rider clicked), ordered by `id` for
+    consistent lock ordering — avoids deadlocking against another rider racing a different leg of
+    the same split order — so accepting one leg atomically assigns every leg on the order to this
+    one agent. One rider covers the whole order, never just the fulfillment they happened to
+    click; see _maybe_broadcast_delivery_for_order() for why every leg is guaranteed to already be
+    AWAITING_DELIVERY together by the time any of them is broadcast, and _agent_eligible_for() for
+    why eligibility requires proximity to every pharmacy in the set, not just one.
     """
-    ful = OrderFulfillment.objects.select_for_update().get(pk=fulfillment.pk)
+    fulfillment_ids = list(
+        OrderFulfillment.objects.filter(order_id=fulfillment.order_id).exclude(status='CANCELLED')
+        .order_by('id').values_list('id', flat=True)
+    )
+    fulfillments = list(
+        OrderFulfillment.objects.select_for_update().filter(id__in=fulfillment_ids).order_by('id')
+    )
 
-    if ful.status != 'AWAITING_DELIVERY':
+    # delivery_broadcast_at, not just status: a leg reaches AWAITING_DELIVERY the moment its OWN
+    # pharmacy finishes packing, but isn't actually broadcast (and shouldn't be acceptable) until
+    # _maybe_broadcast_delivery_for_order() confirms every sibling leg is ready too — same reason
+    # DeliveryRequestListView filters on both fields, not just status.
+    if not fulfillments or any(f.status != 'AWAITING_DELIVERY' or f.delivery_broadcast_at is None for f in fulfillments):
         return False, 'This delivery is no longer available.'
 
-    if not _agent_eligible_for(agent, ful):
-        return False, 'You are not eligible to accept this delivery (must be verified, online, and near the pickup pharmacy).'
+    if not _agent_eligible_for(agent, fulfillments[0]):
+        return False, 'You are not eligible to accept this delivery (must be verified, online, and near every pharmacy in this pickup).'
 
-    ful.delivery_agent = agent
-    ful.status = 'OUT_FOR_DELIVERY'
-    ful.save(update_fields=['delivery_agent', 'status'])
+    for f in fulfillments:
+        f.delivery_agent = agent
+        f.status = 'OUT_FOR_DELIVERY'
+        f.save(update_fields=['delivery_agent', 'status'])
 
     from .views import _notify_admins
-    pharmacy_name = ful.pharmacy.name if ful.pharmacy else 'the pharmacy'
+    pharmacy_names = ', '.join(f.pharmacy.name for f in fulfillments if f.pharmacy_id) or 'the pharmacy'
     _notify_admins(
         'manage_orders', 'FULFILLMENT_UPDATE', 'Rider Picked Up Order',
-        f'{agent.user.full_name} picked up order #{str(ful.order_id)[:8]} from {pharmacy_name}.',
-        link=f'/admin/orders/{ful.order_id}',
+        f'{agent.user.full_name} picked up order #{str(fulfillments[0].order_id)[:8]} from {pharmacy_names}.',
+        link=f'/admin/orders/{fulfillments[0].order_id}',
     )
 
     # Customer and pharmacy both need per-order awareness of this — deliberately no admin
     # per-delivery notification here (that's the _notify_admins call above, which is the intended
-    # admin-facing signal); see pharmax-rider-tracking-spec.md Part 1.
+    # admin-facing signal); see pharmax-rider-tracking-spec.md Part 1. One customer notification
+    # for the whole order, but one per pharmacy — each pharmacy needs its own "your leg was picked
+    # up" ping regardless of how many other legs are on the same order.
     Notification.objects.create(
-        user=ful.order.user, type='ORDER_UPDATE', title='Order Out for Delivery',
-        message=f'{agent.user.full_name} is on the way with order #{str(ful.order_id)[:8]}.',
-        link=f'/orders/{ful.order_id}',
+        user=fulfillments[0].order.user, type='ORDER_UPDATE', title='Order Out for Delivery',
+        message=f'{agent.user.full_name} is on the way with order #{str(fulfillments[0].order_id)[:8]}.',
+        link=f'/orders/{fulfillments[0].order_id}',
     )
-    if ful.pharmacy_id:
-        Notification.objects.create(
-            user=ful.pharmacy.user, type='ORDER_UPDATE', title='Rider Picked Up',
-            message=f'{agent.user.full_name} picked up order #{str(ful.order_id)[:8]}.',
-            link='/pharmacy/orders',
-        )
+    for f in fulfillments:
+        if f.pharmacy_id:
+            Notification.objects.create(
+                user=f.pharmacy.user, type='ORDER_UPDATE', title='Rider Picked Up',
+                message=f'{agent.user.full_name} picked up order #{str(f.order_id)[:8]}.',
+                link='/pharmacy/orders',
+            )
 
     return True, None
 
