@@ -21,12 +21,21 @@ const REQUEST_STAT_CFG = [
   { key: 'pending', label: 'Awaiting Response', color: 'text-amber-600', icon: 'hourglass_top' },
 ] as const
 
+const LOCATION_REQUEST_STATUS_CFG: Record<string, { label: string; color: string; icon: string }> = {
+  PENDING:  { label: 'Pending Review', color: 'bg-amber-50 text-amber-600',      icon: 'hourglass_top' },
+  APPROVED: { label: 'Approved',       color: 'bg-emerald-50 text-emerald-600', icon: 'check_circle' },
+  REJECTED: { label: 'Rejected',       color: 'bg-error/10 text-error',         icon: 'cancel' },
+}
+
 export default function AdminPharmacyDetailPage() {
   const { id } = useParams<{ id: string }>()
   const [pharmacy, setPharmacy] = useState<AdminPharmacyDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null)
+  const [reviewingId, setReviewingId] = useState<string | null>(null)
+  const [rejectingId, setRejectingId] = useState<string | null>(null)
+  const [rejectNote, setRejectNote] = useState('')
   const docFileRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   const load = () => api.get(`/admin/pharmacies/${id}/`).then((r) => setPharmacy(r.data.data.pharmacy)).catch(() => toast.error('Failed to load pharmacy.')).finally(() => setLoading(false))
@@ -67,6 +76,35 @@ export default function AdminPharmacyDetailPage() {
       setUploadingDoc(null)
       const input = docFileRefs.current[docType]
       if (input) input.value = ''
+    }
+  }
+
+  const approveLocationRequest = async (reqId: string) => {
+    setReviewingId(reqId)
+    try {
+      await api.post(`/admin/pharmacies/${id}/location-change-requests/${reqId}/approve/`)
+      toast.success('Location change approved.')
+      load()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to approve.')
+    } finally {
+      setReviewingId(null)
+    }
+  }
+
+  const rejectLocationRequest = async (reqId: string) => {
+    if (!rejectNote.trim()) { toast.error('Explain why this request is being rejected.'); return }
+    setReviewingId(reqId)
+    try {
+      await api.post(`/admin/pharmacies/${id}/location-change-requests/${reqId}/reject/`, { admin_note: rejectNote })
+      toast.success('Location change rejected.')
+      setRejectingId(null)
+      setRejectNote('')
+      load()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to reject.')
+    } finally {
+      setReviewingId(null)
     }
   }
 
@@ -170,6 +208,77 @@ export default function AdminPharmacyDetailPage() {
           <p className="text-xs text-on-surface-variant">{pharmacy.lat.toFixed(5)}, {pharmacy.lng.toFixed(5)}</p>
         </div>
       </div>
+
+      {/* Location change requests — lat/lng is locked from pharmacy self-edit (see
+          PharmacyProfileView), this is the only path that actually moves it. */}
+      {!!pharmacy.location_change_requests?.length && (
+        <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
+          <div>
+            <p className="text-sm font-bold text-on-surface">Location Change Requests</p>
+            <p className="text-xs text-on-surface-variant mt-0.5">Approving one updates the pharmacy's live lat/lng above.</p>
+          </div>
+          <div className="space-y-2">
+            {pharmacy.location_change_requests.map((r) => {
+              const cfg = LOCATION_REQUEST_STATUS_CFG[r.status] || { label: r.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+              return (
+                <div key={r.id} className="bg-surface-container-low rounded-xl px-3 py-2.5 space-y-2">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0 text-sm text-on-surface-variant space-y-0.5">
+                      <p className="text-on-surface font-medium">{r.requested_lat.toFixed(5)}, {r.requested_lng.toFixed(5)}</p>
+                      {r.requested_address && <p className="truncate">{r.requested_address}</p>}
+                      {r.reason && <p className="text-xs italic">"{r.reason}"</p>}
+                      <p className="text-[11px]">Requested {new Date(r.created_at).toLocaleString()}</p>
+                      {r.status !== 'PENDING' && (
+                        <p className="text-[11px]">
+                          Reviewed {r.reviewed_at ? new Date(r.reviewed_at).toLocaleString() : ''}{r.reviewed_by_name ? ` by ${r.reviewed_by_name}` : ''}
+                        </p>
+                      )}
+                      {r.status === 'REJECTED' && r.admin_note && (
+                        <p className="text-[11px] text-error">Reason: {r.admin_note}</p>
+                      )}
+                    </div>
+                    <span className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${cfg.color}`}>
+                      <span className="material-symbols-outlined ms-filled" style={{ fontSize: '13px' }}>{cfg.icon}</span>
+                      {cfg.label}
+                    </span>
+                  </div>
+
+                  {r.status === 'PENDING' && (
+                    rejectingId === r.id ? (
+                      <div className="space-y-2 pt-1 border-t border-outline-variant">
+                        <textarea rows={2} value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} autoFocus
+                          placeholder="Explain why this request is being rejected (required)"
+                          className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-xs text-on-surface placeholder:text-on-surface-variant resize-none focus:outline-none focus:border-secondary transition" />
+                        <div className="flex gap-2">
+                          <button onClick={() => rejectLocationRequest(r.id)} disabled={reviewingId === r.id || !rejectNote.trim()}
+                            className="px-3 py-1.5 bg-error text-white text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60">
+                            {reviewingId === r.id ? 'Rejecting…' : 'Confirm Rejection'}
+                          </button>
+                          <button onClick={() => { setRejectingId(null); setRejectNote('') }}
+                            className="px-3 py-1.5 border border-outline-variant text-on-surface-variant text-xs rounded-lg hover:bg-surface-container transition-colors">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2 pt-1 border-t border-outline-variant">
+                        <button onClick={() => approveLocationRequest(r.id)} disabled={reviewingId === r.id}
+                          className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60">
+                          {reviewingId === r.id ? 'Approving…' : 'Approve'}
+                        </button>
+                        <button onClick={() => setRejectingId(r.id)} disabled={reviewingId === r.id}
+                          className="px-3 py-1.5 border border-error/30 text-error text-xs font-semibold rounded-lg hover:bg-error/10 transition-colors disabled:opacity-60">
+                          Reject
+                        </button>
+                      </div>
+                    )
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Bank details */}
       <div className="bg-surface rounded-2xl border border-outline-variant p-5">

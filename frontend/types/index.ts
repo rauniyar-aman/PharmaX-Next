@@ -63,8 +63,22 @@ export interface PharmacyDocument {
   uploaded_at: string
 }
 
+export interface PharmacyLocationChangeRequest {
+  id: string
+  requested_lat: number
+  requested_lng: number
+  requested_address: string | null
+  reason: string | null
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  admin_note: string | null
+  reviewed_by_name: string | null
+  reviewed_at: string | null
+  created_at: string
+}
+
 export interface AdminPharmacyDetail extends AdminPharmacy {
   documents: PharmacyDocument[]
+  location_change_requests: PharmacyLocationChangeRequest[]
   listings_count: number
   request_stats: { accepted: number; declined: number; expired: number; pending: number }
   finance: { total_earned: string; total_commission: string; total_paid: string; total_pending: string }

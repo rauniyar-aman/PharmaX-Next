@@ -5,7 +5,8 @@ import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
 import { usePharmacyProfileStore } from '@/store/pharmacyProfile'
-import type { PharmacyProfile, PharmacyBusinessHoursDay, PharmacyDocument } from '@/types'
+import type { PharmacyProfile, PharmacyBusinessHoursDay, PharmacyDocument, PharmacyLocationChangeRequest } from '@/types'
+import type { PickedLocation } from '@/components/map/MapPicker'
 
 const DOC_TYPES: { type: PharmacyDocument['doc_type']; label: string; hint: string; uploadedByPharmacy: boolean }[] = [
   { type: 'PAN_CARD', label: 'PAN Card', hint: 'Your tax registration document.', uploadedByPharmacy: true },
@@ -28,6 +29,17 @@ const LiveTrackingMap = dynamic(() => import('@/components/map/LiveTrackingMap')
   ),
 })
 
+// The interactive picker — only ever mounted inside the "propose a new location" form below, for
+// drafting what to submit to admin review. Never used to change Pharmacy.lat/lng directly.
+const MapPicker = dynamic(() => import('@/components/map/MapPicker'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center bg-surface-container-low rounded-xl">
+      <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  ),
+})
+
 export default function PharmacySettingsPage() {
   const pharmacy = usePharmacyProfileStore((s) => s.pharmacy)
   const setPharmacy = usePharmacyProfileStore((s) => s.setPharmacy)
@@ -41,6 +53,12 @@ export default function PharmacySettingsPage() {
   const [savingHours, setSavingHours] = useState(false)
   const [logoLoading, setLogoLoading] = useState(false)
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null)
+  const [locationRequest, setLocationRequest] = useState<PharmacyLocationChangeRequest | null>(null)
+  const [showLocationForm, setShowLocationForm] = useState(false)
+  const [proposedCoords, setProposedCoords] = useState<{ lat: number; lng: number } | null>(null)
+  const [proposedAddress, setProposedAddress] = useState('')
+  const [locationReason, setLocationReason] = useState('')
+  const [submittingLocation, setSubmittingLocation] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const docFileRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
@@ -58,10 +76,37 @@ export default function PharmacySettingsPage() {
   })
   const loadHours = () => api.get('/pharmacy/profile/hours/').then((r) => setHours(r.data.data.hours || []))
   const loadDocuments = () => api.get('/pharmacy/documents/').then((r) => setDocuments(r.data.data.documents || []))
+  const loadLocationRequest = () => api.get('/pharmacy/location-change-request/').then((r) => setLocationRequest(r.data.data.request)).catch(() => {})
 
   useEffect(() => {
-    Promise.all([loadProfile(), loadHours(), loadDocuments()]).catch(() => toast.error('Failed to load settings.')).finally(() => setLoading(false))
+    Promise.all([loadProfile(), loadHours(), loadDocuments(), loadLocationRequest()]).catch(() => toast.error('Failed to load settings.')).finally(() => setLoading(false))
   }, [])
+
+  const handleProposedPick = (loc: PickedLocation) => {
+    setProposedCoords({ lat: loc.lat, lng: loc.lng })
+    if (loc.address) setProposedAddress(loc.address)
+  }
+
+  const submitLocationRequest = async () => {
+    if (!proposedCoords) { toast.error('Pick a location on the map first.'); return }
+    setSubmittingLocation(true)
+    try {
+      const res = await api.post('/pharmacy/location-change-request/', {
+        lat: proposedCoords.lat, lng: proposedCoords.lng,
+        address: proposedAddress || undefined, reason: locationReason || undefined,
+      })
+      setLocationRequest(res.data.data.request)
+      setShowLocationForm(false)
+      setProposedCoords(null)
+      setProposedAddress('')
+      setLocationReason('')
+      toast.success('Location change requested — an admin will review it shortly.')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to submit location change request.')
+    } finally {
+      setSubmittingLocation(false)
+    }
+  }
 
   const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -257,13 +302,75 @@ export default function PharmacySettingsPage() {
         <div className="space-y-2">
           <label className="text-xs font-medium text-on-surface-variant">Pickup Location</label>
           <p className="text-xs text-on-surface-variant -mt-1">
-            Registered location — contact support to request a change. This pin drives your matching radius, delivery routing, and the distance/ETA customers and riders see, so it isn't self-editable.
+            Registered location — this pin drives your matching radius, delivery routing, and the distance/ETA customers and riders see, so it isn't directly self-editable. Request a change below for an admin to review.
           </p>
           <div className="h-56 rounded-xl overflow-hidden border border-outline-variant">
             <LiveTrackingMap riderPosition={null} destination={{ lat: pharmacy.lat, lng: pharmacy.lng }} />
           </div>
           <textarea required rows={2} value={form.address} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))}
             className="w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface resize-none focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+
+          {/* Location change request status/action — owner-only, mirrors the bank-details gate */}
+          {pharmacy.is_owner === false ? (
+            <p className="text-xs text-on-surface-variant">Only the pharmacy owner can request a location change.</p>
+          ) : locationRequest?.status === 'PENDING' ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
+              <span className="material-symbols-outlined ms-filled text-amber-600" style={{ fontSize: '18px' }}>hourglass_top</span>
+              <p className="text-xs text-amber-800">
+                Your location change request is pending admin review — submitted {new Date(locationRequest.created_at).toLocaleDateString()}.
+              </p>
+            </div>
+          ) : (
+            <>
+              {locationRequest?.status === 'APPROVED' && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
+                  <span className="material-symbols-outlined ms-filled text-emerald-600" style={{ fontSize: '18px' }}>check_circle</span>
+                  <p className="text-xs text-emerald-800">
+                    Your last location change request was approved{locationRequest.reviewed_at ? ` on ${new Date(locationRequest.reviewed_at).toLocaleDateString()}` : ''}.
+                  </p>
+                </div>
+              )}
+              {locationRequest?.status === 'REJECTED' && (
+                <div className="bg-error/5 border border-error/20 rounded-xl px-3 py-2.5 flex items-start gap-2.5">
+                  <span className="material-symbols-outlined ms-filled text-error mt-0.5" style={{ fontSize: '18px' }}>cancel</span>
+                  <p className="text-xs text-error">
+                    Your last location change request was rejected: {locationRequest.admin_note || 'No reason given.'}
+                  </p>
+                </div>
+              )}
+
+              {!showLocationForm ? (
+                <button type="button" onClick={() => setShowLocationForm(true)}
+                  className="w-full py-2.5 border-2 border-dashed border-outline-variant rounded-xl text-xs font-semibold text-on-surface-variant hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>edit_location_alt</span>
+                  Request Location Change
+                </button>
+              ) : (
+                <div className="bg-surface-container-low rounded-xl p-3 space-y-2.5 border border-outline-variant">
+                  <p className="text-xs font-semibold text-on-surface">Propose a new location</p>
+                  <div className="h-48 rounded-lg overflow-hidden border border-outline-variant">
+                    <MapPicker value={proposedCoords} onChange={handleProposedPick} />
+                  </div>
+                  <textarea rows={2} value={proposedAddress} onChange={(e) => setProposedAddress(e.target.value)}
+                    placeholder="New address (optional — filled in automatically from the map pin)"
+                    className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-xs text-on-surface placeholder:text-on-surface-variant resize-none focus:outline-none focus:border-secondary transition" />
+                  <textarea rows={2} value={locationReason} onChange={(e) => setLocationReason(e.target.value)}
+                    placeholder="Why are you requesting this change? (optional)"
+                    className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-xs text-on-surface placeholder:text-on-surface-variant resize-none focus:outline-none focus:border-secondary transition" />
+                  <div className="flex gap-2">
+                    <button type="button" onClick={submitLocationRequest} disabled={submittingLocation || !proposedCoords}
+                      className="flex-1 py-2 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60">
+                      {submittingLocation ? 'Submitting…' : 'Submit Request'}
+                    </button>
+                    <button type="button" onClick={() => { setShowLocationForm(false); setProposedCoords(null); setProposedAddress(''); setLocationReason('') }}
+                      className="px-4 border border-outline-variant text-on-surface-variant text-xs rounded-lg hover:bg-surface-container transition-colors">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         <button type="submit" disabled={savingProfile}
