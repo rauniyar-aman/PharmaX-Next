@@ -4,6 +4,14 @@ import { useRouter } from 'next/navigation'
 import { useAuthStore } from '@/store/auth'
 import PublicHeader from '@/components/common/PublicHeader'
 
+// Mirrors the redirect map in signin/restore-account — every non-customer role has its own
+// dashboard and should never end up browsing the customer catalog while logged in as themselves.
+const NON_CUSTOMER_DASHBOARDS: Record<string, string> = {
+  ADMIN: '/admin/dashboard',
+  PHARMACY: '/pharmacy/dashboard',
+  DELIVERY_AGENT: '/delivery/requests',
+}
+
 export default function CatalogLayout({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)
   const router = useRouter()
@@ -15,7 +23,9 @@ export default function CatalogLayout({ children }: { children: React.ReactNode 
   }, [])
 
   useEffect(() => {
-    if (hydrated && user?.role === 'ADMIN') router.replace('/admin/dashboard')
+    if (!hydrated || !user) return
+    const dashboard = NON_CUSTOMER_DASHBOARDS[user.role]
+    if (dashboard) router.replace(dashboard)
   }, [hydrated, user, router])
 
   if (!hydrated) {
@@ -26,12 +36,12 @@ export default function CatalogLayout({ children }: { children: React.ReactNode 
     )
   }
 
-  if (user?.role === 'ADMIN') return null
+  if (user && NON_CUSTOMER_DASHBOARDS[user.role]) return null
 
   return (
     <div className="min-h-screen bg-background">
       <PublicHeader />
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6">{children}</main>
+      <main className="w-full px-4 sm:px-6 py-6">{children}</main>
     </div>
   )
 }

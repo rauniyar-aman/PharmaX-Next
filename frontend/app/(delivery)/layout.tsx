@@ -65,7 +65,7 @@ export default function DeliveryLayout({ children }: { children: React.ReactNode
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-surface-container-lowest border-b border-outline-variant">
-        <div className="max-w-[1200px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+        <div className="w-full px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8">
             <Logo iconSize={32} textClassName="text-lg" />
             {!pendingVerification && (
@@ -116,7 +116,7 @@ export default function DeliveryLayout({ children }: { children: React.ReactNode
         )}
       </header>
 
-      <main className="max-w-[1200px] mx-auto px-4 sm:px-6 py-6">
+      <main className="w-full px-4 sm:px-6 py-6">
         {pendingVerification ? (
           <div className="flex items-center justify-center py-24">
             <div className="text-center p-8 bg-surface rounded-2xl border border-outline-variant max-w-sm">

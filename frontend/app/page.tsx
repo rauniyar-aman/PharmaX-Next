@@ -23,6 +23,14 @@ import HealthArticlesRail from '@/components/home/HealthArticlesRail'
 import QuickLinksGrid from '@/components/home/QuickLinksGrid'
 import type { Medicine } from '@/types'
 
+// Mirrors the redirect map in signin/restore-account — every non-customer role has its own
+// dashboard and should never land on the customer storefront while logged in as themselves.
+const NON_CUSTOMER_DASHBOARDS: Record<string, string> = {
+  ADMIN: '/admin/dashboard',
+  PHARMACY: '/pharmacy/dashboard',
+  DELIVERY_AGENT: '/delivery/requests',
+}
+
 const PROMO_SLIDES: Slide[] = [
   {
     title: 'Order with Prescription',
@@ -101,12 +109,15 @@ export default function HomePage() {
     setHydrated(true)
   }, [])
 
-  // Every other customer-facing page bounces a logged-in admin to /admin/dashboard (see
-  // app/(customer)/layout.tsx) — this standalone top-level page didn't have that guard, so an
-  // admin browsing to "/" would see the full storefront instead. Logged-out visitors and
-  // customers are unaffected; only an authenticated ADMIN gets redirected.
+  // Every other customer-facing page bounces a logged-in non-customer to their own dashboard (see
+  // app/(customer)/layout.tsx) — this standalone top-level page didn't have that guard, so a
+  // pharmacy/admin/delivery-agent account browsing to "/" (e.g. clicking the logo) would see the
+  // full customer storefront instead, still logged in as themselves. Logged-out visitors and
+  // customers are unaffected.
   useEffect(() => {
-    if (hydrated && user?.role === 'ADMIN') router.replace('/admin/dashboard')
+    if (!hydrated || !user) return
+    const dashboard = NON_CUSTOMER_DASHBOARDS[user.role as keyof typeof NON_CUSTOMER_DASHBOARDS]
+    if (dashboard) router.replace(dashboard)
   }, [hydrated, user, router])
 
   const { medicines: newLaunches, loading: newLoading } = useMedicineRail({ sortBy: 'newest', limit: 10 })
@@ -138,13 +149,13 @@ export default function HomePage() {
     await toggleWishlist(medId)
   }, [hydrated, user, router, toggleWishlist])
 
-  if (hydrated && user?.role === 'ADMIN') return null
+  if (hydrated && user && NON_CUSTOMER_DASHBOARDS[user.role]) return null
 
   return (
     <div className="min-h-screen bg-background text-on-background">
       <PublicHeader />
 
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-10">
+      <main className="w-full px-4 sm:px-6 py-6 space-y-10">
         <PromoSlider slides={PROMO_SLIDES} />
 
         <QuickLinksGrid />
@@ -225,7 +236,7 @@ function Footer() {
 
   return (
     <footer className="border-t border-outline-variant mt-4 bg-surface">
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
+      <div className="w-full px-4 sm:px-6 py-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
         <div className="col-span-2 sm:col-span-1">
           <Logo iconSize={36} textClassName="text-lg" className="mb-2" />
           <p className="text-xs text-on-surface-variant leading-relaxed">

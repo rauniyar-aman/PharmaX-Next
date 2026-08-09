@@ -56,7 +56,7 @@ export default function WishlistPage() {
         <h1 className="text-2xl font-bold text-on-surface">Wishlist</h1>
         <span className="text-sm text-on-surface-variant">{items.length} item{items.length !== 1 ? 's' : ''}</span>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
         {items.map((med) => (
           <div key={med.id} className="bg-surface rounded-2xl border border-outline-variant overflow-hidden flex flex-col hover:-translate-y-1 transition-all duration-200">
             <Link href={`/medicines/${med.id}`} className="relative block overflow-hidden">

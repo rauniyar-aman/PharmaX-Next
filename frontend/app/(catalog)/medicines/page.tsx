@@ -73,6 +73,20 @@ export default function MedicinesPage() {
   const [selectedRatings, setSelectedRatings] = useState<number[]>([])
   const [selectedTypes, setSelectedTypes] = useState<string[]>([])
   const [sortBy, setSortBy] = useState(searchParams.get('sortBy') || 'popular')
+
+  // The useState initializers above only run once, on first mount — but /medicines,
+  // /medicines?category=..., /medicines?sortBy=... are all the SAME route, so a nav link
+  // pointing here while this page is already mounted (e.g. Medicines -> Healthcare) doesn't
+  // remount it and those initializers never re-fire, leaving stale filters. Re-sync whenever the
+  // actual query string changes so those links take effect.
+  useEffect(() => {
+    setSearch(searchParams.get('search') || '')
+    setSelectedCategories(searchParams.get('category') ? [searchParams.get('category') as string] : [])
+    setSelectedBrands(searchParams.get('brand') ? [searchParams.get('brand') as string] : [])
+    setSortBy(searchParams.get('sortBy') || 'popular')
+    setPage(1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.toString()])
   const [page, setPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(20)
 
@@ -279,7 +293,7 @@ export default function MedicinesPage() {
         </div>
 
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
             {Array.from({ length: 12 }).map((_, i) => <MedicineCardSkeleton key={i} />)}
           </div>
         ) : medicines.length === 0 ? (
@@ -289,7 +303,7 @@ export default function MedicinesPage() {
             <p className="text-sm text-on-surface-variant mt-1">Try adjusting your filters</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
             {medicines.map((med) => (
               <MedicineCard
                 key={med.id}
