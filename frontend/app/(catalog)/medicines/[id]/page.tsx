@@ -29,6 +29,10 @@ export default function MedicineDetailPage() {
   const [reviews, setReviews] = useState<Review[]>([])
   const [loading, setLoading] = useState(true)
   const [qty, setQty] = useState(1)
+  // Separate from `qty` so the field can sit empty/mid-edit (e.g. while selecting-all to retype)
+  // without snapping back to the last committed number on every keystroke — only committed to
+  // `qty` (used for pricing etc.) once it's a valid number, and reconciled on blur.
+  const [qtyInput, setQtyInput] = useState('1')
   const [cartLoading, setCartLoading] = useState(false)
   const [tab, setTab] = useState<'details' | 'reviews'>('details')
 
@@ -89,6 +93,19 @@ export default function MedicineDetailPage() {
     } finally {
       setCartLoading(false)
     }
+  }
+
+  const handleBuyNow = () => {
+    if (!user) { router.push('/signin'); return }
+    if (!medicine) return
+    // Bypasses the cart entirely — checkout/broadcasting reads this instead of the cart, and the
+    // backend tags the resulting order source='DIRECT' so placing it never touches (or clears)
+    // whatever's already sitting in the customer's actual cart.
+    sessionStorage.setItem('checkoutAllowed', '1')
+    sessionStorage.setItem('checkoutBuyNowItems', JSON.stringify([
+      { medicine_id: medicine.id, quantity: qty, is_rx: medicine.type === 'Rx' },
+    ]))
+    router.push('/checkout/shipping')
   }
 
   const handleWishlist = async () => {
@@ -210,7 +227,7 @@ export default function MedicineDetailPage() {
           <div className="flex items-center gap-2">
             <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${medicine.in_stock ? 'bg-emerald-50 text-emerald-600' : 'bg-error/10 text-error'}`}>
               <span className="material-symbols-outlined ms-filled" style={{ fontSize: '14px' }}>{medicine.in_stock ? 'check_circle' : 'cancel'}</span>
-              {medicine.in_stock ? `In Stock (${medicine.stock_quantity})` : 'Out of Stock'}
+              {medicine.in_stock ? 'In Stock' : 'Out of Stock'}
             </span>
             {isRx && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-primary/10 text-primary">
@@ -224,12 +241,29 @@ export default function MedicineDetailPage() {
             <p className="text-xs text-on-surface-variant font-medium">Quantity</p>
             <div className="flex items-center gap-3">
               <div className="flex items-center border border-outline-variant rounded-xl overflow-hidden">
-                <button onClick={() => setQty((q) => Math.max(1, q - 1))} disabled={qty <= 1}
+                <button onClick={() => { const next = Math.max(1, qty - 1); setQty(next); setQtyInput(String(next)) }} disabled={qty <= 1}
                   className="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-surface-container disabled:opacity-40 transition-colors">
                   <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>remove</span>
                 </button>
-                <span className="w-12 text-center text-sm font-bold text-on-surface">{qty}</span>
-                <button onClick={() => setQty((q) => Math.min(medicine.stock_quantity, q + 1))} disabled={qty >= medicine.stock_quantity}
+                <input
+                  type="text" inputMode="numeric" pattern="[0-9]*"
+                  value={qtyInput}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/[^0-9]/g, '')
+                    setQtyInput(val)
+                    if (val === '') return
+                    const n = parseInt(val, 10)
+                    if (!Number.isNaN(n) && n >= 1) setQty(n)
+                  }}
+                  onBlur={() => {
+                    const n = parseInt(qtyInput, 10)
+                    const clamped = Number.isNaN(n) || n < 1 ? 1 : n
+                    setQty(clamped)
+                    setQtyInput(String(clamped))
+                  }}
+                  className="w-14 text-center text-sm font-bold text-on-surface bg-transparent outline-none"
+                />
+                <button onClick={() => { const next = qty + 1; setQty(next); setQtyInput(String(next)) }}
                   className="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-surface-container disabled:opacity-40 transition-colors">
                   <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>
                 </button>
@@ -240,12 +274,16 @@ export default function MedicineDetailPage() {
 
           <div className="flex gap-3">
             <button onClick={handleAddToCart} disabled={!medicine.in_stock || cartLoading}
-              className="flex-1 py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
+              className="flex-1 py-3 border-2 border-primary text-primary text-sm font-bold rounded-2xl hover:bg-primary/5 transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
               {cartLoading ? (
-                <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" /> Adding...</>
+                <><div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" /> Adding...</>
               ) : (
                 <><span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add_shopping_cart</span>Add to Cart</>
               )}
+            </button>
+            <button onClick={handleBuyNow} disabled={!medicine.in_stock}
+              className="flex-1 py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
+              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>bolt</span>Buy Now
             </button>
             <button onClick={handleWishlist}
               className={`w-12 h-12 rounded-2xl border flex items-center justify-center transition-colors ${inWish ? 'border-error bg-error/10 text-error' : 'border-outline-variant text-on-surface-variant hover:bg-surface-container'}`}>
@@ -253,18 +291,25 @@ export default function MedicineDetailPage() {
             </button>
           </div>
 
-          <div className="flex items-center gap-2 pt-2 border-t border-outline-variant">
-            <span className="material-symbols-outlined text-primary" style={{ fontSize: '20px' }}>autorenew</span>
-            <span className="text-xs font-medium text-on-surface flex-shrink-0">Never run out —</span>
-            <select value={subFrequency} onChange={(e) => setSubFrequency(Number(e.target.value))}
-              className="text-xs border border-outline-variant rounded-lg px-2 py-1.5 bg-surface text-on-surface focus:outline-none focus:border-secondary transition flex-1">
-              {FREQUENCIES.map((f) => <option key={f.val} value={f.val}>{f.label}</option>)}
-            </select>
-            <button onClick={handleSubscribe} disabled={subscribing}
-              className="text-xs font-semibold text-primary hover:underline disabled:opacity-60 whitespace-nowrap">
-              {subscribing ? 'Setting up...' : 'Subscribe'}
-            </button>
-          </div>
+          {medicine.has_purchased ? (
+            <div className="flex items-center gap-2 pt-2 border-t border-outline-variant">
+              <span className="material-symbols-outlined text-primary" style={{ fontSize: '20px' }}>autorenew</span>
+              <span className="text-xs font-medium text-on-surface flex-shrink-0">Never run out —</span>
+              <select value={subFrequency} onChange={(e) => setSubFrequency(Number(e.target.value))}
+                className="text-xs border border-outline-variant rounded-lg px-2 py-1.5 bg-surface text-on-surface focus:outline-none focus:border-secondary transition flex-1">
+                {FREQUENCIES.map((f) => <option key={f.val} value={f.val}>{f.label}</option>)}
+              </select>
+              <button onClick={handleSubscribe} disabled={subscribing}
+                className="text-xs font-semibold text-primary hover:underline disabled:opacity-60 whitespace-nowrap">
+                {subscribing ? 'Setting up...' : 'Subscribe'}
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 pt-2 border-t border-outline-variant text-on-surface-variant">
+              <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>lock</span>
+              <span className="text-xs">Buy this medicine once to unlock auto-refill subscriptions.</span>
+            </div>
+          )}
         </div>
       </div>
 

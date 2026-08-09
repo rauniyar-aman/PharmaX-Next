@@ -66,7 +66,7 @@ export default function CheckoutPrescriptionPage() {
       </div>
 
       <h1 className="text-2xl font-bold text-on-surface">Upload Prescription</h1>
-      <p className="text-sm text-on-surface-variant">Your cart includes Rx medicines. Select or upload a valid prescription to continue.</p>
+      <p className="text-sm text-on-surface-variant">This order includes a prescription-required medicine. Select or upload a valid prescription to continue.</p>
 
       {loading ? (
         <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
