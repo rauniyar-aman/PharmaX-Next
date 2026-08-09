@@ -346,6 +346,21 @@ def delivery_agent_accept(agent, fulfillment):
         link=f'/admin/orders/{ful.order_id}',
     )
 
+    # Customer and pharmacy both need per-order awareness of this — deliberately no admin
+    # per-delivery notification here (that's the _notify_admins call above, which is the intended
+    # admin-facing signal); see pharmax-rider-tracking-spec.md Part 1.
+    Notification.objects.create(
+        user=ful.order.user, type='ORDER_UPDATE', title='Order Out for Delivery',
+        message=f'{agent.user.full_name} is on the way with order #{str(ful.order_id)[:8]}.',
+        link=f'/orders/{ful.order_id}',
+    )
+    if ful.pharmacy_id:
+        Notification.objects.create(
+            user=ful.pharmacy.user, type='ORDER_UPDATE', title='Rider Picked Up',
+            message=f'{agent.user.full_name} picked up order #{str(ful.order_id)[:8]}.',
+            link='/pharmacy/orders',
+        )
+
     return True, None
 
 
@@ -377,6 +392,20 @@ def _deliver_fulfillment(fulfillment):
         f'Order #{str(fulfillment.order_id)[:8]} — the {pharmacy_name} leg has been delivered.',
         link=f'/admin/orders/{fulfillment.order_id}',
     )
+
+    # Shared by collect_cash() and mark_delivered() — one notification per delivery regardless of
+    # which path completed it. Same "no admin per-delivery push" reasoning as delivery_agent_accept().
+    Notification.objects.create(
+        user=fulfillment.order.user, type='ORDER_UPDATE', title='Order Delivered',
+        message=f'Your order #{str(fulfillment.order_id)[:8]} has been delivered. Enjoy!',
+        link=f'/orders/{fulfillment.order_id}',
+    )
+    if fulfillment.pharmacy_id:
+        Notification.objects.create(
+            user=fulfillment.pharmacy.user, type='ORDER_UPDATE', title='Delivery Completed',
+            message=f'Order #{str(fulfillment.order_id)[:8]} was delivered successfully.',
+            link='/pharmacy/orders',
+        )
 
     sync_order_status(fulfillment.order)
     return True, None
