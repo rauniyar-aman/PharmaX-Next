@@ -7,8 +7,9 @@ import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { useThemeStore } from '@/store/theme'
 import { usePharmacyRequestsStore } from '@/store/pharmacyRequests'
+import { usePharmacyProfileStore } from '@/store/pharmacyProfile'
 import Logo from '@/components/common/Logo'
-import { playNotificationChime, startRepeatingChime, stopRepeatingChime } from '@/lib/notificationSound'
+import { playNotificationChime, startRepeatingChime, stopRepeatingChime, installAudioUnlockOnFirstInteraction } from '@/lib/notificationSound'
 import type { PharmacyFulfillmentRequest } from '@/types'
 
 const NAV_ITEMS = [
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { label: 'Orders',    href: '/pharmacy/orders',    icon: 'receipt_long' },
   { label: 'Finance',   href: '/pharmacy/finance',   icon: 'account_balance_wallet' },
   { label: 'Team',      href: '/pharmacy/team',      icon: 'group' },
+  { label: 'Settings',  href: '/pharmacy/settings',  icon: 'settings' },
 ]
 
 const ALERT_TITLE = '🔴 New Request — PharmaX Pharmacy'
@@ -101,6 +103,26 @@ function MinimizedPill({ count, onClick }: { count: number; onClick: () => void 
   )
 }
 
+/** Compact online/offline slide switch, always visible in the header — the whole point of moving
+ * it out of Settings is that a pharmacy needs to be able to flip this within a second or two of
+ * logging in, not go find it on another page first. */
+function OnlineToggle({ isActive, isVerified, toggling, onToggle }: {
+  isActive: boolean; isVerified: boolean; toggling: boolean; onToggle: () => void
+}) {
+  return (
+    <button type="button" onClick={onToggle} disabled={toggling} role="switch" aria-checked={isActive}
+      title={!isVerified ? 'Not yet admin-verified — requests won\'t arrive either way until then' : isActive ? 'Click to go offline' : 'Click to go online'}
+      className="flex items-center gap-2 h-9 px-1 rounded-xl disabled:opacity-60">
+      <span className={`text-xs font-semibold whitespace-nowrap ${isActive ? 'text-emerald-600' : 'text-on-surface-variant'}`}>
+        {isActive ? 'Online' : 'Offline'}
+      </span>
+      <span className={`inline-flex items-center flex-shrink-0 w-10 h-6 rounded-full transition-colors ${isActive ? 'bg-emerald-500' : 'bg-surface-container-high border border-outline-variant'}`}>
+        <span className={`inline-block w-4 h-4 rounded-full bg-white shadow-md transform transition-transform ${toggling ? 'animate-pulse' : ''} ${isActive ? 'translate-x-5' : 'translate-x-1'}`} />
+      </span>
+    </button>
+  )
+}
+
 function NotificationOptInBanner({ userId, onDismiss }: { userId: string; onDismiss: () => void }) {
   const [requesting, setRequesting] = useState(false)
 
@@ -151,6 +173,7 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
   const [showOptIn, setShowOptIn] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [respondingId, setRespondingId] = useState<string | null>(null)
+  const [togglingOnline, setTogglingOnline] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
   const { user, logout } = useAuthStore()
@@ -160,9 +183,26 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
   const startPolling = usePharmacyRequestsStore((s) => s.startPolling)
   const stopPolling = usePharmacyRequestsStore((s) => s.stopPolling)
   const removeRequest = usePharmacyRequestsStore((s) => s.removeRequest)
+  const pharmacy = usePharmacyProfileStore((s) => s.pharmacy)
+  const fetchPharmacyProfile = usePharmacyProfileStore((s) => s.fetchProfile)
+  const setPharmacyProfile = usePharmacyProfileStore((s) => s.setPharmacy)
   const pendingCount = requests.length
   const previousTitleRef = useRef<string | null>(null)
   const hasAutoOpenedRef = useRef(false)
+
+  const handleToggleOnline = async () => {
+    if (!pharmacy) return
+    setTogglingOnline(true)
+    try {
+      const res = await api.patch('/pharmacy/profile/', { is_active: !pharmacy.is_active })
+      setPharmacyProfile(res.data.data.pharmacy)
+      toast.success(res.data.message)
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update status.')
+    } finally {
+      setTogglingOnline(false)
+    }
+  }
 
   const respond = async (id: string, action: 'accept' | 'decline') => {
     setRespondingId(id)
@@ -184,6 +224,10 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
   useEffect(() => {
     useAuthStore.persist.rehydrate()
     setHydrated(true)
+    // Unlocks the alert chime's AudioContext on the pharmacy's very first click/tap/keypress
+    // anywhere on the dashboard — not just the opt-in banner's Enable button — so audio is
+    // already primed well before a real request arrives instead of depending on that one banner.
+    installAudioUnlockOnFirstInteraction()
   }, [])
 
   useEffect(() => {
@@ -197,6 +241,13 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
     startPolling()
     return () => stopPolling()
   }, [hydrated, user, startPolling, stopPolling])
+
+  // Loads once here so the online/offline toggle is ready the instant the header renders, on
+  // every pharmacy page — not just Settings, which used to be the only place this lived.
+  useEffect(() => {
+    if (!hydrated || !user || user.role !== 'PHARMACY') return
+    fetchPharmacyProfile()
+  }, [hydrated, user, fetchPharmacyProfile])
 
   // Show the opt-in banner once per pharmacy account, unless they've already dismissed it or the
   // browser doesn't support Notifications / already has a permission decision recorded.
@@ -306,7 +357,7 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-surface-container-lowest border-b border-outline-variant">
-        <div className="max-w-[1200px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+        <div className="w-full px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8">
             <Logo iconSize={32} textClassName="text-lg" />
             <nav className="hidden sm:flex items-center gap-1">
@@ -329,6 +380,9 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
           </div>
 
           <div className="flex items-center gap-2">
+            {pharmacy && (
+              <OnlineToggle isActive={pharmacy.is_active} isVerified={pharmacy.is_verified} toggling={togglingOnline} onToggle={handleToggleOnline} />
+            )}
             <button onClick={toggleDark}
               className="p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"
               title={dark ? 'Switch to light mode' : 'Switch to dark mode'}>
@@ -364,7 +418,7 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
         {showOptIn && <NotificationOptInBanner userId={user.id} onDismiss={() => setShowOptIn(false)} />}
       </header>
 
-      <main className="max-w-[1200px] mx-auto px-4 sm:px-6 py-6">{children}</main>
+      <main className="w-full px-4 sm:px-6 py-6">{children}</main>
 
       {showModal && pendingCount > 0 && (
         <NewRequestModal

@@ -56,17 +56,19 @@ export default function AdminPharmaciesPage() {
                 <tr><td colSpan={5} className="px-4 py-12 text-center text-on-surface-variant">No pharmacies yet</td></tr>
               ) : pharmacies.map((p) => (
                 <tr key={p.id} className="hover:bg-surface-container-low transition-colors">
-                  <td className="px-4 py-3 font-medium text-on-surface whitespace-nowrap">{p.name}</td>
+                  <td className="px-4 py-3 font-medium text-on-surface whitespace-nowrap">
+                    <Link href={`/admin/pharmacies/${p.id}`} className="hover:text-primary hover:underline">{p.name}</Link>
+                  </td>
                   <td className="px-4 py-3 text-on-surface-variant">{p.email}</td>
                   <td className="px-4 py-3 text-on-surface-variant font-mono text-xs">{p.license_number}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <button disabled={updatingId === p.id}
                       onClick={() => patch(p.id, { is_verified: !p.is_verified }, p.is_verified ? 'Pharmacy unverified.' : 'Pharmacy verified — it can now receive orders.')}
                       className={`text-[10px] font-semibold px-2.5 py-1 rounded-full transition-colors disabled:opacity-50 ${p.is_verified ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-amber-50 text-amber-600 hover:bg-amber-100'}`}>
                       {p.is_verified ? 'Verified' : 'Pending Verification'}
                     </button>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <button disabled={updatingId === p.id}
                       onClick={() => patch(p.id, { user_is_active: !p.user_is_active }, p.user_is_active ? 'Pharmacy account suspended.' : 'Pharmacy account reactivated.')}
                       className={`text-[10px] font-semibold px-2.5 py-1 rounded-full transition-colors disabled:opacity-50 ${p.user_is_active ? 'bg-primary/10 text-primary hover:bg-primary/20' : 'bg-error/10 text-error hover:bg-error/20'}`}>

@@ -24,7 +24,7 @@ export function playNotificationChime(): boolean {
       osc.type = 'sine'
       osc.frequency.value = freq
       gain.gain.setValueAtTime(0, now + start)
-      gain.gain.linearRampToValueAtTime(0.3, now + start + 0.02)
+      gain.gain.linearRampToValueAtTime(1, now + start + 0.02) // 1.0 = max GainNode output, no headroom left
       gain.gain.exponentialRampToValueAtTime(0.001, now + start + duration)
       osc.connect(gain)
       gain.connect(ctx.destination)
@@ -46,13 +46,52 @@ export function playNotificationChime(): boolean {
   }
 }
 
+/** Creates (or resumes) the shared AudioContext. Must be called synchronously from inside a real
+ * user-gesture event handler (click/keydown/touchstart) — browsers refuse to let a context
+ * actually produce sound otherwise, no matter how many times playNotificationChime() retries
+ * afterward. A setInterval-driven retry can NEVER unlock a suspended context by itself; it only
+ * has a chance of working once a genuine gesture like this has unlocked it first. */
+function primeAudioContext() {
+  try {
+    if (!audioCtx) {
+      const Ctor = window.AudioContext || (window as any).webkitAudioContext
+      audioCtx = new Ctor()
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {})
+  } catch {
+    // Web Audio unsupported — nothing to do.
+  }
+}
+
+let unlockInstalled = false
+
+/** Unlocks audio the moment the user interacts with the page AT ALL — not just a specific
+ * "Enable" button. The opt-in banner's click was previously the *only* thing that counted as a
+ * qualifying gesture; if a pharmacy dismissed that banner (or it never showed because
+ * Notification permission was already decided), the AudioContext would never get unlocked and
+ * the alert chime would silently never play, even though it kept "retrying" every few seconds.
+ * Call once per page load (idempotent) — removes its own listeners after the first interaction. */
+export function installAudioUnlockOnFirstInteraction() {
+  if (unlockInstalled || typeof window === 'undefined') return
+  unlockInstalled = true
+
+  const unlock = () => {
+    primeAudioContext()
+    window.removeEventListener('pointerdown', unlock)
+    window.removeEventListener('keydown', unlock)
+  }
+  window.addEventListener('pointerdown', unlock)
+  window.addEventListener('keydown', unlock)
+}
+
 let repeatTimer: ReturnType<typeof setInterval> | null = null
 
 /** Keeps re-playing the chime every `intervalMs` until stopRepeatingChime() is called — used to
  * satisfy "play sound until the pharmacy reviews the request", since a single chime can be
- * missed (pharmacy stepped away) or silently fail (no user gesture has unlocked audio yet; each
- * retry gives a subsequent click elsewhere on the page a chance to unlock it). Short interval is
- * deliberate — this should feel like a phone ringing, not an occasional reminder ping. */
+ * missed (pharmacy stepped away). Note this alone cannot unlock a suspended AudioContext — a
+ * setInterval callback is never treated as a user gesture no matter how many times it fires —
+ * which is why installAudioUnlockOnFirstInteraction() exists separately to do that part. Short
+ * interval is deliberate — this should feel like a phone ringing, not an occasional reminder ping. */
 export function startRepeatingChime(intervalMs = 2500) {
   if (repeatTimer) return
   playNotificationChime()
