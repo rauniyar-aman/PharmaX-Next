@@ -41,10 +41,33 @@ export interface AdminPharmacy {
   address: string
   lat: number
   lng: number
+  logo_url: string | null
   is_verified: boolean
   is_active: boolean
   user_is_active: boolean
   created_at: string
+  contact_person_name: string | null
+  contact_person_phone: string | null
+  bank_name: string | null
+  bank_account_holder_name: string | null
+  bank_account_number: string | null
+  bank_branch: string | null
+}
+
+export interface PharmacyDocument {
+  id: string
+  doc_type: 'PAN_CARD' | 'CITIZENSHIP' | 'MOU' | 'CANCELLED_CHEQUE'
+  doc_type_label: string
+  file_url: string
+  uploaded_by_name: string | null
+  uploaded_at: string
+}
+
+export interface AdminPharmacyDetail extends AdminPharmacy {
+  documents: PharmacyDocument[]
+  listings_count: number
+  request_stats: { accepted: number; declined: number; expired: number; pending: number }
+  finance: { total_earned: string; total_commission: string; total_paid: string; total_pending: string }
 }
 
 export interface AdminDeliveryAgent {
@@ -110,6 +133,35 @@ export interface PharmacyOrderFulfillment {
   payout_paid_at: string | null
   payout_gross_amount: string | null
   payout_commission_amount: string | null
+}
+
+export interface PharmacyProfile {
+  id: string
+  name: string
+  license_number: string
+  phone: string
+  address: string
+  lat: number
+  lng: number
+  logo_url: string | null
+  is_verified: boolean
+  is_active: boolean
+  created_at: string
+  contact_person_name: string | null
+  contact_person_phone: string | null
+  bank_name: string | null
+  bank_account_holder_name: string | null
+  bank_account_number: string | null
+  bank_branch: string | null
+  is_owner?: boolean
+}
+
+export interface PharmacyBusinessHoursDay {
+  weekday: number
+  weekday_label: string
+  is_closed: boolean
+  open_time: string | null
+  close_time: string | null
 }
 
 export interface PharmacyTeamMember {
@@ -178,6 +230,7 @@ export interface Medicine {
   category_name?: string
   created_at: string
   updated_at: string
+  has_purchased?: boolean
 }
 
 export interface Address {
