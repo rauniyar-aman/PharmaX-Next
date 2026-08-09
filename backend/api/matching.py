@@ -201,12 +201,17 @@ def pharmacy_advance_fulfillment(pharmacy, fulfillment):
     step happened automatically and instantly the moment the order was paid, regardless of
     whether the pharmacy had actually finished preparing anything yet.
 
-    The final step (-> AWAITING_DELIVERY) additionally requires the parent Order to be PLACED
-    (payment confirmed): a pharmacy can prep and pack an order before the customer finishes
-    paying, but it can't be handed to a rider until that payment has actually cleared.
+    Requires the parent Order to already be PLACED (payment confirmed / COD chosen) before ANY
+    step is allowed, not just the final rider-handoff — accepting a request commits the
+    pharmacy's stock and gets the order to AWAITING_PAYMENT, but actually preparing/packing real
+    stock for an order the customer hasn't committed to paying for yet is exactly the wasted
+    effort this guard exists to prevent.
     """
     if fulfillment.pharmacy_id != pharmacy.id:
         return False, 'This order does not belong to your pharmacy.'
+
+    if fulfillment.order.status != 'PLACED':
+        return False, "Waiting for the customer's payment to be confirmed before this order can be prepared."
 
     current = fulfillment.status
     if current not in FULFILLMENT_PREP_SEQUENCE[:-1]:
@@ -215,13 +220,23 @@ def pharmacy_advance_fulfillment(pharmacy, fulfillment):
     next_status = FULFILLMENT_PREP_SEQUENCE[FULFILLMENT_PREP_SEQUENCE.index(current) + 1]
 
     if next_status == 'AWAITING_DELIVERY':
-        if fulfillment.order.status != 'PLACED':
-            return False, "Waiting for the customer's payment to be confirmed before this can go out for delivery."
         broadcast_delivery(fulfillment)
         return True, None
 
     fulfillment.status = next_status
     fulfillment.save(update_fields=['status'])
+
+    if next_status == 'PREPARED':
+        # The customer's only signal so far was "Order Placed" at payment time — this is the
+        # first confirmation that a real pharmacy is actually acting on it, not just that the
+        # payment cleared.
+        pharmacy_name = fulfillment.pharmacy.name if fulfillment.pharmacy else 'The pharmacy'
+        Notification.objects.create(
+            user=fulfillment.order.user, type='ORDER_UPDATE', title='Order Confirmed',
+            message=f'{pharmacy_name} confirmed order #{str(fulfillment.order_id)[:8]} and is preparing it.',
+            link=f'/orders/{fulfillment.order_id}',
+        )
+
     return True, None
 
 
