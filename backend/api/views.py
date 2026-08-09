@@ -1402,6 +1402,29 @@ class OrderCancelView(APIView):
                 FulfillmentRequest.objects.filter(
                     order_item__order=order, status='PENDING',
                 ).update(status='EXPIRED', responded_at=timezone.now())
+
+            # Any pharmacy (or rider) already committed to this order — accepted, mid-prep, even
+            # already out for delivery — was left with zero signal that the customer cancelled:
+            # their dashboard card just sat there forever as if it were still active. Cancel every
+            # fulfillment that hasn't already reached a terminal state and tell whoever owns it.
+            active_fulfillments = list(
+                order.fulfillments.exclude(status__in=('DELIVERED', 'CANCELLED')).select_related('pharmacy__user', 'delivery_agent__user')
+            )
+            for fulfillment in active_fulfillments:
+                if fulfillment.pharmacy_id:
+                    Notification.objects.create(
+                        user=fulfillment.pharmacy.user, type='ORDER_CANCELLED', title='Order Cancelled',
+                        message=f'The customer cancelled order #{str(order.id)[:8]} — no need to prepare it further.',
+                        link='/pharmacy/orders',
+                    )
+                if fulfillment.delivery_agent_id:
+                    Notification.objects.create(
+                        user=fulfillment.delivery_agent.user, type='ORDER_CANCELLED', title='Order Cancelled',
+                        message=f'The customer cancelled order #{str(order.id)[:8]} — do not deliver it.',
+                        link='/delivery/active',
+                    )
+            OrderFulfillment.objects.filter(id__in=[f.id for f in active_fulfillments]).update(status='CANCELLED')
+
             order.status = 'CANCELLED'
             if order.payment_status == 'PENDING':
                 order.payment_status = 'FAILED'
