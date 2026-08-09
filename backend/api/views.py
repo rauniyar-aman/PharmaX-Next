@@ -29,7 +29,7 @@ from .models import (
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
     Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment,
     PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours,
-    PharmacyDocument,
+    PharmacyDocument, PharmacyLocationChangeRequest,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
@@ -53,6 +53,7 @@ from .serializers import (
     PharmacyTeamMemberSerializer, PharmacyTeamMemberCreateSerializer, AdminOrderFulfillmentSerializer,
     AdminFulfillmentRequestSerializer,
     PharmacyProfileSerializer, PharmacyBusinessHoursSerializer, PharmacyDocumentSerializer,
+    PharmacyLocationChangeRequestSerializer,
     DeliveryFulfillmentSerializer, DeliveryActiveSerializer,
     AdminPharmacyPayoutSerializer, AdminDeliveryAgentEarningSerializer, AdminDeliveryAgentCodLiabilitySerializer,
 )
@@ -3751,6 +3752,9 @@ class AdminPharmacyDetailView(APIView):
 
         data = AdminPharmacySerializer(pharmacy).data
         data['documents'] = PharmacyDocumentSerializer(pharmacy.documents.all(), many=True).data
+        data['location_change_requests'] = PharmacyLocationChangeRequestSerializer(
+            pharmacy.location_change_requests.select_related('reviewed_by').order_by('-created_at'), many=True,
+        ).data
         data['listings_count'] = pharmacy.listings.count()
 
         # request_stats: how this pharmacy actually responds to what it's offered — accepted vs
@@ -3802,6 +3806,74 @@ class AdminPharmacyDetailView(APIView):
             pharmacy.user.save(update_fields=['is_active'])
 
         return Response({'success': True, 'data': {'pharmacy': AdminPharmacySerializer(pharmacy).data}, 'message': 'Pharmacy updated.'})
+
+
+class AdminPharmacyLocationChangeApproveView(APIView):
+    """Only path that actually moves Pharmacy.lat/lng away from what it was admin-set to
+    originally (see PharmacyProfileView.patch() — pharmacies can't self-edit it) or a prior
+    approval here. Applies the pharmacy's REQUESTED values verbatim, not whatever the admin might
+    have separately typed elsewhere — this endpoint's whole job is reviewing THIS request."""
+    permission_classes = [require_permission('manage_pharmacies')]
+
+    def post(self, request, pharmacy_id, pk):
+        try:
+            req = PharmacyLocationChangeRequest.objects.select_related('pharmacy').get(id=pk, pharmacy_id=pharmacy_id, status='PENDING')
+        except PharmacyLocationChangeRequest.DoesNotExist:
+            return Response({'success': False, 'message': 'Pending location change request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        pharmacy = req.pharmacy
+        pharmacy.lat = req.requested_lat
+        pharmacy.lng = req.requested_lng
+        update_fields = ['lat', 'lng']
+        if req.requested_address:
+            pharmacy.address = req.requested_address
+            update_fields.append('address')
+        pharmacy.save(update_fields=update_fields)
+
+        req.status = 'APPROVED'
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
+
+        Notification.objects.create(
+            user=pharmacy.user, type='PHARMACY_LOCATION_CHANGE_REVIEWED', title='Location Change Approved',
+            message='Your requested pharmacy location change has been approved and is now live.',
+            link='/pharmacy/settings',
+        )
+
+        return Response({
+            'success': True,
+            'data': {'request': PharmacyLocationChangeRequestSerializer(req).data, 'pharmacy': AdminPharmacySerializer(pharmacy).data},
+            'message': 'Location change approved.',
+        })
+
+
+class AdminPharmacyLocationChangeRejectView(APIView):
+    permission_classes = [require_permission('manage_pharmacies')]
+
+    def post(self, request, pharmacy_id, pk):
+        admin_note = (request.data.get('admin_note') or '').strip()
+        if not admin_note:
+            return Response({'success': False, 'message': 'admin_note is required — explain why this request was rejected.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            req = PharmacyLocationChangeRequest.objects.select_related('pharmacy__user').get(id=pk, pharmacy_id=pharmacy_id, status='PENDING')
+        except PharmacyLocationChangeRequest.DoesNotExist:
+            return Response({'success': False, 'message': 'Pending location change request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        req.status = 'REJECTED'
+        req.admin_note = admin_note
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.save(update_fields=['status', 'admin_note', 'reviewed_by', 'reviewed_at'])
+
+        Notification.objects.create(
+            user=req.pharmacy.user, type='PHARMACY_LOCATION_CHANGE_REVIEWED', title='Location Change Rejected',
+            message=f'Your requested pharmacy location change was rejected: {admin_note}',
+            link='/pharmacy/settings',
+        )
+
+        return Response({'success': True, 'data': {'request': PharmacyLocationChangeRequestSerializer(req).data}, 'message': 'Location change rejected.'})
 
 
 class AdminPharmacyDocumentView(APIView):
@@ -3972,6 +4044,62 @@ class PharmacyProfileView(APIView):
         if 'is_active' in update_fields:
             message = 'You are now receiving new requests.' if pharmacy.is_active else 'You are now offline — no new requests will be sent to you.'
         return Response({'success': True, 'data': {'pharmacy': PharmacyProfileSerializer(pharmacy).data}, 'message': message})
+
+
+class PharmacyLocationChangeRequestView(APIView):
+    """The reviewed path to actually move a pharmacy's pin, now that PharmacyProfileView.patch()
+    locks lat/lng out of direct self-service edit. Owner-only, same reasoning as bank details —
+    this determines where riders are sent and what the matching radius is measured from, not
+    something a team member login should be able to set in motion unilaterally."""
+    permission_classes = [IsPharmacy]
+
+    def get(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        if pharmacy.user_id != request.user.id:
+            return Response({'success': False, 'message': 'Only the pharmacy owner can view location change requests.'}, status=status.HTTP_403_FORBIDDEN)
+
+        latest = pharmacy.location_change_requests.order_by('-created_at').first()
+        return Response({'success': True, 'data': {'request': PharmacyLocationChangeRequestSerializer(latest).data if latest else None}})
+
+    def post(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        if pharmacy.user_id != request.user.id:
+            return Response({'success': False, 'message': 'Only the pharmacy owner can request a location change.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if pharmacy.location_change_requests.filter(status='PENDING').exists():
+            return Response({
+                'success': False,
+                'message': 'You already have a pending location change request — wait for it to be reviewed before submitting another.',
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        lat, lng = request.data.get('lat'), request.data.get('lng')
+        if lat is None or lng is None:
+            return Response({'success': False, 'message': 'lat and lng are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            lat, lng = float(lat), float(lng)
+        except (TypeError, ValueError):
+            return Response({'success': False, 'message': 'lat and lng must be numbers.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        req = PharmacyLocationChangeRequest.objects.create(
+            pharmacy=pharmacy, requested_lat=lat, requested_lng=lng,
+            requested_address=request.data.get('address') or None,
+            reason=request.data.get('reason') or None,
+        )
+
+        _notify_admins(
+            'manage_pharmacies', 'PHARMACY_LOCATION_CHANGE_REQUEST', 'Location Change Requested',
+            f'{pharmacy.name} requested a location change — review before it takes effect.',
+            link=f'/admin/pharmacies/{pharmacy.id}',
+        )
+
+        return Response({
+            'success': True, 'data': {'request': PharmacyLocationChangeRequestSerializer(req).data},
+            'message': 'Location change requested — an admin will review it shortly.',
+        }, status=status.HTTP_201_CREATED)
 
 
 class PharmacyLogoUploadView(APIView):

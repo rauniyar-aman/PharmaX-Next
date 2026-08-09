@@ -844,6 +844,31 @@ class PharmacyDocument(models.Model):
         return f'{self.pharmacy.name} — {self.get_doc_type_display()}'
 
 
+class PharmacyLocationChangeRequest(models.Model):
+    """A pharmacy proposing a new lat/lng, requiring admin approval before it takes effect —
+    lat/lng is deliberately locked from direct self-service edit (see PharmacyProfileView), this
+    is the reviewed path to actually change it. Only Pharmacy.lat/lng gets updated on approval;
+    rejection leaves the pharmacy's current location untouched."""
+    STATUS = [('PENDING', 'Pending'), ('APPROVED', 'Approved'), ('REJECTED', 'Rejected')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, related_name='location_change_requests')
+    requested_lat = models.FloatField()
+    requested_lng = models.FloatField()
+    requested_address = models.TextField(blank=True, null=True)
+    reason = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
+    admin_note = models.TextField(blank=True, null=True)
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pharmacy_location_change_requests'
+
+    def __str__(self):
+        return f'{self.pharmacy.name} — {self.status} ({self.created_at:%Y-%m-%d})'
+
+
 class PharmacyBusinessHours(models.Model):
     """One row per weekday (0=Monday..6=Sunday) per pharmacy — informational display of when the
     pharmacy is normally open, shown on their profile. Deliberately NOT enforced against

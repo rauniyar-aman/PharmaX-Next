@@ -165,6 +165,8 @@ urlpatterns = [
     path('admin/pharmacies/',                   views.AdminPharmacyListView.as_view(),      name='admin-pharmacies'),
     path('admin/pharmacies/<uuid:pk>/',         views.AdminPharmacyDetailView.as_view(),    name='admin-pharmacy-detail'),
     path('admin/pharmacies/<uuid:pk>/documents/', views.AdminPharmacyDocumentView.as_view(), name='admin-pharmacy-documents'),
+    path('admin/pharmacies/<uuid:pharmacy_id>/location-change-requests/<uuid:pk>/approve/', views.AdminPharmacyLocationChangeApproveView.as_view(), name='admin-pharmacy-location-change-approve'),
+    path('admin/pharmacies/<uuid:pharmacy_id>/location-change-requests/<uuid:pk>/reject/',  views.AdminPharmacyLocationChangeRejectView.as_view(),  name='admin-pharmacy-location-change-reject'),
     path('admin/delivery-agents/',              views.AdminDeliveryAgentListView.as_view(), name='admin-delivery-agents'),
     path('admin/delivery-agents/<uuid:pk>/',    views.AdminDeliveryAgentDetailView.as_view(), name='admin-delivery-agent-detail'),
 
@@ -172,6 +174,7 @@ urlpatterns = [
     path('pharmacy/profile/',                   views.PharmacyProfileView.as_view(),        name='pharmacy-profile'),
     path('pharmacy/profile/logo/',              views.PharmacyLogoUploadView.as_view(),     name='pharmacy-profile-logo'),
     path('pharmacy/profile/hours/',             views.PharmacyBusinessHoursView.as_view(),  name='pharmacy-profile-hours'),
+    path('pharmacy/location-change-request/',   views.PharmacyLocationChangeRequestView.as_view(), name='pharmacy-location-change-request'),
     path('pharmacy/documents/',                 views.PharmacyDocumentView.as_view(),       name='pharmacy-documents'),
     path('pharmacy/medicines/',                 views.PharmacyMedicineListView.as_view(),   name='pharmacy-medicines'),
     path('pharmacy/listings/',                  views.PharmacyListingListView.as_view(),    name='pharmacy-listings'),
