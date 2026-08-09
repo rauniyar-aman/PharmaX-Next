@@ -3952,7 +3952,12 @@ class PharmacyProfileView(APIView):
         if not is_owner and any(f in request.data for f in self.OWNER_ONLY_FIELDS):
             return Response({'success': False, 'message': 'Only the pharmacy owner can update bank details.'}, status=status.HTTP_403_FORBIDDEN)
 
-        editable_fields = ['name', 'phone', 'address', 'lat', 'lng', 'is_active', 'contact_person_name', 'contact_person_phone']
+        # lat/lng deliberately absent, even for the owner — unlike bank details (owner-only, not
+        # removed), the matching engine's 3km radius, the combined-pickup proximity checks, and
+        # every customer-facing distance/ETA display all trust this value. A pharmacy repositioning
+        # its own pin with zero oversight is a real trust/fraud surface, not just a self-service
+        # nicety — only an admin can change it now, via AdminPharmacyDetailView.
+        editable_fields = ['name', 'phone', 'address', 'is_active', 'contact_person_name', 'contact_person_phone']
         if is_owner:
             editable_fields += self.OWNER_ONLY_FIELDS
         update_fields = []
