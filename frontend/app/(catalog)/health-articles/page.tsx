@@ -57,7 +57,7 @@ export default function HealthArticlesPage() {
       )}
 
       {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
           {Array.from({ length: 8 }).map((_, i) => <ArticleCardSkeleton key={i} />)}
         </div>
       ) : posts.length === 0 ? (
@@ -66,7 +66,7 @@ export default function HealthArticlesPage() {
           <p className="text-base font-medium text-on-surface mt-3">No articles yet</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
           {posts.map((p) => (
             <Link key={p.id} href={`/health-articles/${p.slug}`}
               className="bg-surface rounded-2xl overflow-hidden border border-outline-variant hover:-translate-y-1 hover:shadow-md transition-all duration-200 flex flex-col">

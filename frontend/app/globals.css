@@ -96,6 +96,12 @@
 @theme inline {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
 
+  /* Tailwind v4 ships sm/md/lg/xl/2xl by default — these extend that scale for the very wide
+     monitors the full-width layout shells (no more max-w-[1600px] centering) now need to fill
+     with more grid columns instead of just wider cards. */
+  --breakpoint-3xl: 1920px;
+  --breakpoint-4xl: 2400px;
+
   --color-primary:                    rgb(var(--c-primary));
   --color-primary-dark:               rgb(var(--c-primary-dark));
   --color-on-primary:                 rgb(var(--c-on-primary));

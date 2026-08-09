@@ -81,8 +81,8 @@ export default function PublicHeader() {
     <header className="sticky top-0 z-30 bg-surface">
       {/* Row 1: utility bar */}
       <div className="border-b border-outline-variant">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-16 flex items-center gap-4">
-          <Link href="/" className="flex-shrink-0">
+        <div className="w-full px-4 sm:px-6 h-16 flex items-center gap-4">
+          <Link href={hydrated && user?.role === 'CUSTOMER' ? '/dashboard' : '/'} className="flex-shrink-0">
             <Logo iconSize={40} textClassName="text-2xl" />
           </Link>
 
@@ -218,7 +218,7 @@ export default function PublicHeader() {
 
       {/* Row 2: nav links + search */}
       <div className="border-b border-outline-variant bg-surface-container-low">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-12 flex items-center gap-6">
+        <div className="w-full px-4 sm:px-6 h-12 flex items-center gap-6">
           <div className="flex items-center gap-5 overflow-x-auto scrollbar-hide">
             {(hydrated && user ? NAV_LINKS : GUEST_NAV_LINKS).map((item) => (
               <Link key={item.label} href={item.href}

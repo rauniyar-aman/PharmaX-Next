@@ -66,9 +66,9 @@ export default function PharmacyDashboardPage() {
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{[...Array(6)].map((_, i) => <div key={i} className="h-20 bg-surface-container-low rounded-2xl animate-pulse" />)}</div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">{[...Array(6)].map((_, i) => <div key={i} className="h-20 bg-surface-container-low rounded-2xl animate-pulse" />)}</div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <StatCard icon="inbox" label="Pending Requests" value={String(pendingRequests)} href="/pharmacy/requests" tone={pendingRequests > 0 ? 'warning' : 'default'} />
           <StatCard icon="local_shipping" label="Active Orders" value={String(stats.active)} href="/pharmacy/orders" />
           <StatCard icon="check_circle" label="Delivered" value={String(stats.delivered)} href="/pharmacy/orders" tone="success" />
@@ -94,12 +94,14 @@ export default function PharmacyDashboardPage() {
         ) : (
           <div className="bg-surface rounded-2xl border border-outline-variant divide-y divide-outline-variant overflow-hidden">
             {recentOrders.map((o) => (
-              <div key={o.id} className="flex items-center justify-between gap-3 p-3">
-                <div className="min-w-0">
+              <div key={o.id} className="flex items-center justify-between gap-3 p-3 sm:grid sm:grid-cols-[100px_1fr_140px_140px_auto] sm:gap-4">
+                <div className="min-w-0 sm:contents">
                   <p className="text-xs font-mono text-on-surface-variant">#{o.order_id.slice(0, 8).toUpperCase()}</p>
                   <p className="text-sm text-on-surface truncate">{o.items.map((i) => i.medicine_name).join(', ')}</p>
+                  <p className="hidden sm:block text-xs text-on-surface-variant">{new Date(o.order_placed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                  <p className="hidden sm:block text-xs text-on-surface-variant truncate">{o.city || '—'}</p>
                 </div>
-                <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-surface-container text-on-surface-variant whitespace-nowrap">{o.status.replace(/_/g, ' ')}</span>
+                <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-surface-container text-on-surface-variant whitespace-nowrap sm:justify-self-end">{o.status.replace(/_/g, ' ')}</span>
               </div>
             ))}
           </div>

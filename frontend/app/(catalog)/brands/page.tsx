@@ -28,7 +28,7 @@ export default function BrandsPage() {
           <p className="text-base font-medium text-on-surface mt-3">No brands yet</p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 3xl:grid-cols-8 4xl:grid-cols-10 gap-4">
           {brands.map((brand, i) => (
             <Link key={brand.id} href={`/medicines?brand=${encodeURIComponent(brand.name)}`}
               className="bg-surface rounded-2xl border border-outline-variant p-5 flex flex-col items-center gap-3 hover:-translate-y-1 hover:shadow-md hover:border-primary/30 transition-all duration-200 group">

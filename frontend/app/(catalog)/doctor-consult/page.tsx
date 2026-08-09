@@ -63,7 +63,7 @@ export default function DoctorConsultPage() {
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
           {Array.from({ length: 8 }).map((_, i) => <DoctorCardSkeleton key={i} />)}
         </div>
       ) : doctors.length === 0 ? (
@@ -72,7 +72,7 @@ export default function DoctorConsultPage() {
           <p className="text-base font-medium text-on-surface mt-3">No doctors found</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
           {doctors.map((d) => (
             <Link key={d.id} href={`/doctor-consult/${d.id}`}
               className="bg-surface rounded-2xl border border-outline-variant p-4 flex flex-col items-center text-center hover:-translate-y-1 hover:shadow-md transition-all duration-200">

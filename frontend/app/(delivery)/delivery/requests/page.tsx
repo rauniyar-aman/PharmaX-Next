@@ -52,7 +52,7 @@ export default function DeliveryRequestsPage() {
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
           {[...Array(3)].map((_, i) => <div key={i} className="h-44 bg-surface-container-low rounded-2xl animate-pulse" />)}
         </div>
       ) : requests.length === 0 ? (
@@ -61,7 +61,7 @@ export default function DeliveryRequestsPage() {
           <p className="mt-2 text-sm">No deliveries available right now.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
           {requests.map((req) => (
             <div key={req.id} className="bg-surface rounded-2xl border border-outline-variant p-4 space-y-3">
               <div>
