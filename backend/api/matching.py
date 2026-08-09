@@ -393,13 +393,14 @@ def _deliver_fulfillment(fulfillment):
         link=f'/admin/orders/{fulfillment.order_id}',
     )
 
-    # Shared by collect_cash() and mark_delivered() — one notification per delivery regardless of
-    # which path completed it. Same "no admin per-delivery push" reasoning as delivery_agent_accept().
-    Notification.objects.create(
-        user=fulfillment.order.user, type='ORDER_UPDATE', title='Order Delivered',
-        message=f'Your order #{str(fulfillment.order_id)[:8]} has been delivered. Enjoy!',
-        link=f'/orders/{fulfillment.order_id}',
-    )
+    # Pharmacy notification is correctly per-leg — shared by collect_cash() and mark_delivered(),
+    # fires once per fulfillment regardless of which path completed it. NOT mirrored for the
+    # customer here on purpose: for a split order across multiple pharmacies, this function fires
+    # once per leg, but the customer only cares about the whole order — sync_order_status()
+    # already owns that single "Order Delivered" notification, firing exactly once, only once
+    # every fulfillment (not just this one) is actually DELIVERED. Duplicating it here fired a
+    # premature "delivered" notification the moment the FIRST leg finished, while other legs were
+    # still in transit.
     if fulfillment.pharmacy_id:
         Notification.objects.create(
             user=fulfillment.pharmacy.user, type='ORDER_UPDATE', title='Delivery Completed',
