@@ -29,6 +29,7 @@ export default function CheckoutShippingPage() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
   const [form, setForm] = useState({ full_name: '', phone: '', address_line1: '', address_line2: '', city: '', state: '', is_default: false })
   const [notes, setNotes] = useState('')
+  const [detectingLocation, setDetectingLocation] = useState(false)
 
   const handleMapPick = (loc: PickedLocation) => {
     setCoords({ lat: loc.lat, lng: loc.lng })
@@ -38,6 +39,40 @@ export default function CheckoutShippingPage() {
       city: loc.city || p.city,
       state: loc.province || p.state,
     }))
+  }
+
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) { toast.error('Geolocation is not supported by your browser.'); return }
+    setShowForm(true)
+    setShowMap(true)
+    setDetectingLocation(true)
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude
+        const lng = pos.coords.longitude
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`)
+          const data = await res.json()
+          const addr = data?.address || {}
+          handleMapPick({
+            lat, lng,
+            address: data?.display_name || `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+            city: addr.city || addr.town || addr.village || addr.municipality || '',
+            province: addr.state || addr.province || '',
+            zip: addr.postcode || '',
+          })
+        } catch {
+          handleMapPick({ lat, lng, address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, city: '', province: '', zip: '' })
+        } finally {
+          setDetectingLocation(false)
+        }
+      },
+      () => {
+        setDetectingLocation(false)
+        toast.error('Could not get your location. Please allow location access or pick on the map.')
+      },
+      { timeout: 8000 },
+    )
   }
 
   useEffect(() => {
@@ -122,11 +157,20 @@ export default function CheckoutShippingPage() {
         ))}
 
         {!showForm ? (
-          <button onClick={() => setShowForm(true)}
-            className="w-full py-3 border-2 border-dashed border-outline-variant rounded-2xl text-sm font-medium text-on-surface-variant hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
-            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add_location_alt</span>
-            Add New Address
-          </button>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button onClick={() => setShowForm(true)}
+              className="flex-1 py-3 border-2 border-dashed border-outline-variant rounded-2xl text-sm font-medium text-on-surface-variant hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
+              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add_location_alt</span>
+              Add New Address
+            </button>
+            <button onClick={handleUseCurrentLocation} disabled={detectingLocation}
+              className="flex-1 py-3 border-2 border-dashed border-primary/30 rounded-2xl text-sm font-medium text-primary hover:border-primary hover:bg-primary/5 transition-colors flex items-center justify-center gap-2 disabled:opacity-60">
+              <span className={`material-symbols-outlined ${detectingLocation ? 'animate-spin' : ''}`} style={{ fontSize: '18px' }}>
+                {detectingLocation ? 'progress_activity' : 'my_location'}
+              </span>
+              {detectingLocation ? 'Detecting…' : 'Use Current Location'}
+            </button>
+          </div>
         ) : (
           <form onSubmit={handleAddAddress} className="bg-surface border border-outline-variant rounded-2xl p-5 space-y-3">
             <div className="flex items-center justify-between">
