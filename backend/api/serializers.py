@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember
+from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -137,7 +137,12 @@ class AdminPharmacySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Pharmacy
-        fields = ['id', 'name', 'email', 'license_number', 'phone', 'address', 'lat', 'lng', 'is_verified', 'is_active', 'user_is_active', 'created_at']
+        fields = [
+            'id', 'name', 'email', 'license_number', 'phone', 'address', 'lat', 'lng',
+            'logo_url', 'is_verified', 'is_active', 'user_is_active', 'created_at',
+            'contact_person_name', 'contact_person_phone',
+            'bank_name', 'bank_account_holder_name', 'bank_account_number', 'bank_branch',
+        ]
         read_only_fields = ['id', 'email', 'user_is_active', 'created_at']
 
 
@@ -339,6 +344,48 @@ class OrderSerializer(serializers.ModelSerializer):
 
     def get_coupon_code(self, obj):
         return obj.coupon.code if obj.coupon_id else None
+
+
+class AdminOrderFulfillmentSerializer(serializers.ModelSerializer):
+    """Per-pharmacy-leg progress for admin's Order detail/list — this is the piece that answers
+    'is it packed / ready for pickup / with the rider yet', which Order.status alone can't (it
+    just sits at PLACED for the whole marketplace journey until every leg is DELIVERED)."""
+    pharmacy_name = serializers.CharField(source='pharmacy.name', read_only=True)
+    delivery_agent_name = serializers.SerializerMethodField()
+    items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrderFulfillment
+        fields = [
+            'id', 'pharmacy_name', 'status', 'items', 'delivery_agent_name',
+            'accepted_at', 'delivery_broadcast_at', 'delivered_at',
+        ]
+        read_only_fields = fields
+
+    def get_delivery_agent_name(self, obj):
+        return obj.delivery_agent.user.full_name if obj.delivery_agent else None
+
+    def get_items(self, obj):
+        return [
+            {'medicine_name': i.medicine.name, 'quantity': i.quantity}
+            for i in obj.order_items.select_related('medicine').all()
+        ]
+
+
+class AdminFulfillmentRequestSerializer(serializers.ModelSerializer):
+    """Every pharmacy an order's items were actually offered to, and how each one responded —
+    ACCEPTED / DECLINED (said no) / EXPIRED (never responded in time) / PENDING (still waiting).
+    This is the pharmacy-performance data Order-level status can't show: an order can show
+    NO_PHARMACY_FOUND with zero fulfillments while still having a full trail of who was asked and
+    who ignored or declined it."""
+    pharmacy_name = serializers.CharField(source='pharmacy.name', read_only=True)
+    medicine_name = serializers.CharField(source='order_item.medicine.name', read_only=True)
+    quantity = serializers.IntegerField(source='order_item.quantity', read_only=True)
+
+    class Meta:
+        model = FulfillmentRequest
+        fields = ['id', 'pharmacy_name', 'medicine_name', 'quantity', 'status', 'created_at', 'responded_at']
+        read_only_fields = fields
 
 
 class ReviewSerializer(serializers.ModelSerializer):
@@ -642,6 +689,39 @@ class DoctorAppointmentSerializer(serializers.ModelSerializer):
 
 # ─── Pharmacy dashboard (Stage 5) ──────────────────────────────────────────────
 
+class PharmacyProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Pharmacy
+        fields = [
+            'id', 'name', 'license_number', 'phone', 'address', 'lat', 'lng',
+            'logo_url', 'is_verified', 'is_active', 'created_at',
+            'contact_person_name', 'contact_person_phone',
+            'bank_name', 'bank_account_holder_name', 'bank_account_number', 'bank_branch',
+        ]
+        # license_number is a legal/compliance identifier — changing it goes through admin
+        # (AdminPharmacyDetailView), not self-service. is_verified is admin-only for the same
+        # reason. logo_url is set only via PharmacyLogoUploadView, never a raw PATCH.
+        read_only_fields = ['id', 'license_number', 'logo_url', 'is_verified', 'created_at']
+
+
+class PharmacyDocumentSerializer(serializers.ModelSerializer):
+    doc_type_label = serializers.CharField(source='get_doc_type_display', read_only=True)
+    uploaded_by_name = serializers.CharField(source='uploaded_by.full_name', read_only=True)
+
+    class Meta:
+        model = PharmacyDocument
+        fields = ['id', 'doc_type', 'doc_type_label', 'file_url', 'uploaded_by_name', 'uploaded_at']
+        read_only_fields = fields
+
+
+class PharmacyBusinessHoursSerializer(serializers.ModelSerializer):
+    weekday_label = serializers.CharField(source='get_weekday_display', read_only=True)
+
+    class Meta:
+        model = PharmacyBusinessHours
+        fields = ['weekday', 'weekday_label', 'is_closed', 'open_time', 'close_time']
+
+
 class PharmacyListingSerializer(serializers.ModelSerializer):
     medicine_id = serializers.UUIDField(source='medicine.id', read_only=True)
     medicine_name = serializers.CharField(source='medicine.name', read_only=True)
@@ -693,6 +773,11 @@ class PharmacyFulfillmentRequestSerializer(serializers.ModelSerializer):
 
 class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
     order_placed_at = serializers.DateTimeField(source='order.placed_at', read_only=True)
+    # The order's own marketplace-lifecycle status (BROADCASTING/AWAITING_PAYMENT/PLACED/...) —
+    # distinct from `payment_status` below (PAID/PENDING). The pharmacy dashboard needs this to
+    # know whether "Ready for Pickup" is actually allowed yet (order.status == 'PLACED', i.e.
+    # payment confirmed) versus still waiting on the customer.
+    order_status = serializers.CharField(source='order.status', read_only=True)
     items = serializers.SerializerMethodField()
     delivery_agent_name = serializers.SerializerMethodField()
     city = serializers.SerializerMethodField()
@@ -705,7 +790,7 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderFulfillment
         fields = [
-            'id', 'order_id', 'order_placed_at', 'status', 'items',
+            'id', 'order_id', 'order_placed_at', 'order_status', 'status', 'items',
             'delivery_agent_name', 'city', 'accepted_at', 'delivered_at',
             'payment_status', 'payout_amount', 'payout_paid_at',
             'payout_gross_amount', 'payout_commission_amount',

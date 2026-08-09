@@ -162,10 +162,15 @@ urlpatterns = [
     path('admin/admins/<uuid:pk>/',             views.AdminUserDetailView.as_view(),        name='admin-user-detail'),
     path('admin/pharmacies/',                   views.AdminPharmacyListView.as_view(),      name='admin-pharmacies'),
     path('admin/pharmacies/<uuid:pk>/',         views.AdminPharmacyDetailView.as_view(),    name='admin-pharmacy-detail'),
+    path('admin/pharmacies/<uuid:pk>/documents/', views.AdminPharmacyDocumentView.as_view(), name='admin-pharmacy-documents'),
     path('admin/delivery-agents/',              views.AdminDeliveryAgentListView.as_view(), name='admin-delivery-agents'),
     path('admin/delivery-agents/<uuid:pk>/',    views.AdminDeliveryAgentDetailView.as_view(), name='admin-delivery-agent-detail'),
 
     # Pharmacy dashboard
+    path('pharmacy/profile/',                   views.PharmacyProfileView.as_view(),        name='pharmacy-profile'),
+    path('pharmacy/profile/logo/',              views.PharmacyLogoUploadView.as_view(),     name='pharmacy-profile-logo'),
+    path('pharmacy/profile/hours/',             views.PharmacyBusinessHoursView.as_view(),  name='pharmacy-profile-hours'),
+    path('pharmacy/documents/',                 views.PharmacyDocumentView.as_view(),       name='pharmacy-documents'),
     path('pharmacy/medicines/',                 views.PharmacyMedicineListView.as_view(),   name='pharmacy-medicines'),
     path('pharmacy/listings/',                  views.PharmacyListingListView.as_view(),    name='pharmacy-listings'),
     path('pharmacy/listings/<uuid:pk>/',        views.PharmacyListingDetailView.as_view(),  name='pharmacy-listing-detail'),
@@ -173,6 +178,7 @@ urlpatterns = [
     path('pharmacy/requests/<uuid:pk>/accept/', views.PharmacyRequestAcceptView.as_view(),  name='pharmacy-request-accept'),
     path('pharmacy/requests/<uuid:pk>/decline/', views.PharmacyRequestDeclineView.as_view(), name='pharmacy-request-decline'),
     path('pharmacy/orders/',                    views.PharmacyOrderListView.as_view(),      name='pharmacy-orders'),
+    path('pharmacy/orders/<uuid:pk>/advance/',  views.PharmacyOrderAdvanceStatusView.as_view(), name='pharmacy-order-advance'),
     path('pharmacy/team/',                      views.PharmacyTeamListView.as_view(),       name='pharmacy-team'),
     path('pharmacy/team/<uuid:pk>/',            views.PharmacyTeamMemberDetailView.as_view(), name='pharmacy-team-member-detail'),
 

@@ -144,13 +144,26 @@ def pharmacy_accept_item(pharmacy, order_item):
         order=item.order, pharmacy=pharmacy,
         defaults={'status': 'ACCEPTED', 'accepted_at': timezone.now()},
     )
+    just_accepted = created
     if not created and fulfillment.status == 'BROADCASTING':
         fulfillment.status = 'ACCEPTED'
         fulfillment.accepted_at = timezone.now()
         fulfillment.save(update_fields=['status', 'accepted_at'])
+        just_accepted = True
 
     item.fulfillment = fulfillment
     item.save(update_fields=['fulfillment'])
+
+    if just_accepted:
+        # one notification per pharmacy-leg, not per item — a pharmacy accepting 3 items off the
+        # same order reuses the same OrderFulfillment row (see get_or_create above), so this only
+        # fires once per (order, pharmacy) pair, the moment they start preparing it.
+        from .views import _notify_admins
+        _notify_admins(
+            'manage_orders', 'FULFILLMENT_UPDATE', 'Pharmacy Preparing Order',
+            f'{pharmacy.name} accepted order #{str(item.order_id)[:8]} and is preparing it.',
+            link=f'/admin/orders/{item.order_id}',
+        )
 
     PharmacyMedicineListing.objects.filter(pharmacy=pharmacy, medicine=item.medicine).update(
         stock_quantity=F('stock_quantity') - item.quantity
@@ -173,6 +186,42 @@ def pharmacy_decline_item(pharmacy, order_item):
     if not updated:
         return False, 'This request is no longer available.'
     sync_order_status(order_item.order)
+    return True, None
+
+
+# The pharmacy-controlled prep stages a fulfillment walks through before it's handed off to a
+# rider. Each pharmacy click just moves it one step; ACCEPTED and AWAITING_DELIVERY already exist
+# for other reasons (see OrderFulfillment.STATUS), this is only the sequencing between them.
+FULFILLMENT_PREP_SEQUENCE = ['ACCEPTED', 'PREPARED', 'PACKED', 'AWAITING_DELIVERY']
+
+
+def pharmacy_advance_fulfillment(pharmacy, fulfillment):
+    """Manually advances one fulfillment one step through ACCEPTED -> PREPARED -> PACKED ->
+    AWAITING_DELIVERY (broadcast to nearby riders) — replaces the old behavior where the last
+    step happened automatically and instantly the moment the order was paid, regardless of
+    whether the pharmacy had actually finished preparing anything yet.
+
+    The final step (-> AWAITING_DELIVERY) additionally requires the parent Order to be PLACED
+    (payment confirmed): a pharmacy can prep and pack an order before the customer finishes
+    paying, but it can't be handed to a rider until that payment has actually cleared.
+    """
+    if fulfillment.pharmacy_id != pharmacy.id:
+        return False, 'This order does not belong to your pharmacy.'
+
+    current = fulfillment.status
+    if current not in FULFILLMENT_PREP_SEQUENCE[:-1]:
+        return False, f'Cannot advance a fulfillment from its current status ({current}).'
+
+    next_status = FULFILLMENT_PREP_SEQUENCE[FULFILLMENT_PREP_SEQUENCE.index(current) + 1]
+
+    if next_status == 'AWAITING_DELIVERY':
+        if fulfillment.order.status != 'PLACED':
+            return False, "Waiting for the customer's payment to be confirmed before this can go out for delivery."
+        broadcast_delivery(fulfillment)
+        return True, None
+
+    fulfillment.status = next_status
+    fulfillment.save(update_fields=['status'])
     return True, None
 
 
@@ -212,6 +261,13 @@ def broadcast_delivery(fulfillment):
     fulfillment.save(update_fields=['status', 'delivery_broadcast_at'])
 
     pharmacy = fulfillment.pharmacy
+    if pharmacy is not None:
+        from .views import _notify_admins
+        _notify_admins(
+            'manage_orders', 'FULFILLMENT_UPDATE', 'Order Ready for Pickup',
+            f'{pharmacy.name} has order #{str(fulfillment.order_id)[:8]} packed and ready for a rider.',
+            link=f'/admin/orders/{fulfillment.order_id}',
+        )
     if pharmacy is None or pharmacy.lat is None or pharmacy.lng is None:
         return []
 
@@ -267,6 +323,14 @@ def delivery_agent_accept(agent, fulfillment):
     ful.status = 'OUT_FOR_DELIVERY'
     ful.save(update_fields=['delivery_agent', 'status'])
 
+    from .views import _notify_admins
+    pharmacy_name = ful.pharmacy.name if ful.pharmacy else 'the pharmacy'
+    _notify_admins(
+        'manage_orders', 'FULFILLMENT_UPDATE', 'Rider Picked Up Order',
+        f'{agent.user.full_name} picked up order #{str(ful.order_id)[:8]} from {pharmacy_name}.',
+        link=f'/admin/orders/{ful.order_id}',
+    )
+
     return True, None
 
 
@@ -290,6 +354,15 @@ def _deliver_fulfillment(fulfillment):
     if not updated:
         return False, 'This delivery is not out for delivery.'
     fulfillment.refresh_from_db()
+
+    from .views import _notify_admins
+    pharmacy_name = fulfillment.pharmacy.name if fulfillment.pharmacy else 'the pharmacy'
+    _notify_admins(
+        'manage_orders', 'FULFILLMENT_UPDATE', 'Fulfillment Delivered',
+        f'Order #{str(fulfillment.order_id)[:8]} — the {pharmacy_name} leg has been delivered.',
+        link=f'/admin/orders/{fulfillment.order_id}',
+    )
+
     sync_order_status(fulfillment.order)
     return True, None
 
@@ -398,13 +471,28 @@ def sync_order_status(order):
     """
     if order.status == 'BROADCASTING':
         if _all_items_resolved(order):
-            order.status = 'AWAITING_PAYMENT'
-            order.save(update_fields=['status'])
-            Notification.objects.create(
-                user=order.user, type='ORDER_UPDATE', title='Order Ready for Payment',
-                message=f'Nearby pharmacies have responded to order #{str(order.id)[:8]} — review and pay to confirm.',
-                link=f'/orders/{order.id}',
-            )
+            # AWAITING_PAYMENT should mean "something is actually ready to pay for" — every item
+            # getting a final answer (declined/expired) without a single pharmacy accepting
+            # anything is a different, terminal outcome, not "awaiting payment." Routing it to its
+            # own status keeps AWAITING_PAYMENT's meaning unambiguous and lets the customer-facing
+            # views hide these dead-end orders instead of leaving the customer staring at a
+            # "NPR 0 total, nothing to pay" order with no clear next step.
+            if order.fulfillments.exists():
+                order.status = 'AWAITING_PAYMENT'
+                order.save(update_fields=['status'])
+                Notification.objects.create(
+                    user=order.user, type='ORDER_UPDATE', title='Order Ready for Payment',
+                    message=f'Nearby pharmacies have responded to order #{str(order.id)[:8]} — review and pay to confirm.',
+                    link=f'/orders/{order.id}',
+                )
+            else:
+                order.status = 'NO_PHARMACY_FOUND'
+                order.save(update_fields=['status'])
+                Notification.objects.create(
+                    user=order.user, type='ORDER_UPDATE', title='No Pharmacy Had Your Items',
+                    message=f"No nearby pharmacy had the items in order #{str(order.id)[:8]} in stock — feel free to try again.",
+                    link='/medicines',
+                )
 
     elif order.status == 'AWAITING_PAYMENT':
         # COD has no async gateway callback to wait for — the payment view calling this function
@@ -413,16 +501,22 @@ def sync_order_status(order):
         if order.payment_status == 'PAID' or order.payment_method == 'CASH_ON_DELIVERY':
             order.status = 'PLACED'
             order.save(update_fields=['status'])
-            cart = Cart.objects.filter(user=order.user).first()
-            if cart:
-                cart.items.all().delete()
+            # only a CART order's items ARE the cart's items — a DIRECT ("Buy Now") order bypassed
+            # the cart entirely, so clearing it here would delete unrelated items the customer
+            # still wants to buy later.
+            if order.source == 'CART':
+                cart = Cart.objects.filter(user=order.user).first()
+                if cart:
+                    cart.items.all().delete()
             Notification.objects.create(
                 user=order.user, type='ORDER', title='Order Placed',
                 message=f'Your order #{str(order.id)[:8]} has been placed successfully.',
                 link=f'/orders/{order.id}',
             )
-            for fulfillment in order.fulfillments.all():
-                broadcast_delivery(fulfillment)
+            # NOT auto-broadcasting to riders here anymore — see pharmacy_advance_fulfillment().
+            # A fulfillment only reaches AWAITING_DELIVERY once the pharmacy manually advances it
+            # through PREPARED -> PACKED -> (broadcast), and that last step itself checks this
+            # order is PLACED (payment confirmed) before it's allowed to go out to riders.
 
     elif order.status == 'PLACED':
         if _all_fulfillments_delivered(order):

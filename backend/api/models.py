@@ -223,6 +223,7 @@ class Order(models.Model):
     ORDER_STATUS = [
         ('BROADCASTING', 'Broadcasting'),
         ('AWAITING_PAYMENT', 'Awaiting Payment'),
+        ('NO_PHARMACY_FOUND', 'No Pharmacy Found'),
         ('PLACED', 'Placed'),
         ('CONFIRMED', 'Confirmed'),
         ('PROCESSING', 'Processing'),
@@ -239,11 +240,17 @@ class Order(models.Model):
         ('REFUNDED', 'Refunded'),
     ]
 
+    SOURCE = [('CART', 'Cart'), ('DIRECT', 'Buy Now')]
+
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.PROTECT, related_name='orders')
     address = models.ForeignKey(Address, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
     prescription = models.ForeignKey(Prescription, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
     status = models.CharField(max_length=20, choices=ORDER_STATUS, default='PLACED')
+    # CART orders are built from (and clear) the user's persisted Cart on placement; DIRECT
+    # ("Buy Now") orders are built from an explicit item list and must NEVER clear the cart —
+    # see sync_order_status()'s PLACED transition, which checks this before deleting cart items.
+    source = models.CharField(max_length=10, choices=SOURCE, default='CART')
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     delivery_charge = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
@@ -622,7 +629,7 @@ class HealthRecord(models.Model):
 
 
 class MedicineReminder(models.Model):
-    FREQUENCY_CHOICES = [('DAILY', 'Daily'), ('WEEKLY', 'Weekly'), ('AS_NEEDED', 'As Needed')]
+    FREQUENCY_CHOICES = [('DAILY', 'Daily'), ('WEEKLY', 'Weekly'), ('MONTHLY', 'Monthly'), ('AS_NEEDED', 'As Needed')]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='medicine_reminders')
@@ -776,8 +783,25 @@ class Pharmacy(models.Model):
     address = models.TextField()
     lat = models.FloatField()
     lng = models.FloatField()
+    logo_url = models.CharField(max_length=500, null=True, blank=True)
     is_verified = models.BooleanField(default=False)   # admin must verify before it can receive orders
-    is_active = models.BooleanField(default=True)       # pharmacy can toggle themselves offline
+    # pharmacy's own go-online/offline switch — broadcast_order() only offers new requests to
+    # pharmacies where is_verified AND is_active are both true, so flipping this off is a real,
+    # immediate "stop sending me requests" lever, not just a display flag.
+    is_active = models.BooleanField(default=True)
+
+    # The pharmacy's designated point of contact — not necessarily the same person as the login
+    # owner (Pharmacy.user), e.g. a manager who isn't the account holder.
+    contact_person_name = models.CharField(max_length=255, null=True, blank=True)
+    contact_person_phone = models.CharField(max_length=20, null=True, blank=True)
+
+    # Payout destination — self-reported by the pharmacy, used by admin's manual bank transfer
+    # when marking a PharmacyPayout paid. Not validated against any bank API.
+    bank_name = models.CharField(max_length=255, null=True, blank=True)
+    bank_account_holder_name = models.CharField(max_length=255, null=True, blank=True)
+    bank_account_number = models.CharField(max_length=50, null=True, blank=True)
+    bank_branch = models.CharField(max_length=255, null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -785,6 +809,58 @@ class Pharmacy(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class PharmacyDocument(models.Model):
+    """Compliance/KYC documents for a pharmacy. PAN_CARD and CITIZENSHIP are uploaded by the
+    pharmacy itself (proof of identity/tax registration); MOU and CANCELLED_CHEQUE are uploaded
+    by the PharmaX admin team (the signed agreement, and proof of the bank account for payouts) —
+    who's allowed to upload which type is enforced in the view layer, not here. One row per
+    (pharmacy, doc_type): re-uploading replaces the previous file rather than accumulating a
+    history, since only the current document matters for compliance."""
+    DOC_TYPES = [
+        ('PAN_CARD', 'PAN Card'),
+        ('CITIZENSHIP', 'Owner Citizenship'),
+        ('MOU', 'Signed MOU'),
+        ('CANCELLED_CHEQUE', 'Cancelled Cheque'),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, related_name='documents')
+    doc_type = models.CharField(max_length=20, choices=DOC_TYPES)
+    file_url = models.CharField(max_length=500)
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    uploaded_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'pharmacy_documents'
+        unique_together = ('pharmacy', 'doc_type')
+
+    def __str__(self):
+        return f'{self.pharmacy.name} — {self.get_doc_type_display()}'
+
+
+class PharmacyBusinessHours(models.Model):
+    """One row per weekday (0=Monday..6=Sunday) per pharmacy — informational display of when the
+    pharmacy is normally open, shown on their profile. Deliberately NOT enforced against
+    broadcast_order(): Pharmacy.is_active is the one lever that actually gates incoming requests,
+    so a pharmacy that forgets to update these hours can't accidentally lock themselves out of
+    orders the way a hard enforcement would."""
+    WEEKDAYS = [(0, 'Monday'), (1, 'Tuesday'), (2, 'Wednesday'), (3, 'Thursday'), (4, 'Friday'), (5, 'Saturday'), (6, 'Sunday')]
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, related_name='business_hours')
+    weekday = models.IntegerField(choices=WEEKDAYS)
+    is_closed = models.BooleanField(default=False)
+    open_time = models.TimeField(null=True, blank=True)
+    close_time = models.TimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'pharmacy_business_hours'
+        unique_together = ('pharmacy', 'weekday')
+        ordering = ['weekday']
+
+    def __str__(self):
+        return f'{self.pharmacy.name} — {self.get_weekday_display()}'
 
 
 class PharmacyTeamMember(models.Model):
@@ -848,9 +924,15 @@ class OrderFulfillment(models.Model):
     """One pharmacy's slice of an Order. An Order with items split across 2 pharmacies has 2 of these."""
     STATUS = [
         ('BROADCASTING', 'Broadcasting'),      # request sent to nearby pharmacies, awaiting response
-        ('ACCEPTED', 'Accepted'),               # pharmacy confirmed, awaiting overall order payment
+        ('ACCEPTED', 'Accepted'),               # pharmacy confirmed, preparing the items
         ('NO_PHARMACY_FOUND', 'No Pharmacy Found'),
-        ('AWAITING_DELIVERY', 'Awaiting Delivery'),  # paid/COD-confirmed, needs a rider
+        ('PREPARED', 'Prepared'),               # pharmacy has gathered every item
+        ('PACKED', 'Packed'),                   # pharmacy has boxed/bagged it, ready to hand off
+        # Pharmacy-driven manual stages (ACCEPTED -> PREPARED -> PACKED -> AWAITING_DELIVERY) — see
+        # PharmacyOrderAdvanceStatusView. This used to jump straight from ACCEPTED to
+        # AWAITING_DELIVERY the instant the order was paid, with zero pharmacy involvement in
+        # *when* it became visible to riders; these give the pharmacy real control over that.
+        ('AWAITING_DELIVERY', 'Awaiting Delivery'),  # broadcast to nearby riders, needs one to accept
         ('OUT_FOR_DELIVERY', 'Out for Delivery'),
         ('DELIVERED', 'Delivered'),
         ('CANCELLED', 'Cancelled'),
