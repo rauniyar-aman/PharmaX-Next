@@ -214,6 +214,11 @@ class CartItem(models.Model):
     class Meta:
         db_table = 'cart_items'
         unique_together = ('cart', 'medicine')
+        # Without this, cart.items.all() has no guaranteed row order — Postgres is free to return
+        # rows differently across queries (an UPDATE can change scan order), which made the cart
+        # page's item cards appear to reshuffle position whenever any single item's quantity
+        # changed, looking exactly like "one item's change is affecting every item."
+        ordering = ['id']
 
     def __str__(self):
         return f'{self.medicine.name} x{self.quantity}'
