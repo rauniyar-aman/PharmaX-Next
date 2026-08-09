@@ -1,11 +1,15 @@
 'use client'
 import { Fragment, useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
 
-const STATUSES = ['ALL', 'PLACED', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']
+const STATUSES = ['ALL', 'BROADCASTING', 'AWAITING_PAYMENT', 'NO_PHARMACY_FOUND', 'PLACED', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']
 const STATUS_COLORS: Record<string, string> = {
+  BROADCASTING: 'bg-surface-container text-on-surface-variant',
+  AWAITING_PAYMENT: 'bg-amber-50 text-amber-600',
+  NO_PHARMACY_FOUND: 'bg-error/10 text-error',
   PLACED: 'bg-blue-50 text-blue-600',
   CONFIRMED: 'bg-secondary/10 text-secondary',
   PROCESSING: 'bg-amber-50 text-amber-600',
@@ -13,6 +17,30 @@ const STATUS_COLORS: Record<string, string> = {
   OUT_FOR_DELIVERY: 'bg-primary/10 text-primary',
   DELIVERED: 'bg-emerald-50 text-emerald-600',
   CANCELLED: 'bg-error/10 text-error',
+}
+
+// FulfillmentRequest.status — every pharmacy an order's items were offered to, and how they
+// responded. This is what answers "which pharmacies saw this and declined or ignored it," even
+// for a NO_PHARMACY_FOUND order that never produced a single accepted fulfillment.
+const REQUEST_STATUS_CFG: Record<string, { label: string; color: string; icon: string }> = {
+  PENDING:  { label: 'Awaiting Response', color: 'bg-blue-50 text-blue-600',       icon: 'hourglass_top' },
+  ACCEPTED: { label: 'Accepted',          color: 'bg-emerald-50 text-emerald-600', icon: 'check_circle' },
+  DECLINED: { label: 'Declined',          color: 'bg-error/10 text-error',         icon: 'thumb_down' },
+  EXPIRED:  { label: 'Ignored (Expired)', color: 'bg-surface-container text-on-surface-variant', icon: 'schedule' },
+}
+
+// Fulfillment-leg status is the granular "packed / ready for pickup / with rider / delivered"
+// progress — Order.status (above) doesn't capture this, it just sits at PLACED the whole time.
+const FULFILLMENT_STATUS_CFG: Record<string, { label: string; color: string; icon: string }> = {
+  BROADCASTING:       { label: 'Awaiting Pharmacy',  color: 'bg-surface-container text-on-surface-variant', icon: 'wifi_tethering' },
+  ACCEPTED:           { label: 'Preparing',           color: 'bg-amber-50 text-amber-600',     icon: 'inventory' },
+  PREPARED:           { label: 'Prepared',            color: 'bg-amber-50 text-amber-600',     icon: 'task_alt' },
+  PACKED:             { label: 'Packed',              color: 'bg-blue-50 text-blue-600',       icon: 'inventory_2' },
+  NO_PHARMACY_FOUND:  { label: 'No Pharmacy Found',   color: 'bg-error/10 text-error',          icon: 'help' },
+  AWAITING_DELIVERY:  { label: 'Ready for Pickup',    color: 'bg-blue-50 text-blue-600',        icon: 'hourglass_top' },
+  OUT_FOR_DELIVERY:   { label: 'With Rider',          color: 'bg-indigo-50 text-indigo-600',    icon: 'sports_motorsports' },
+  DELIVERED:          { label: 'Delivered',           color: 'bg-emerald-50 text-emerald-600',  icon: 'check_circle' },
+  CANCELLED:          { label: 'Cancelled',           color: 'bg-error/10 text-error',          icon: 'cancel' },
 }
 
 export default function AdminOrdersPage() {
@@ -115,16 +143,68 @@ export default function AdminOrdersPage() {
                     </td>
                     <td className="px-4 py-3 text-xs text-on-surface-variant whitespace-nowrap">{new Date(order.placed_at).toLocaleDateString()}</td>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      <select value={order.status} onChange={(e) => updateStatus(order.id, e.target.value)} disabled={updating === order.id}
-                        className="text-xs border border-outline-variant rounded-lg px-2 py-1.5 bg-surface text-on-surface focus:outline-none focus:border-secondary transition disabled:opacity-60">
-                        {STATUSES.slice(1).map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
-                      </select>
+                      <div className="flex items-center gap-2">
+                        <select value={order.status} onChange={(e) => updateStatus(order.id, e.target.value)} disabled={updating === order.id}
+                          className="text-xs border border-outline-variant rounded-lg px-2 py-1.5 bg-surface text-on-surface focus:outline-none focus:border-secondary transition disabled:opacity-60">
+                          {STATUSES.slice(1).map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+                        </select>
+                        <Link href={`/admin/orders/${order.id}`} title="View full details & live tracking"
+                          className="w-7 h-7 flex items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant hover:text-primary hover:border-primary transition-colors flex-shrink-0">
+                          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>open_in_new</span>
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                   {expanded && (
                     <tr key={`${order.id}-detail`} className="bg-surface-container-low">
                       <td colSpan={8} className="px-4 py-3">
                         <div className="space-y-2">
+                          {(order.fulfillments || []).length > 0 && (
+                            <div className="space-y-1.5 pb-1">
+                              <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wide">Fulfillment Progress</p>
+                              {order.fulfillments.map((f: any) => {
+                                const cfg = FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+                                return (
+                                  <div key={f.id} className="flex items-center justify-between gap-3 bg-surface rounded-xl border border-outline-variant px-3 py-2 flex-wrap">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium text-on-surface truncate">{f.pharmacy_name || 'Unassigned'}</p>
+                                      <p className="text-xs text-on-surface-variant truncate">
+                                        {(f.items || []).map((i: any) => `${i.medicine_name} × ${i.quantity}`).join(', ')}
+                                        {f.delivery_agent_name ? ` · Rider: ${f.delivery_agent_name}` : ''}
+                                      </p>
+                                    </div>
+                                    <span className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${cfg.color}`}>
+                                      <span className="material-symbols-outlined ms-filled" style={{ fontSize: '13px' }}>{cfg.icon}</span>
+                                      {cfg.label}
+                                    </span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                          {(order.fulfillment_requests || []).length > 0 && (
+                            <div className="space-y-1.5 pb-1">
+                              <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wide">Pharmacies Asked</p>
+                              {order.fulfillment_requests.map((r: any) => {
+                                const cfg = REQUEST_STATUS_CFG[r.status] || { label: r.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+                                return (
+                                  <div key={r.id} className="flex items-center justify-between gap-3 bg-surface rounded-xl border border-outline-variant px-3 py-2 flex-wrap">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium text-on-surface truncate">{r.pharmacy_name}</p>
+                                      <p className="text-xs text-on-surface-variant truncate">
+                                        {r.medicine_name} × {r.quantity}
+                                        {r.responded_at ? ` · Responded ${new Date(r.responded_at).toLocaleString()}` : ` · Asked ${new Date(r.created_at).toLocaleString()}`}
+                                      </p>
+                                    </div>
+                                    <span className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${cfg.color}`}>
+                                      <span className="material-symbols-outlined ms-filled" style={{ fontSize: '13px' }}>{cfg.icon}</span>
+                                      {cfg.label}
+                                    </span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
                           {(order.items || []).map((item: any) => (
                             <div key={item.id} className="flex items-center gap-3 bg-surface rounded-xl border border-outline-variant p-2.5">
                               {item.medicine?.image_url ? (

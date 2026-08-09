@@ -270,6 +270,36 @@ export interface OrderItem {
   unit_price: string
 }
 
+export interface OrderFulfillmentProgress {
+  id: string
+  pharmacy_name: string | null
+  status: string
+  items: { medicine_name: string; quantity: number }[]
+  delivery_agent_name: string | null
+  accepted_at: string | null
+  delivery_broadcast_at: string | null
+  delivered_at: string | null
+}
+
+// Matches matching._tracking_payload() — GET /orders/<id>/tracking/,
+// /pharmacy/orders/<id>/tracking/, /admin/orders/<id>/tracking/ all return this same shape,
+// one entry per OrderFulfillment on the order (a split order has more than one).
+export interface TrackingAgent {
+  name: string
+  phone: string
+  lat: number | null
+  lng: number | null
+}
+
+export interface TrackingFulfillment {
+  fulfillment_id: string
+  status: string
+  pharmacy_name: string | null
+  agent: TrackingAgent | null
+  distance_km?: number
+  eta_minutes?: number
+}
+
 export interface Order {
   id: string
   user?: { id: string; full_name: string; email: string; phone?: string | null }
@@ -288,6 +318,25 @@ export interface Order {
   updated_at: string
   items: OrderItem[]
   shipping_address?: Address | null
+  fulfillments?: OrderFulfillmentProgress[]
+}
+
+// GET /admin/orders/<id>/ — Order.user is just an id/name/email/phone stub (see above); this
+// separate `customer` field carries the fuller admin-only UserProfileSerializer shape.
+export interface FulfillmentRequestSummary {
+  id: string
+  pharmacy_name: string
+  medicine_name: string
+  quantity: number
+  status: string
+  created_at: string
+  responded_at: string | null
+}
+
+export interface AdminOrderDetail extends Order {
+  customer: User
+  fulfillments: OrderFulfillmentProgress[]
+  fulfillment_requests: FulfillmentRequestSummary[]
 }
 
 export interface FulfillmentSummaryItem {
