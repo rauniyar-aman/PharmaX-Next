@@ -6,7 +6,6 @@ import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
 import { usePharmacyProfileStore } from '@/store/pharmacyProfile'
 import type { PharmacyProfile, PharmacyBusinessHoursDay, PharmacyDocument } from '@/types'
-import type { PickedLocation } from '@/components/map/MapPicker'
 
 const DOC_TYPES: { type: PharmacyDocument['doc_type']; label: string; hint: string; uploadedByPharmacy: boolean }[] = [
   { type: 'PAN_CARD', label: 'PAN Card', hint: 'Your tax registration document.', uploadedByPharmacy: true },
@@ -15,7 +14,12 @@ const DOC_TYPES: { type: PharmacyDocument['doc_type']; label: string; hint: stri
   { type: 'MOU', label: 'Signed MOU', hint: 'Provided by the PharmaX team once your agreement is signed.', uploadedByPharmacy: false },
 ]
 
-const MapPicker = dynamic(() => import('@/components/map/MapPicker'), {
+// Read-only — the matching engine's 3km radius, combined-pickup proximity checks, and every
+// customer-facing distance/ETA display all trust Pharmacy.lat/lng, so unlike the rest of this
+// profile it isn't self-service. See LiveTrackingMap's own docstring: same read-only
+// react-leaflet display already used for rider tracking, reused here rather than MapPicker
+// (which is specifically an interactive picker) or a second mapping library.
+const LiveTrackingMap = dynamic(() => import('@/components/map/LiveTrackingMap'), {
   ssr: false,
   loading: () => (
     <div className="w-full h-full flex items-center justify-center bg-surface-container-low rounded-xl">
@@ -32,7 +36,6 @@ export default function PharmacySettingsPage() {
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ name: '', phone: '', address: '', contact_person_name: '', contact_person_phone: '' })
   const [bankForm, setBankForm] = useState({ bank_name: '', bank_account_holder_name: '', bank_account_number: '', bank_branch: '' })
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingBank, setSavingBank] = useState(false)
   const [savingHours, setSavingHours] = useState(false)
@@ -52,7 +55,6 @@ export default function PharmacySettingsPage() {
       bank_name: p.bank_name || '', bank_account_holder_name: p.bank_account_holder_name || '',
       bank_account_number: p.bank_account_number || '', bank_branch: p.bank_branch || '',
     })
-    setCoords({ lat: p.lat, lng: p.lng })
   })
   const loadHours = () => api.get('/pharmacy/profile/hours/').then((r) => setHours(r.data.data.hours || []))
   const loadDocuments = () => api.get('/pharmacy/documents/').then((r) => setDocuments(r.data.data.documents || []))
@@ -61,16 +63,13 @@ export default function PharmacySettingsPage() {
     Promise.all([loadProfile(), loadHours(), loadDocuments()]).catch(() => toast.error('Failed to load settings.')).finally(() => setLoading(false))
   }, [])
 
-  const handleMapPick = (loc: PickedLocation) => {
-    setCoords({ lat: loc.lat, lng: loc.lng })
-    setForm((p) => ({ ...p, address: loc.address || p.address }))
-  }
-
   const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault()
     setSavingProfile(true)
     try {
-      const res = await api.patch('/pharmacy/profile/', { ...form, ...(coords || {}) })
+      // lat/lng deliberately not sent — the backend no longer accepts them from this endpoint at
+      // all (see the "Pickup Location" section below), only AdminPharmacyDetailView can change them.
+      const res = await api.patch('/pharmacy/profile/', form)
       setPharmacy(res.data.data.pharmacy)
       toast.success('Profile updated.')
     } catch (err: any) {
@@ -257,9 +256,11 @@ export default function PharmacySettingsPage() {
 
         <div className="space-y-2">
           <label className="text-xs font-medium text-on-surface-variant">Pickup Location</label>
-          <p className="text-xs text-on-surface-variant -mt-1">This is where riders come to pick up orders — pin it precisely.</p>
+          <p className="text-xs text-on-surface-variant -mt-1">
+            Registered location — contact support to request a change. This pin drives your matching radius, delivery routing, and the distance/ETA customers and riders see, so it isn't self-editable.
+          </p>
           <div className="h-56 rounded-xl overflow-hidden border border-outline-variant">
-            <MapPicker value={coords} onChange={handleMapPick} />
+            <LiveTrackingMap riderPosition={null} destination={{ lat: pharmacy.lat, lng: pharmacy.lng }} />
           </div>
           <textarea required rows={2} value={form.address} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))}
             className="w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface resize-none focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
