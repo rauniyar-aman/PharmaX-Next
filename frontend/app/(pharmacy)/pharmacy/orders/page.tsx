@@ -1,8 +1,10 @@
 'use client'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import type { PharmacyOrderFulfillment } from '@/types'
+import type { PharmacyOrderFulfillment, TrackingFulfillment } from '@/types'
+
+const TRACKING_POLL_INTERVAL_MS = 10000
 
 const STATUS_STEPS = ['ACCEPTED', 'PREPARED', 'PACKED', 'AWAITING_DELIVERY', 'OUT_FOR_DELIVERY', 'DELIVERED']
 
@@ -68,6 +70,8 @@ export default function PharmacyOrdersPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('ALL')
   const [advancingId, setAdvancingId] = useState<string | null>(null)
+  const [trackingByFulfillmentId, setTrackingByFulfillmentId] = useState<Record<string, TrackingFulfillment>>({})
+  const trackingPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     api.get('/pharmacy/orders/').then((r) => {
@@ -75,6 +79,28 @@ export default function PharmacyOrdersPage() {
       setShowFinance(r.data.data.show_finance !== false)
     }).catch(() => toast.error('Failed to load orders.')).finally(() => setLoading(false))
   }, [])
+
+  // Once handed to a rider, a simple "rider + distance" line is enough here — the pharmacy's job
+  // is done at that point, unlike the customer's full live map. Only polls orders that are
+  // currently OUT_FOR_DELIVERY (per the order-list snapshot already in state), one tracking call
+  // per distinct order, since /pharmacy/orders/<order_id>/tracking/ takes the order id.
+  const loadTracking = useCallback(() => {
+    const orderIds = Array.from(new Set(orders.filter((o) => o.status === 'OUT_FOR_DELIVERY').map((o) => o.order_id)))
+    if (orderIds.length === 0) return
+    Promise.all(orderIds.map((orderId) =>
+      api.get(`/pharmacy/orders/${orderId}/tracking/`).then((r) => (r.data.data.fulfillments || []) as TrackingFulfillment[]).catch(() => [] as TrackingFulfillment[])
+    )).then((results) => {
+      const map: Record<string, TrackingFulfillment> = {}
+      results.flat().forEach((f) => { map[f.fulfillment_id] = f })
+      setTrackingByFulfillmentId(map)
+    })
+  }, [orders])
+
+  useEffect(() => {
+    loadTracking()
+    trackingPollRef.current = setInterval(loadTracking, TRACKING_POLL_INTERVAL_MS)
+    return () => { if (trackingPollRef.current) clearInterval(trackingPollRef.current) }
+  }, [loadTracking])
 
   const advanceStatus = async (id: string) => {
     setAdvancingId(id)
@@ -211,6 +237,9 @@ export default function PharmacyOrdersPage() {
                     <p className="text-xs text-on-surface-variant flex items-center gap-1.5">
                       <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>sports_motorsports</span>
                       Rider: {o.delivery_agent_name}
+                      {o.status === 'OUT_FOR_DELIVERY' && trackingByFulfillmentId[o.id]?.distance_km != null && (
+                        <span className="text-on-surface-variant"> · ~{trackingByFulfillmentId[o.id].distance_km} km from the delivery address</span>
+                      )}
                     </p>
                   ) : <span />}
 
