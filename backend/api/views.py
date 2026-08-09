@@ -1285,6 +1285,12 @@ class OrderFulfillmentSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
+        # Polled every few seconds by the checkout/broadcasting screen while an order is still
+        # resolving — same infrastructure-free trigger point as PharmacyRequestListView (see
+        # widen_stale_priority_broadcasts()'s docstring: no real scheduler exists in this
+        # project). Called before the order lookup below so a widen affecting THIS order is
+        # reflected in the very same response, not just the next poll.
+        widen_stale_priority_broadcasts()
         try:
             order = Order.objects.prefetch_related('items__medicine', 'items__fulfillment_requests').get(id=pk, user=request.user)
         except Order.DoesNotExist:
