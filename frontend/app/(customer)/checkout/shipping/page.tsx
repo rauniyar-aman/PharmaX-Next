@@ -78,7 +78,16 @@ export default function CheckoutShippingPage() {
     if (!selected) { toast.error('Please select a delivery address.'); return }
     sessionStorage.setItem('checkoutAddress', selected)
     sessionStorage.setItem('checkoutNotes', notes)
-    const hasRx = cart?.items.some((i) => i.medicine.type === 'Rx')
+
+    // Buy Now bypasses the cart, so its own item list (not the cart's) determines whether a
+    // prescription is needed — see the medicine detail page's handleBuyNow().
+    const buyNowRaw = sessionStorage.getItem('checkoutBuyNowItems')
+    let hasRx = cart?.items.some((i) => i.medicine.type === 'Rx')
+    if (buyNowRaw) {
+      try {
+        hasRx = JSON.parse(buyNowRaw).some((i: any) => i.is_rx)
+      } catch {}
+    }
     router.push(hasRx ? '/checkout/prescription' : '/checkout/broadcasting')
   }
 
