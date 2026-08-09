@@ -4,16 +4,27 @@ import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import type { PharmacyOrderFulfillment } from '@/types'
 
-const STATUS_STEPS = ['ACCEPTED', 'AWAITING_DELIVERY', 'OUT_FOR_DELIVERY', 'DELIVERED']
+const STATUS_STEPS = ['ACCEPTED', 'PREPARED', 'PACKED', 'AWAITING_DELIVERY', 'OUT_FOR_DELIVERY', 'DELIVERED']
 
 const STATUS_CFG: Record<string, { label: string; color: string; icon: string }> = {
   ACCEPTED:          { label: 'Preparing',        color: 'bg-amber-50 text-amber-600',      icon: 'inventory' },
-  AWAITING_DELIVERY: { label: 'Awaiting Rider',    color: 'bg-blue-50 text-blue-600',        icon: 'hourglass_top' },
-  OUT_FOR_DELIVERY:  { label: 'Out for Delivery',  color: 'bg-indigo-50 text-indigo-600',    icon: 'sports_motorsports' },
+  PREPARED:          { label: 'Prepared',         color: 'bg-amber-50 text-amber-600',      icon: 'task_alt' },
+  PACKED:            { label: 'Packed',           color: 'bg-blue-50 text-blue-600',        icon: 'inventory_2' },
+  AWAITING_DELIVERY: { label: 'Ready for Pickup',  color: 'bg-blue-50 text-blue-600',        icon: 'hourglass_top' },
+  OUT_FOR_DELIVERY:  { label: 'With Rider',        color: 'bg-indigo-50 text-indigo-600',    icon: 'sports_motorsports' },
   DELIVERED:         { label: 'Delivered',         color: 'bg-emerald-50 text-emerald-600',  icon: 'check_circle' },
   CANCELLED:         { label: 'Cancelled',         color: 'bg-error/10 text-error',          icon: 'cancel' },
   NO_PHARMACY_FOUND: { label: 'No Pharmacy Found', color: 'bg-surface-container text-on-surface-variant', icon: 'help' },
   BROADCASTING:      { label: 'Broadcasting',      color: 'bg-surface-container text-on-surface-variant', icon: 'wifi_tethering' },
+}
+
+// What each prep-stage button says, keyed by the fulfillment's CURRENT status — clicking it asks
+// the backend to advance one step (ACCEPTED -> PREPARED -> PACKED -> AWAITING_DELIVERY). See
+// pharmacy_advance_fulfillment() on the backend for the actual sequencing/validation.
+const ADVANCE_ACTION: Record<string, string> = {
+  ACCEPTED: 'Mark as Prepared',
+  PREPARED: 'Mark as Packed',
+  PACKED: 'Ready for Pickup',
 }
 
 const PAYMENT_CFG: Record<string, { label: string; color: string; icon: string }> = {
@@ -56,6 +67,7 @@ export default function PharmacyOrdersPage() {
   const [showFinance, setShowFinance] = useState(true)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('ALL')
+  const [advancingId, setAdvancingId] = useState<string | null>(null)
 
   useEffect(() => {
     api.get('/pharmacy/orders/').then((r) => {
@@ -64,9 +76,22 @@ export default function PharmacyOrdersPage() {
     }).catch(() => toast.error('Failed to load orders.')).finally(() => setLoading(false))
   }, [])
 
+  const advanceStatus = async (id: string) => {
+    setAdvancingId(id)
+    try {
+      const res = await api.post(`/pharmacy/orders/${id}/advance/`)
+      setOrders((prev) => prev.map((o) => (o.id === id ? res.data.data.order : o)))
+      toast.success('Status updated.')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Could not update status.')
+    } finally {
+      setAdvancingId(null)
+    }
+  }
+
   const filtered = useMemo(() => {
     switch (filter) {
-      case 'ACTIVE': return orders.filter((o) => STATUS_STEPS.slice(0, 3).includes(o.status))
+      case 'ACTIVE': return orders.filter((o) => STATUS_STEPS.slice(0, -1).includes(o.status))
       case 'DELIVERED': return orders.filter((o) => o.status === 'DELIVERED')
       case 'PAYMENT_PENDING': return orders.filter((o) => o.payment_status === 'PENDING')
       default: return orders
@@ -152,6 +177,29 @@ export default function PharmacyOrdersPage() {
                     </div>
                   ))}
                 </div>
+
+                {ADVANCE_ACTION[o.status] ? (() => {
+                  const awaitingPayment = o.status === 'PACKED' && o.order_status !== 'PLACED'
+                  return (
+                    <div className="mt-2 flex items-center gap-2 flex-wrap">
+                      <button onClick={() => advanceStatus(o.id)} disabled={advancingId === o.id || awaitingPayment}
+                        className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50">
+                        {advancingId === o.id ? 'Updating…' : ADVANCE_ACTION[o.status]}
+                      </button>
+                      {awaitingPayment && (
+                        <p className="text-[11px] text-amber-600 flex items-center gap-1">
+                          <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
+                          Waiting for the customer's payment to be confirmed
+                        </p>
+                      )}
+                    </div>
+                  )
+                })() : o.status === 'AWAITING_DELIVERY' && (
+                  <p className="mt-2 text-[11px] text-blue-600 flex items-center gap-1">
+                    <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
+                    Waiting for a nearby rider to accept this delivery
+                  </p>
+                )}
 
                 <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
                   {o.delivery_agent_name ? (
