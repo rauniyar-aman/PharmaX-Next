@@ -1394,9 +1394,10 @@ class OrderCancelView(APIView):
 
         with transaction.atomic():
             # Note: no Medicine.stock_quantity adjustment here — under the marketplace model,
-            # checkout never decrements it in the first place (stock lives on
-            # PharmacyMedicineListing, only touched once a pharmacy actually wins an item via
-            # pharmacy_accept_item()), so there's nothing to give back.
+            # checkout never decrements it in the first place, so there's nothing to give back on
+            # that model. PharmacyMedicineListing.stock_quantity IS decremented once a pharmacy
+            # wins an item (pharmacy_accept_item()), and IS restored below for any fulfillment
+            # that had actually reached that point before the cancel.
             if order.status in ('BROADCASTING', 'AWAITING_PAYMENT'):
                 # stop pharmacies from being able to accept an order the customer just cancelled
                 FulfillmentRequest.objects.filter(
@@ -1412,6 +1413,14 @@ class OrderCancelView(APIView):
             )
             for fulfillment in active_fulfillments:
                 if fulfillment.pharmacy_id:
+                    # Give back what pharmacy_accept_item() took — same F() pattern as the
+                    # decrement there, so a concurrent accept/cancel on the same listing can't
+                    # race and leave stock_quantity wrong.
+                    for item in order.items.all():
+                        if item.fulfillment_id == fulfillment.id:
+                            PharmacyMedicineListing.objects.filter(
+                                pharmacy_id=fulfillment.pharmacy_id, medicine_id=item.medicine_id,
+                            ).update(stock_quantity=F('stock_quantity') + item.quantity)
                     Notification.objects.create(
                         user=fulfillment.pharmacy.user, type='ORDER_CANCELLED', title='Order Cancelled',
                         message=f'The customer cancelled order #{str(order.id)[:8]} — no need to prepare it further.',
