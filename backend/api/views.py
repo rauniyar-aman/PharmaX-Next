@@ -1,6 +1,7 @@
 import hmac
 import hashlib
 import base64
+import calendar
 import json
 import os
 import random
@@ -27,7 +28,8 @@ from .models import (
     PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
     Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment,
-    PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember,
+    PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours,
+    PharmacyDocument,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
@@ -48,7 +50,9 @@ from .serializers import (
     AdminDeliveryAgentSerializer, AdminDeliveryAgentCreateSerializer,
     PharmacyListingSerializer, PharmacyListingCreateSerializer,
     PharmacyFulfillmentRequestSerializer, PharmacyOrderFulfillmentSerializer,
-    PharmacyTeamMemberSerializer, PharmacyTeamMemberCreateSerializer,
+    PharmacyTeamMemberSerializer, PharmacyTeamMemberCreateSerializer, AdminOrderFulfillmentSerializer,
+    AdminFulfillmentRequestSerializer,
+    PharmacyProfileSerializer, PharmacyBusinessHoursSerializer, PharmacyDocumentSerializer,
     DeliveryFulfillmentSerializer, DeliveryActiveSerializer,
     AdminPharmacyPayoutSerializer, AdminDeliveryAgentEarningSerializer, AdminDeliveryAgentCodLiabilitySerializer,
 )
@@ -57,7 +61,7 @@ from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, req
 from .throttles import AuthRateThrottle
 from .matching import (
     broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts,
-    pharmacy_accept_item, pharmacy_decline_item,
+    pharmacy_accept_item, pharmacy_decline_item, pharmacy_advance_fulfillment,
     delivery_agent_accept, update_agent_location, collect_cash, mark_delivered, _agent_eligible_for,
 )
 
@@ -573,7 +577,9 @@ class MedicineDetailView(APIView):
             medicine = Medicine.objects.select_related('category', 'brand').get(id=pk)
         except Medicine.DoesNotExist:
             return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return Response({'success': True, 'data': {'medicine': MedicineDetailSerializer(medicine).data}})
+        data = MedicineDetailSerializer(medicine).data
+        data['has_purchased'] = _user_has_purchased(request.user, medicine)
+        return Response({'success': True, 'data': {'medicine': data}})
 
 
 def _recalc_medicine_rating(medicine):
@@ -879,6 +885,22 @@ def _has_active_plus(user):
     return membership.is_active
 
 
+# Order statuses that represent a genuine, confirmed purchase — excludes BROADCASTING/
+# AWAITING_PAYMENT (not yet confirmed) and CANCELLED/RETURNED (reversed).
+PURCHASED_ORDER_STATUSES = ['PLACED', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED']
+
+
+def _user_has_purchased(user, medicine):
+    """Whether `user` has ever actually bought `medicine` — used to gate medicine subscriptions
+    (auto-refill) to only medicines the customer has purchased before, not anything in the
+    catalog."""
+    if not user or not user.is_authenticated:
+        return False
+    return OrderItem.objects.filter(
+        order__user=user, medicine=medicine, order__status__in=PURCHASED_ORDER_STATUSES,
+    ).exists()
+
+
 def _notify_admins(permission_code, notif_type, title, message, link=None):
     """Notifies every admin who holds `permission_code`, plus every super admin."""
     admins = User.objects.filter(role='ADMIN', is_active=True).filter(
@@ -1157,7 +1179,14 @@ class OrderCheckoutView(APIView):
     status with its OrderItems, kicks off broadcast_order(), and returns immediately — no payment
     prompt yet. The customer polls GET /orders/<id>/fulfillment-summary/ (which just reflects
     `order.status`) until it flips to AWAITING_PAYMENT, then calls one of the payment endpoints
-    below with this order's id."""
+    below with this order's id.
+
+    Normally items come from the user's persisted Cart (source='CART'). If the request body
+    includes an explicit `items` list instead — [{medicine_id, quantity}, ...] — that's a "Buy
+    Now" purchase (source='DIRECT'): it bypasses the cart entirely, on purpose, so it doesn't
+    disturb whatever else the customer already has sitting in their cart. sync_order_status()
+    checks `order.source` before ever clearing the cart, specifically so a Buy Now purchase can
+    never wipe out unrelated cart contents."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -1165,13 +1194,35 @@ class OrderCheckoutView(APIView):
         if not address_id:
             return Response({'success': False, 'message': 'Delivery address is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            cart = Cart.objects.prefetch_related('items__medicine').get(user=request.user)
-        except Cart.DoesNotExist:
-            return Response({'success': False, 'message': 'Cart is empty.'}, status=status.HTTP_400_BAD_REQUEST)
-        items = cart.items.all()
-        if not items.exists():
-            return Response({'success': False, 'message': 'Cart is empty.'}, status=status.HTTP_400_BAD_REQUEST)
+        direct_items = request.data.get('items')
+        source = 'DIRECT' if direct_items else 'CART'
+
+        if source == 'DIRECT':
+            if not isinstance(direct_items, list) or not direct_items:
+                return Response({'success': False, 'message': "'items' must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
+            resolved_items = []  # list of (medicine, quantity)
+            for entry in direct_items:
+                medicine_id = entry.get('medicine_id') if isinstance(entry, dict) else None
+                try:
+                    quantity = int(entry.get('quantity', 1))
+                except (TypeError, ValueError):
+                    quantity = 0
+                if not medicine_id or quantity < 1:
+                    return Response({'success': False, 'message': 'Each item needs a valid medicine_id and quantity.'}, status=status.HTTP_400_BAD_REQUEST)
+                try:
+                    medicine = Medicine.objects.get(id=medicine_id)
+                except Medicine.DoesNotExist:
+                    return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
+                resolved_items.append((medicine, quantity))
+        else:
+            try:
+                cart = Cart.objects.prefetch_related('items__medicine').get(user=request.user)
+            except Cart.DoesNotExist:
+                return Response({'success': False, 'message': 'Cart is empty.'}, status=status.HTTP_400_BAD_REQUEST)
+            cart_items = cart.items.all()
+            if not cart_items.exists():
+                return Response({'success': False, 'message': 'Cart is empty.'}, status=status.HTTP_400_BAD_REQUEST)
+            resolved_items = [(item.medicine, item.quantity) for item in cart_items]
 
         try:
             address = Address.objects.get(id=address_id, user=request.user)
@@ -1194,23 +1245,23 @@ class OrderCheckoutView(APIView):
                 total_amount=Decimal('0'),  # recomputed from accepted items once payment is initiated
                 status='BROADCASTING',
                 payment_status='PENDING',
+                source=source,
                 notes=request.data.get('notes', ''),
             )
-            for item in items:
+            for medicine, quantity in resolved_items:
                 OrderItem.objects.create(
-                    order=order, medicine=item.medicine,
-                    quantity=item.quantity, unit_price=item.medicine.price,
+                    order=order, medicine=medicine,
+                    quantity=quantity, unit_price=medicine.price,
                 )
             # Deliberately not decrementing Medicine.stock_quantity here — under the marketplace
             # model, stock lives on PharmacyMedicineListing and is only decremented once a
             # pharmacy actually wins an item, in pharmacy_accept_item().
 
         _maybe_reward_referral(request.user)
-        Notification.objects.create(
-            user=request.user, type='ORDER_UPDATE', title='Checking Nearby Pharmacies',
-            message=f"We're checking nearby pharmacies for order #{str(order.id)[:8]}.",
-            link=f'/orders/{order.id}',
-        )
+        # Deliberately no "Checking Nearby Pharmacies" notification here — the customer is already
+        # looking at that exact status live on /checkout/broadcasting the instant this fires, so it
+        # was pure noise. The next real notification (Order Ready for Payment / Order Placed) is
+        # the first one that actually tells them something new.
 
         broadcast_result = broadcast_order(order)
         order.refresh_from_db()
@@ -1270,7 +1321,10 @@ class OrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        orders = Order.objects.filter(user=request.user).select_related('user').prefetch_related('items__medicine').order_by('-placed_at')
+        # NO_PHARMACY_FOUND orders are a dead end (nothing was ever accepted, nothing to pay for
+        # or track) — excluded from the customer's own history; still fully visible to admin for
+        # tracking which pharmacies declined/ignored requests. See sync_order_status().
+        orders = Order.objects.filter(user=request.user).exclude(status='NO_PHARMACY_FOUND').select_related('user').prefetch_related('items__medicine').order_by('-placed_at')
         return Response({'success': True, 'data': {'orders': OrderSerializer(orders, many=True).data}})
 
     def post(self, request):
@@ -1305,40 +1359,60 @@ class OrderDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            order = Order.objects.prefetch_related('items__medicine').select_related('user', 'address', 'prescription').get(id=pk, user=request.user)
+            # .exclude(status='NO_PHARMACY_FOUND') — see OrderListView: these are a dead end and
+            # deliberately hidden from the customer entirely, not just the list.
+            order = Order.objects.exclude(status='NO_PHARMACY_FOUND').prefetch_related(
+                'items__medicine', 'fulfillments__pharmacy', 'fulfillments__delivery_agent__user', 'fulfillments__order_items__medicine',
+            ).select_related('user', 'address', 'prescription').get(id=pk, user=request.user)
         except Order.DoesNotExist:
             return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return Response({'success': True, 'data': {'order': OrderSerializer(order).data}})
+        data = OrderSerializer(order).data
+        # Order.status alone barely moves once payment is confirmed — it sits at PLACED for the
+        # entire journey from "pharmacy packing it" through "delivered". The per-pharmacy-leg
+        # detail is what actually shows the customer what's happening, same reasoning as the admin
+        # Order detail view (AdminOrderFulfillmentSerializer has no admin-only fields, safe to
+        # reuse here — pharmacy name, status, items, rider name, timestamps only).
+        data['fulfillments'] = AdminOrderFulfillmentSerializer(order.fulfillments.all(), many=True).data
+        return Response({'success': True, 'data': {'order': data}})
 
 
 class OrderCancelView(APIView):
     permission_classes = [IsAuthenticated]
+
+    # BROADCASTING/AWAITING_PAYMENT: still in the marketplace matching stage, before any payment —
+    # this is "stop looking," used by the checkout/broadcasting page's cancel-after-2-minutes option.
+    # PLACED/CONFIRMED: already paid/confirmed — the pre-existing customer-initiated cancel path.
+    CANCELLABLE_STATUSES = ('BROADCASTING', 'AWAITING_PAYMENT', 'PLACED', 'CONFIRMED')
 
     def put(self, request, pk):
         try:
             order = Order.objects.prefetch_related('items__medicine').get(id=pk, user=request.user)
         except Order.DoesNotExist:
             return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
-        if order.status not in ('PLACED', 'CONFIRMED'):
+        if order.status not in self.CANCELLABLE_STATUSES:
             return Response({'success': False, 'message': 'Order cannot be cancelled at this stage.'}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
-            for item in order.items.all():
-                med = item.medicine
-                med.stock_quantity += item.quantity
-                med.in_stock = True
-                med.save(update_fields=['stock_quantity', 'in_stock'])
+            # Note: no Medicine.stock_quantity adjustment here — under the marketplace model,
+            # checkout never decrements it in the first place (stock lives on
+            # PharmacyMedicineListing, only touched once a pharmacy actually wins an item via
+            # pharmacy_accept_item()), so there's nothing to give back.
+            if order.status in ('BROADCASTING', 'AWAITING_PAYMENT'):
+                # stop pharmacies from being able to accept an order the customer just cancelled
+                FulfillmentRequest.objects.filter(
+                    order_item__order=order, status='PENDING',
+                ).update(status='EXPIRED', responded_at=timezone.now())
             order.status = 'CANCELLED'
             if order.payment_status == 'PENDING':
                 order.payment_status = 'FAILED'
             order.save(update_fields=['status', 'payment_status'])
             _release_order_holds(order)
 
-        Notification.objects.create(
-            user=request.user, type='ORDER_UPDATE', title='Order Cancelled',
-            message=f'Your order #{str(order.id)[:8]} has been cancelled.',
-            link=f'/orders/{order.id}',
-        )
+        # No customer-facing Notification here — this view only ever cancels the requesting
+        # user's own order (see the .get(..., user=request.user) above), so the customer is
+        # always the one who just clicked "Cancel" themselves and already got an immediate
+        # toast confirmation. A persisted notification for an action they just took is the same
+        # kind of redundant noise as the old "Checking Nearby Pharmacies" notification was.
         _notify_admins('manage_orders', 'ORDER_CANCELLED', 'Order Cancelled',
                         f'{request.user.full_name} cancelled order #{str(order.id)[:8]}.', link='/admin/orders')
         return Response({'success': True, 'data': {'order': OrderSerializer(order).data}, 'message': 'Order cancelled.'})
@@ -1835,6 +1909,12 @@ class SubscriptionListCreateView(APIView):
             medicine = Medicine.objects.get(id=s.validated_data['medicine_id'])
         except Medicine.DoesNotExist:
             return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not _user_has_purchased(request.user, medicine):
+            return Response(
+                {'success': False, 'message': "You can only set up auto-refill for a medicine you've already purchased."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         address = None
         address_id = s.validated_data.get('address_id')
@@ -2463,14 +2543,31 @@ class ReminderMarkTakenView(APIView):
         return Response({'success': True, 'data': {'log': ReminderLogSerializer(log).data}})
 
 
+def _reminder_due_today(reminder, today):
+    """DAILY (and AS_NEEDED, which is available any day the customer wants to log a dose) show
+    every day in range. WEEKLY only shows on the same weekday as start_date; MONTHLY only on the
+    same day-of-month as start_date, clamped to the last day of shorter months (e.g. a reminder
+    started on the 31st still fires on Feb 28th/29th)."""
+    if reminder.frequency == 'WEEKLY':
+        return reminder.start_date.weekday() == today.weekday()
+    if reminder.frequency == 'MONTHLY':
+        last_day_this_month = calendar.monthrange(today.year, today.month)[1]
+        target_day = min(reminder.start_date.day, last_day_this_month)
+        return today.day == target_day
+    return True
+
+
 class ReminderTodayView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         today = timezone.now().date()
-        reminders = MedicineReminder.objects.filter(
-            user=request.user, is_active=True, start_date__lte=today,
-        ).filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
+        reminders = [
+            r for r in MedicineReminder.objects.filter(
+                user=request.user, is_active=True, start_date__lte=today,
+            ).filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
+            if _reminder_due_today(r, today)
+        ]
 
         logs = {
             (log.reminder_id, log.scheduled_time): log
@@ -2547,8 +2644,15 @@ class AdminDashboardView(APIView):
         cancelled_orders = Order.objects.filter(status='CANCELLED').count()
         low_stock_threshold = int(_get_setting('low_stock_threshold', '10'))
         low_stock_count = Medicine.objects.filter(stock_quantity__lte=low_stock_threshold, in_stock=True).count()
-        recent_orders = Order.objects.select_related('user').order_by('-placed_at')[:6]
+        recent_orders = Order.objects.select_related('user').prefetch_related(
+            'fulfillments__pharmacy', 'fulfillments__delivery_agent__user', 'fulfillments__order_items__medicine',
+        ).order_by('-placed_at')[:6]
         recent = OrderSerializer(recent_orders, many=True).data
+        # which pharmacy has each order and what stage it's at — Order.status alone doesn't show
+        # this (see AdminOrderFulfillmentSerializer's docstring), and the dashboard is exactly
+        # where admin needs it at a glance, not three clicks into the full Orders page.
+        for order_data, order in zip(recent, recent_orders):
+            order_data['fulfillments'] = AdminOrderFulfillmentSerializer(order.fulfillments.all(), many=True).data
 
         return Response({
             'success': True,
@@ -2573,9 +2677,14 @@ class AdminReportsView(APIView):
     def get(self, request):
         start_of_month = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
+        # NO_PHARMACY_FOUND orders never generated revenue or a real transaction — same reasoning
+        # as excluding CANCELLED, everywhere except order_status_counts below, where it's exactly
+        # the "how many orders failed to match a pharmacy" figure this status exists to surface.
+        FAILED_STATUSES = ['CANCELLED', 'NO_PHARMACY_FOUND']
+
         total_revenue = Order.objects.filter(payment_status='PAID').aggregate(s=Sum('total_amount'))['s'] or 0
         monthly_revenue = Order.objects.filter(payment_status='PAID', placed_at__gte=start_of_month).aggregate(s=Sum('total_amount'))['s'] or 0
-        total_orders = Order.objects.exclude(status='CANCELLED').count()
+        total_orders = Order.objects.exclude(status__in=FAILED_STATUSES).count()
         cancelled_count = Order.objects.filter(status='CANCELLED').count()
         total_customers = User.objects.filter(role='CUSTOMER', is_deleted=False).count()
         pending_prescriptions = Prescription.objects.filter(status='PENDING').count()
@@ -2589,7 +2698,7 @@ class AdminReportsView(APIView):
         )
 
         top_items = (
-            OrderItem.objects.exclude(order__status='CANCELLED')
+            OrderItem.objects.exclude(order__status__in=FAILED_STATUSES)
             .values('medicine_id', 'medicine__name', 'medicine__brand__name', 'medicine__price')
             .annotate(total_qty=Sum('quantity'))
             .order_by('-total_qty')[:8]
@@ -2604,7 +2713,7 @@ class AdminReportsView(APIView):
         ]
 
         six_months_ago = (start_of_month - timedelta(days=150)).replace(day=1)
-        recent_orders = Order.objects.exclude(status='CANCELLED').filter(placed_at__gte=six_months_ago).values('placed_at', 'total_amount', 'payment_status')
+        recent_orders = Order.objects.exclude(status__in=FAILED_STATUSES).filter(placed_at__gte=six_months_ago).values('placed_at', 'total_amount', 'payment_status')
         monthly_map = {}
         for o in recent_orders:
             key = o['placed_at'].strftime('%Y-%m')
@@ -3176,7 +3285,11 @@ class AdminOrderListView(APIView):
     permission_classes = [require_permission('manage_orders')]
 
     def get(self, request):
-        qs = Order.objects.select_related('user').prefetch_related('items__medicine__category', 'items__medicine__brand').order_by('-placed_at')
+        qs = Order.objects.select_related('user').prefetch_related(
+            'items__medicine__category', 'items__medicine__brand',
+            'fulfillments__pharmacy', 'fulfillments__delivery_agent__user', 'fulfillments__order_items__medicine',
+            'items__fulfillment_requests__pharmacy', 'items__fulfillment_requests__order_item__medicine',
+        ).order_by('-placed_at')
         status_filter = request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)
@@ -3187,10 +3300,20 @@ class AdminOrderListView(APIView):
         limit = min(50, int(request.query_params.get('limit', 20)))
         total = qs.count()
         orders = qs[(page - 1) * limit: page * limit]
+        # attach each order's fulfillment-leg progress — Order.status alone doesn't distinguish
+        # "pharmacy packing it" from "with the rider", only the fulfillments do (see
+        # AdminOrderFulfillmentSerializer's docstring) — and separately, every pharmacy the order's
+        # items were offered to and how each responded, which is what lets admin see who declined
+        # or silently ignored a request even when nothing was ever accepted (NO_PHARMACY_FOUND).
+        orders_data = OrderSerializer(orders, many=True).data
+        for order_data, order in zip(orders_data, orders):
+            order_data['fulfillments'] = AdminOrderFulfillmentSerializer(order.fulfillments.all(), many=True).data
+            requests = [r for item in order.items.all() for r in item.fulfillment_requests.all()]
+            order_data['fulfillment_requests'] = AdminFulfillmentRequestSerializer(requests, many=True).data
         return Response({
             'success': True,
             'data': {
-                'orders': OrderSerializer(orders, many=True).data,
+                'orders': orders_data,
                 'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
             },
         })
@@ -3201,11 +3324,18 @@ class AdminOrderDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            order = Order.objects.select_related('user', 'address', 'prescription').prefetch_related('items__medicine').get(id=pk)
+            order = Order.objects.select_related('user', 'address', 'prescription').prefetch_related(
+                'items__medicine', 'fulfillments__pharmacy', 'fulfillments__delivery_agent__user', 'fulfillments__order_items__medicine',
+            ).get(id=pk)
         except Order.DoesNotExist:
             return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
         data = OrderSerializer(order).data
         data['customer'] = UserProfileSerializer(order.user).data
+        data['fulfillments'] = AdminOrderFulfillmentSerializer(order.fulfillments.all(), many=True).data
+        requests = FulfillmentRequest.objects.filter(order_item__order=order).select_related(
+            'pharmacy', 'order_item__medicine',
+        ).order_by('-created_at')
+        data['fulfillment_requests'] = AdminFulfillmentRequestSerializer(requests, many=True).data
         return Response({'success': True, 'data': {'order': data}})
 
     def put(self, request, pk):
@@ -3549,7 +3679,35 @@ class AdminPharmacyDetailView(APIView):
             pharmacy = Pharmacy.objects.select_related('user').get(id=pk)
         except Pharmacy.DoesNotExist:
             return Response({'success': False, 'message': 'Pharmacy not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return Response({'success': True, 'data': {'pharmacy': AdminPharmacySerializer(pharmacy).data}})
+
+        data = AdminPharmacySerializer(pharmacy).data
+        data['documents'] = PharmacyDocumentSerializer(pharmacy.documents.all(), many=True).data
+        data['listings_count'] = pharmacy.listings.count()
+
+        # request_stats: how this pharmacy actually responds to what it's offered — accepted vs
+        # declined vs expired (ignored/too slow) vs still-pending. This is the pharmacy
+        # performance-tracking data, independent of whether any order ever got PLACED.
+        status_counts = dict(
+            pharmacy.fulfillment_requests.values('status').annotate(count=Count('id')).values_list('status', 'count')
+        )
+        data['request_stats'] = {
+            'accepted': status_counts.get('ACCEPTED', 0),
+            'declined': status_counts.get('DECLINED', 0),
+            'expired': status_counts.get('EXPIRED', 0),
+            'pending': status_counts.get('PENDING', 0),
+        }
+
+        # finance: same gross/commission/net breakdown as the pharmacy's own Finance page, computed
+        # here for admin instead of relying on the pharmacy to self-report anything.
+        payouts = pharmacy.payouts.all()
+        data['finance'] = {
+            'total_earned': str(payouts.aggregate(s=Sum('gross_amount'))['s'] or Decimal('0')),
+            'total_commission': str(payouts.aggregate(s=Sum('commission_amount'))['s'] or Decimal('0')),
+            'total_paid': str(payouts.filter(status='PAID').aggregate(s=Sum('net_payable'))['s'] or Decimal('0')),
+            'total_pending': str(payouts.filter(status='PENDING').aggregate(s=Sum('net_payable'))['s'] or Decimal('0')),
+        }
+
+        return Response({'success': True, 'data': {'pharmacy': data}})
 
     def patch(self, request, pk):
         try:
@@ -3575,6 +3733,37 @@ class AdminPharmacyDetailView(APIView):
             pharmacy.user.save(update_fields=['is_active'])
 
         return Response({'success': True, 'data': {'pharmacy': AdminPharmacySerializer(pharmacy).data}, 'message': 'Pharmacy updated.'})
+
+
+class AdminPharmacyDocumentView(APIView):
+    """Admin-side upload for the one document PharmaX itself provides for a given pharmacy — the
+    signed MOU. (The cancelled cheque is proof of the pharmacy's OWN bank account, so — like the
+    PAN card and citizenship — it's uploaded by the pharmacy itself via PharmacyDocumentView, not
+    here.) Mirrors PharmacyDocumentView's mechanics via the shared _save_pharmacy_document()
+    helper; only the allowed doc_type and how the pharmacy is resolved differ."""
+    permission_classes = [require_permission('manage_pharmacies')]
+    ADMIN_UPLOADED_TYPES = ('MOU',)
+
+    def post(self, request, pk):
+        try:
+            pharmacy = Pharmacy.objects.get(id=pk)
+        except Pharmacy.DoesNotExist:
+            return Response({'success': False, 'message': 'Pharmacy not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        doc_type = request.data.get('doc_type')
+        if doc_type not in self.ADMIN_UPLOADED_TYPES:
+            return Response({'success': False, 'message': 'You can only upload the signed MOU here.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'success': False, 'message': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.content_type not in DOCUMENT_CONTENT_TYPES:
+            return Response({'success': False, 'message': 'Only JPG, PNG, WebP, or PDF files are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.size > DOCUMENT_MAX_SIZE:
+            return Response({'success': False, 'message': 'File must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        doc = _save_pharmacy_document(pharmacy, doc_type, file, request.user)
+        return Response({'success': True, 'data': {'document': PharmacyDocumentSerializer(doc).data}, 'message': 'Document uploaded.'})
 
 
 class AdminDeliveryAgentListView(APIView):
@@ -3664,6 +3853,214 @@ def _can_view_finance(user, pharmacy):
         return True
     membership = getattr(user, 'pharmacy_membership', None)
     return bool(membership and membership.can_view_finance)
+
+
+class PharmacyProfileView(APIView):
+    """Self-service profile + settings, including the online/offline switch. Any team member can
+    edit this (operational, not sensitive like finance — same reasoning as inventory/orders access),
+    scoped via get_managed_pharmacy() like everything else in this section."""
+    permission_classes = [IsPharmacy]
+
+    def get(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        data = PharmacyProfileSerializer(pharmacy).data
+        data['is_owner'] = pharmacy.user_id == request.user.id
+        return Response({'success': True, 'data': {'pharmacy': data}})
+
+    # Bank details determine where real payout money goes — unlike the rest of this profile,
+    # editing them is owner-only (same reasoning as PharmacyTeamMember.can_view_finance
+    # defaulting closed: a team member login shouldn't be able to redirect the pharmacy's payouts).
+    OWNER_ONLY_FIELDS = ['bank_name', 'bank_account_holder_name', 'bank_account_number', 'bank_branch']
+
+    def patch(self, request, *args, **kwargs):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+
+        is_owner = pharmacy.user_id == request.user.id
+        if not is_owner and any(f in request.data for f in self.OWNER_ONLY_FIELDS):
+            return Response({'success': False, 'message': 'Only the pharmacy owner can update bank details.'}, status=status.HTTP_403_FORBIDDEN)
+
+        editable_fields = ['name', 'phone', 'address', 'lat', 'lng', 'is_active', 'contact_person_name', 'contact_person_phone']
+        if is_owner:
+            editable_fields += self.OWNER_ONLY_FIELDS
+        update_fields = []
+        for field in editable_fields:
+            if field in request.data:
+                setattr(pharmacy, field, request.data[field])
+                update_fields.append(field)
+        if update_fields:
+            pharmacy.save(update_fields=update_fields)
+
+        message = 'Profile updated.'
+        if 'is_active' in update_fields:
+            message = 'You are now receiving new requests.' if pharmacy.is_active else 'You are now offline — no new requests will be sent to you.'
+        return Response({'success': True, 'data': {'pharmacy': PharmacyProfileSerializer(pharmacy).data}, 'message': message})
+
+
+class PharmacyLogoUploadView(APIView):
+    """Mirrors AvatarUploadView's pattern (local FileSystemStorage, same size/type limits) for the
+    pharmacy's own logo/storefront photo."""
+    permission_classes = [IsPharmacy]
+
+    def post(self, request):
+        from django.core.files.storage import FileSystemStorage
+
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+
+        file = request.FILES.get('logo')
+        if not file:
+            return Response({'success': False, 'message': 'No image file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.content_type not in ('image/jpeg', 'image/png', 'image/webp', 'image/gif'):
+            return Response({'success': False, 'message': 'Only JPG, PNG, WebP, or GIF images are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.size > 3 * 1024 * 1024:
+            return Response({'success': False, 'message': 'Image must be under 3MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ext = os.path.splitext(file.name)[1].lower() or '.jpg'
+        filename = f'pharmacy_{pharmacy.id}{ext}'
+        storage = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'pharmacy_logos'))
+        if storage.exists(filename):
+            storage.delete(filename)
+        storage.save(filename, file)
+
+        pharmacy.logo_url = f'/media/pharmacy_logos/{filename}'
+        pharmacy.save(update_fields=['logo_url'])
+        return Response({'success': True, 'data': {'pharmacy': PharmacyProfileSerializer(pharmacy).data}, 'message': 'Logo updated.'})
+
+    def delete(self, request):
+        from django.core.files.storage import FileSystemStorage
+
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+
+        if pharmacy.logo_url:
+            storage = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'pharmacy_logos'))
+            filename = pharmacy.logo_url.rsplit('/', 1)[-1]
+            if storage.exists(filename):
+                storage.delete(filename)
+        pharmacy.logo_url = None
+        pharmacy.save(update_fields=['logo_url'])
+        return Response({'success': True, 'message': 'Logo removed.'})
+
+
+DOCUMENT_CONTENT_TYPES = ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')
+DOCUMENT_MAX_SIZE = 5 * 1024 * 1024
+
+
+def _save_pharmacy_document(pharmacy, doc_type, file, uploaded_by):
+    """Shared upload mechanics for PharmacyDocumentView and AdminPharmacyDocumentView — the only
+    real difference between the two is which doc_type values each is allowed to write and how the
+    target pharmacy is resolved (self-service vs admin-supplied pk), both handled by the caller."""
+    from django.core.files.storage import FileSystemStorage
+
+    ext = os.path.splitext(file.name)[1].lower() or '.jpg'
+    filename = f'{pharmacy.id}_{doc_type.lower()}{ext}'
+    storage = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'pharmacy_documents'))
+    if storage.exists(filename):
+        storage.delete(filename)
+    storage.save(filename, file)
+
+    doc, _ = PharmacyDocument.objects.update_or_create(
+        pharmacy=pharmacy, doc_type=doc_type,
+        defaults={'file_url': f'/media/pharmacy_documents/{filename}', 'uploaded_by': uploaded_by},
+    )
+    return doc
+
+
+class PharmacyDocumentView(APIView):
+    """Self-service compliance-document upload for the pharmacy itself — PAN card, citizenship,
+    and cancelled cheque (proof of their own bank account). Only the signed MOU is uploaded by the
+    PharmaX team instead (AdminPharmacyDocumentView), since that one originates on PharmaX's side
+    of the relationship."""
+    permission_classes = [IsPharmacy]
+    SELF_SERVICE_TYPES = ('PAN_CARD', 'CITIZENSHIP', 'CANCELLED_CHEQUE')
+
+    def get(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        docs = pharmacy.documents.all()
+        return Response({'success': True, 'data': {'documents': PharmacyDocumentSerializer(docs, many=True).data}})
+
+    def post(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+
+        doc_type = request.data.get('doc_type')
+        if doc_type not in self.SELF_SERVICE_TYPES:
+            return Response({'success': False, 'message': 'You can only upload a PAN card, citizenship, or cancelled cheque here.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'success': False, 'message': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.content_type not in DOCUMENT_CONTENT_TYPES:
+            return Response({'success': False, 'message': 'Only JPG, PNG, WebP, or PDF files are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.size > DOCUMENT_MAX_SIZE:
+            return Response({'success': False, 'message': 'File must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        doc = _save_pharmacy_document(pharmacy, doc_type, file, request.user)
+        return Response({'success': True, 'data': {'document': PharmacyDocumentSerializer(doc).data}, 'message': 'Document uploaded.'})
+
+
+class PharmacyBusinessHoursView(APIView):
+    """Get/set the informational weekly schedule shown on the pharmacy's profile. Always returns
+    exactly 7 rows (creating any missing weekday rows on first read) so the frontend never has to
+    handle a partial week."""
+    permission_classes = [IsPharmacy]
+
+    def get(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+
+        existing_weekdays = set(pharmacy.business_hours.values_list('weekday', flat=True))
+        missing = [wd for wd, _ in PharmacyBusinessHours.WEEKDAYS if wd not in existing_weekdays]
+        if missing:
+            PharmacyBusinessHours.objects.bulk_create([
+                PharmacyBusinessHours(pharmacy=pharmacy, weekday=wd) for wd in missing
+            ])
+
+        hours = pharmacy.business_hours.order_by('weekday')
+        return Response({'success': True, 'data': {'hours': PharmacyBusinessHoursSerializer(hours, many=True).data}})
+
+    def put(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+
+        rows = request.data.get('hours')
+        if not isinstance(rows, list):
+            return Response({'success': False, 'message': "'hours' must be a list of 7 day entries."}, status=status.HTTP_400_BAD_REQUEST)
+
+        by_weekday = {}
+        for row in rows:
+            try:
+                weekday = int(row['weekday'])
+            except (KeyError, TypeError, ValueError):
+                return Response({'success': False, 'message': 'Each entry needs a valid weekday.'}, status=status.HTTP_400_BAD_REQUEST)
+            if weekday not in dict(PharmacyBusinessHours.WEEKDAYS):
+                return Response({'success': False, 'message': f'Invalid weekday: {weekday}.'}, status=status.HTTP_400_BAD_REQUEST)
+            by_weekday[weekday] = row
+
+        with transaction.atomic():
+            for weekday, row in by_weekday.items():
+                PharmacyBusinessHours.objects.update_or_create(
+                    pharmacy=pharmacy, weekday=weekday,
+                    defaults={
+                        'is_closed': bool(row.get('is_closed', False)),
+                        'open_time': row.get('open_time') or None,
+                        'close_time': row.get('close_time') or None,
+                    },
+                )
+
+        hours = pharmacy.business_hours.order_by('weekday')
+        return Response({'success': True, 'data': {'hours': PharmacyBusinessHoursSerializer(hours, many=True).data}, 'message': 'Business hours updated.'})
 
 
 class PharmacyMedicineListView(APIView):
@@ -3849,6 +4246,32 @@ class PharmacyOrderListView(APIView):
         show_finance = _can_view_finance(request.user, pharmacy)
         serializer = PharmacyOrderFulfillmentSerializer(fulfillments, many=True, context={'show_finance': show_finance})
         return Response({'success': True, 'data': {'orders': serializer.data, 'show_finance': show_finance}})
+
+
+class PharmacyOrderAdvanceStatusView(APIView):
+    """Manually advances one fulfillment through its prep stages — ACCEPTED -> PREPARED ->
+    PACKED -> AWAITING_DELIVERY (broadcast to nearby riders). See
+    matching.pharmacy_advance_fulfillment() for the actual sequencing/validation."""
+    permission_classes = [IsPharmacy]
+
+    def post(self, request, pk):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+
+        try:
+            fulfillment = OrderFulfillment.objects.select_related('order').get(pk=pk, pharmacy=pharmacy)
+        except OrderFulfillment.DoesNotExist:
+            return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ok, err = pharmacy_advance_fulfillment(pharmacy, fulfillment)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+
+        fulfillment.refresh_from_db()
+        show_finance = _can_view_finance(request.user, pharmacy)
+        serializer = PharmacyOrderFulfillmentSerializer(fulfillment, context={'show_finance': show_finance})
+        return Response({'success': True, 'data': {'order': serializer.data}, 'message': 'Status updated.'})
 
 
 class PharmacyTeamListView(APIView):
