@@ -63,6 +63,7 @@ from .matching import (
     broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts,
     pharmacy_accept_item, pharmacy_decline_item, pharmacy_advance_fulfillment,
     delivery_agent_accept, update_agent_location, collect_cash, mark_delivered, _agent_eligible_for,
+    _tracking_payload,
 )
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
@@ -1374,6 +1375,21 @@ class OrderDetailView(APIView):
         # reuse here — pharmacy name, status, items, rider name, timestamps only).
         data['fulfillments'] = AdminOrderFulfillmentSerializer(order.fulfillments.all(), many=True).data
         return Response({'success': True, 'data': {'order': data}})
+
+
+class OrderTrackingView(APIView):
+    """Live(ish) rider tracking for the customer's own order — one entry per fulfillment, since a
+    split order across multiple pharmacies has a rider (or none yet) per leg, not one for the
+    whole order. See matching._tracking_payload() for the per-fulfillment shape."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            order = Order.objects.get(id=pk, user=request.user)
+        except Order.DoesNotExist:
+            return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+        fulfillments = order.fulfillments.select_related('pharmacy', 'delivery_agent__user', 'order__address')
+        return Response({'success': True, 'data': {'fulfillments': [_tracking_payload(f) for f in fulfillments]}})
 
 
 class OrderCancelView(APIView):
@@ -3392,6 +3408,21 @@ class AdminOrderDetailView(APIView):
         return Response({'success': True, 'data': {'order': OrderSerializer(order).data}})
 
 
+class AdminOrderTrackingView(APIView):
+    """Admin's on-demand lookup — no ownership scoping (any order), and deliberately no push
+    notification counterpart per pharmax-rider-tracking-spec.md: an admin pulls this up for one
+    order at a time rather than being notified for every delivery across the whole platform."""
+    permission_classes = [require_permission('manage_orders')]
+
+    def get(self, request, pk):
+        try:
+            order = Order.objects.get(id=pk)
+        except Order.DoesNotExist:
+            return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+        fulfillments = order.fulfillments.select_related('pharmacy', 'delivery_agent__user', 'order__address')
+        return Response({'success': True, 'data': {'fulfillments': [_tracking_payload(f) for f in fulfillments]}})
+
+
 class AdminPrescriptionListView(APIView):
     permission_classes = [require_permission('manage_prescriptions')]
 
@@ -4304,6 +4335,25 @@ class PharmacyOrderAdvanceStatusView(APIView):
         show_finance = _can_view_finance(request.user, pharmacy)
         serializer = PharmacyOrderFulfillmentSerializer(fulfillment, context={'show_finance': show_finance})
         return Response({'success': True, 'data': {'order': serializer.data}, 'message': 'Status updated.'})
+
+
+class PharmacyOrderTrackingView(APIView):
+    """Same shape as OrderTrackingView/AdminOrderTrackingView, but `pk` here is the ORDER id (not
+    a fulfillment id, unlike PharmacyOrderAdvanceStatusView above) — filtered to only this
+    pharmacy's own leg(s) of that order, so a split order's OTHER pharmacy's fulfillment never
+    shows up here, same ownership boundary as every other pharmacy-scoped endpoint."""
+    permission_classes = [IsPharmacy]
+
+    def get(self, request, pk):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        fulfillments = OrderFulfillment.objects.filter(order_id=pk, pharmacy=pharmacy).select_related(
+            'pharmacy', 'delivery_agent__user', 'order__address',
+        )
+        if not fulfillments.exists():
+            return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'fulfillments': [_tracking_payload(f) for f in fulfillments]}})
 
 
 class PharmacyTeamListView(APIView):
