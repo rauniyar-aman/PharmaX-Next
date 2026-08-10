@@ -7,6 +7,7 @@ import type { MedicineReminder, ReminderScheduleItem, ReminderFrequency } from '
 const FREQUENCIES: { val: ReminderFrequency; label: string }[] = [
   { val: 'DAILY', label: 'Daily' },
   { val: 'WEEKLY', label: 'Weekly' },
+  { val: 'MONTHLY', label: 'Monthly' },
   { val: 'AS_NEEDED', label: 'As Needed' },
 ]
 
@@ -147,6 +148,8 @@ export default function RemindersPage() {
                 className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
                 {FREQUENCIES.map((f) => <option key={f.val} value={f.val}>{f.label}</option>)}
               </select>
+              {frequency === 'WEEKLY' && <p className="text-[11px] text-on-surface-variant mt-1">Reminds you every week on the same weekday as your start date.</p>}
+              {frequency === 'MONTHLY' && <p className="text-[11px] text-on-surface-variant mt-1">Reminds you every month on the same day-of-month as your start date.</p>}
             </div>
             <div>
               <label className="text-xs font-medium text-on-surface-variant">Reminder Times</label>
