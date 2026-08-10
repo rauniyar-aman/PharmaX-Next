@@ -1,8 +1,18 @@
 'use client'
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import dynamic from 'next/dynamic'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import type { PharmacyOrderFulfillment, TrackingFulfillment } from '@/types'
+
+const LiveTrackingMap = dynamic(() => import('@/components/map/LiveTrackingMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center bg-surface-container-low rounded-xl">
+      <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  ),
+})
 
 const TRACKING_POLL_INTERVAL_MS = 10000
 
@@ -71,6 +81,7 @@ export default function PharmacyOrdersPage() {
   const [filter, setFilter] = useState('ALL')
   const [advancingId, setAdvancingId] = useState<string | null>(null)
   const [trackingByFulfillmentId, setTrackingByFulfillmentId] = useState<Record<string, TrackingFulfillment>>({})
+  const [mapExpandedId, setMapExpandedId] = useState<string | null>(null)
   const trackingPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
@@ -81,11 +92,18 @@ export default function PharmacyOrdersPage() {
   }, [])
 
   // Once handed to a rider, a simple "rider + distance" line is enough here — the pharmacy's job
-  // is done at that point, unlike the customer's full live map. Only polls orders that are
-  // currently OUT_FOR_DELIVERY (per the order-list snapshot already in state), one tracking call
-  // per distinct order, since /pharmacy/orders/<order_id>/tracking/ takes the order id.
+  // is done at that point, unlike the customer's full live map. Polls orders currently
+  // AWAITING_DELIVERY (waiting for ANY rider to accept) or OUT_FOR_DELIVERY (waiting for the
+  // assigned rider to deliver) — both are stages an external actor (a rider, not this pharmacy)
+  // can advance without this page doing anything. The poll response's `status` is merged back
+  // into `orders` itself, not just stashed in a side map — otherwise the primary badge/stepper
+  // stays frozen on whatever it was at page load (e.g. still "Ready for Pickup" after a rider
+  // already accepted, or still "With Rider" after they've delivered), since ADVANCE_ACTION never
+  // changes it once the pharmacy is out of the loop.
   const loadTracking = useCallback(() => {
-    const orderIds = Array.from(new Set(orders.filter((o) => o.status === 'OUT_FOR_DELIVERY').map((o) => o.order_id)))
+    const orderIds = Array.from(new Set(
+      orders.filter((o) => o.status === 'AWAITING_DELIVERY' || o.status === 'OUT_FOR_DELIVERY').map((o) => o.order_id)
+    ))
     if (orderIds.length === 0) return
     Promise.all(orderIds.map((orderId) =>
       api.get(`/pharmacy/orders/${orderId}/tracking/`).then((r) => (r.data.data.fulfillments || []) as TrackingFulfillment[]).catch(() => [] as TrackingFulfillment[])
@@ -93,6 +111,7 @@ export default function PharmacyOrdersPage() {
       const map: Record<string, TrackingFulfillment> = {}
       results.flat().forEach((f) => { map[f.fulfillment_id] = f })
       setTrackingByFulfillmentId(map)
+      setOrders((prev) => prev.map((o) => (map[o.id] && map[o.id].status !== o.status ? { ...o, status: map[o.id].status } : o)))
     })
   }, [orders])
 
@@ -240,6 +259,12 @@ export default function PharmacyOrdersPage() {
                       {o.status === 'OUT_FOR_DELIVERY' && trackingByFulfillmentId[o.id]?.distance_km != null && (
                         <span className="text-on-surface-variant"> · ~{trackingByFulfillmentId[o.id].distance_km} km from the delivery address</span>
                       )}
+                      {o.status === 'OUT_FOR_DELIVERY' && trackingByFulfillmentId[o.id]?.agent?.lat != null && (
+                        <button onClick={() => setMapExpandedId(mapExpandedId === o.id ? null : o.id)}
+                          className="ml-1 text-primary font-semibold hover:underline">
+                          {mapExpandedId === o.id ? 'Hide map' : 'Track on map'}
+                        </button>
+                      )}
                     </p>
                   ) : <span />}
 
@@ -256,6 +281,15 @@ export default function PharmacyOrdersPage() {
                     </p>
                   )}
                 </div>
+
+                {mapExpandedId === o.id && o.status === 'OUT_FOR_DELIVERY' && trackingByFulfillmentId[o.id]?.agent?.lat != null && (
+                  <div className="mt-2 h-52 rounded-xl overflow-hidden border border-outline-variant">
+                    <LiveTrackingMap
+                      riderPosition={{ lat: trackingByFulfillmentId[o.id].agent!.lat as number, lng: trackingByFulfillmentId[o.id].agent!.lng as number }}
+                      destination={o.destination_lat != null && o.destination_lng != null ? { lat: o.destination_lat, lng: o.destination_lng } : null}
+                    />
+                  </div>
+                )}
               </div>
             )
           })}

@@ -4388,8 +4388,11 @@ class PharmacyRequestListView(APIView):
         # infrastructure-free trigger for widen_stale_priority_broadcasts() (see its docstring:
         # no real scheduler exists anywhere in this project). Called here so a pharmacy that only
         # qualifies once an order's full-coverage priority window has lapsed sees it on their very
-        # next poll, not an arbitrary amount of time later.
+        # next poll, not an arbitrary amount of time later. Same reasoning for
+        # expire_stale_delivery_broadcasts() — this dashboard is exactly where an admin follow-up
+        # notification about a stuck pickup would matter.
         widen_stale_priority_broadcasts()
+        expire_stale_delivery_broadcasts()
         requests = FulfillmentRequest.objects.filter(
             pharmacy=pharmacy, status='PENDING',
         ).select_related('order_item__medicine', 'order_item__order__address').order_by('created_at')
@@ -4626,6 +4629,10 @@ class DeliveryRequestListView(APIView):
 
     def get(self, request):
         agent = request.user.delivery_agent
+        # Polled every few seconds by every online rider looking for jobs — the natural trigger
+        # for expire_stale_delivery_broadcasts() (see PharmacyRequestListView for the same
+        # reasoning re: widen_stale_priority_broadcasts()).
+        expire_stale_delivery_broadcasts()
         candidates = OrderFulfillment.objects.filter(
             status='AWAITING_DELIVERY', delivery_broadcast_at__isnull=False,
         ).select_related('pharmacy', 'order__address').prefetch_related('order_items__medicine')

@@ -793,6 +793,8 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
     items = serializers.SerializerMethodField()
     delivery_agent_name = serializers.SerializerMethodField()
     city = serializers.SerializerMethodField()
+    destination_lat = serializers.SerializerMethodField()
+    destination_lng = serializers.SerializerMethodField()
     payment_status = serializers.SerializerMethodField()
     payout_amount = serializers.SerializerMethodField()
     payout_paid_at = serializers.SerializerMethodField()
@@ -803,7 +805,8 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
         model = OrderFulfillment
         fields = [
             'id', 'order_id', 'order_placed_at', 'order_status', 'status', 'items',
-            'delivery_agent_name', 'city', 'accepted_at', 'delivered_at',
+            'delivery_agent_name', 'city', 'destination_lat', 'destination_lng',
+            'accepted_at', 'delivered_at',
             'payment_status', 'payout_amount', 'payout_paid_at',
             'payout_gross_amount', 'payout_commission_amount',
         ]
@@ -860,6 +863,14 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
     def get_city(self, obj):
         addr = obj.order.address
         return addr.city if addr else None
+
+    def get_destination_lat(self, obj):
+        addr = obj.order.address
+        return addr.lat if addr else None
+
+    def get_destination_lng(self, obj):
+        addr = obj.order.address
+        return addr.lng if addr else None
 
 
 class PharmacyTeamMemberSerializer(serializers.ModelSerializer):

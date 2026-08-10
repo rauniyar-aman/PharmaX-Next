@@ -17,12 +17,16 @@ export default function CheckoutBroadcastingPage() {
   const [orderId, setOrderId] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
   const [showSlowHint, setShowSlowHint] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const [isBuyNow, setIsBuyNow] = useState(false)
   const startedRef = useRef(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (startedRef.current) return
     startedRef.current = true
+
+    setIsBuyNow(!!sessionStorage.getItem('checkoutBuyNowItems'))
 
     const addressId = sessionStorage.getItem('checkoutAddress')
     if (!sessionStorage.getItem('checkoutAllowed') || !addressId) {
@@ -42,6 +46,15 @@ export default function CheckoutBroadcastingPage() {
     const prescriptionId = sessionStorage.getItem('checkoutPrescription')
     const payload: Record<string, any> = { address_id: addressId, notes }
     if (prescriptionId) payload.prescription_id = prescriptionId
+
+    // Buy Now: send this exact item instead of letting the backend pull from the cart, so a
+    // direct purchase never touches (or clears) whatever's already sitting in the real cart.
+    const buyNowRaw = sessionStorage.getItem('checkoutBuyNowItems')
+    if (buyNowRaw) {
+      try {
+        payload.items = JSON.parse(buyNowRaw).map((i: any) => ({ medicine_id: i.medicine_id, quantity: i.quantity }))
+      } catch {}
+    }
 
     api.post('/orders/checkout/', payload)
       .then((res) => {
@@ -99,12 +112,43 @@ export default function CheckoutBroadcastingPage() {
     sessionStorage.removeItem('checkoutNotes')
     sessionStorage.removeItem('checkoutPrescription')
     sessionStorage.removeItem('checkoutOrderId')
+    sessionStorage.removeItem('checkoutBuyNowItems')
+  }
+
+  // Shared "where does this tab go once there's nothing left to wait for" logic — used both when
+  // the customer walks away empty-handed after resolution, and when they cancel mid-search.
+  const goBackAfterAbandoning = (buyNowRaw: string | null) => {
+    clearCheckoutSession()
+    // Buy Now never touched the cart, so "back to cart" would just be an empty, unrelated page —
+    // send them back to the medicine instead.
+    if (buyNowRaw) {
+      try {
+        const medicineId = JSON.parse(buyNowRaw)[0]?.medicine_id
+        if (medicineId) { router.push(`/medicines/${medicineId}`); return }
+      } catch {}
+    }
+    router.push('/cart')
   }
 
   const handleReturnToCart = () => {
-    clearCheckoutSession()
+    const buyNowRaw = sessionStorage.getItem('checkoutBuyNowItems')
+    goBackAfterAbandoning(buyNowRaw)
     toast('This checkout was abandoned — your cart is unchanged.', { icon: 'ℹ️' })
-    router.push('/cart')
+  }
+
+  const handleCancelSearch = async () => {
+    if (!orderId) return
+    setCancelling(true)
+    try {
+      await api.put(`/orders/${orderId}/cancel/`)
+      if (pollRef.current) clearInterval(pollRef.current)
+      const buyNowRaw = sessionStorage.getItem('checkoutBuyNowItems')
+      goBackAfterAbandoning(buyNowRaw)
+      toast('Search cancelled — no charge was made.', { icon: 'ℹ️' })
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Could not cancel — please try again.')
+      setCancelling(false)
+    }
   }
 
   const handleContinueToPayment = () => {
@@ -128,6 +172,12 @@ export default function CheckoutBroadcastingPage() {
             </p>
           )}
         </div>
+        {orderId && (
+          <button onClick={handleCancelSearch} disabled={cancelling}
+            className="text-sm font-semibold text-error hover:underline disabled:opacity-60">
+            {cancelling ? 'Cancelling…' : 'Cancel Search'}
+          </button>
+        )}
       </div>
     )
   }
@@ -226,7 +276,7 @@ export default function CheckoutBroadcastingPage() {
       ) : (
         <button onClick={handleReturnToCart}
           className="w-full py-3 border border-outline-variant text-on-surface-variant text-sm font-semibold rounded-2xl hover:bg-surface-container transition-colors">
-          Return to Cart
+          {isBuyNow ? 'Back to Medicine' : 'Return to Cart'}
         </button>
       )}
     </div>
