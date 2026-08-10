@@ -430,7 +430,7 @@ export interface HealthRecord {
   uploaded_at: string
 }
 
-export type ReminderFrequency = 'DAILY' | 'WEEKLY' | 'AS_NEEDED'
+export type ReminderFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'AS_NEEDED'
 
 export interface MedicineReminder {
   id: string
