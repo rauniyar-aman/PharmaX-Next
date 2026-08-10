@@ -3240,8 +3240,8 @@ class AdminExpireFulfillmentRequestsView(APIView):
     """Cron/admin-callable sweep for both the pharmacy broadcast window (Stage 2) and the delivery
     broadcast window (Stage 4) — same manual-trigger pattern as AdminSubscriptionRenewView until
     real task infrastructure exists. Expires stale PENDING FulfillmentRequests and reports which
-    OrderItems ended up with no acceptance in time, plus which OrderFulfillments have sat
-    AWAITING_DELIVERY too long with no rider accepting (reported only — see
+    OrderItems ended up with no acceptance in time, plus which OrderFulfillments have gone too
+    long since being broadcast with no rider accepting (reported only — see
     expire_stale_delivery_broadcasts()'s docstring for why there's nothing to flip there)."""
     permission_classes = [require_permission('manage_pharmacies')]
 
@@ -4615,16 +4615,19 @@ class PharmacyTeamMemberDetailView(APIView):
 # delivery_agent — GET /delivery/active/, collect-cash, and mark-delivered all filter on
 # delivery_agent=request.user.delivery_agent, the same FK-filter pattern as Stage 5.
 
-class DeliveryRequestListView(APIView):
-    """Available-to-accept deliveries — every AWAITING_DELIVERY fulfillment this specific agent
-    currently qualifies for, per the same live eligibility check delivery_agent_accept() uses.
+PRE_PICKUP_STATUSES = ('ACCEPTED', 'PREPARED', 'PACKED', 'AWAITING_DELIVERY')
 
-    delivery_broadcast_at__isnull=False matters here, not just status='AWAITING_DELIVERY': a
-    fulfillment reaches AWAITING_DELIVERY the moment ITS OWN pharmacy finishes packing, but
-    _maybe_broadcast_delivery_for_order() only actually broadcasts (sets delivery_broadcast_at)
-    once EVERY leg on a split order is ready. Without this filter, a still-half-ready combined
-    pickup — one pharmacy done, the other not — would already show up here and be acceptable,
-    defeating the entire point of waiting for every leg."""
+
+class DeliveryRequestListView(APIView):
+    """Available-to-accept, unclaimed deliveries — every fulfillment this specific agent currently
+    qualifies for, per the same live eligibility check delivery_agent_accept() uses.
+
+    Rider dispatch happens as soon as an order is PLACED (see broadcast_delivery()'s docstring),
+    well before a pharmacy has necessarily finished packing — so this now includes any non-claimed
+    fulfillment from ACCEPTED through AWAITING_DELIVERY, not just AWAITING_DELIVERY. delivery_agent
+    __isnull=True is what "not yet claimed" means now — status alone no longer tells you that,
+    since a fulfillment can sit in any of these stages either with or without a rider already
+    assigned (see _maybe_finalize_pickup())."""
     permission_classes = [IsDeliveryAgent]
 
     def get(self, request):
@@ -4634,7 +4637,7 @@ class DeliveryRequestListView(APIView):
         # reasoning re: widen_stale_priority_broadcasts()).
         expire_stale_delivery_broadcasts()
         candidates = OrderFulfillment.objects.filter(
-            status='AWAITING_DELIVERY', delivery_broadcast_at__isnull=False,
+            status__in=PRE_PICKUP_STATUSES, delivery_broadcast_at__isnull=False, delivery_agent__isnull=True,
         ).select_related('pharmacy', 'order__address').prefetch_related('order_items__medicine')
         eligible = [f for f in candidates if _agent_eligible_for(agent, f)]
         return Response({'success': True, 'data': {'requests': DeliveryFulfillmentSerializer(eligible, many=True).data}})
@@ -4645,7 +4648,7 @@ class DeliveryRequestAcceptView(APIView):
 
     def post(self, request, pk):
         try:
-            fulfillment = OrderFulfillment.objects.get(pk=pk, status='AWAITING_DELIVERY')
+            fulfillment = OrderFulfillment.objects.get(pk=pk, status__in=PRE_PICKUP_STATUSES)
         except OrderFulfillment.DoesNotExist:
             return Response({'success': False, 'message': 'Delivery not found or no longer available.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -4657,12 +4660,16 @@ class DeliveryRequestAcceptView(APIView):
 
 class DeliveryActiveListView(APIView):
     """This agent's own active deliveries — scoped by delivery_agent=request.user.delivery_agent,
-    the ownership boundary that only exists once a fulfillment has actually been won."""
+    the ownership boundary that only exists once a fulfillment has actually been won.
+
+    Includes the pre-pickup statuses now too, not just OUT_FOR_DELIVERY — a rider can be committed
+    to a job well before it's physically ready (see delivery_agent_accept()/_maybe_finalize_pickup()),
+    and needs to see it here (not just in Requests) once they've accepted it."""
     permission_classes = [IsDeliveryAgent]
 
     def get(self, request):
         fulfillments = OrderFulfillment.objects.filter(
-            delivery_agent=request.user.delivery_agent, status='OUT_FOR_DELIVERY',
+            delivery_agent=request.user.delivery_agent, status__in=(*PRE_PICKUP_STATUSES, 'OUT_FOR_DELIVERY'),
         ).select_related('order__address', 'pharmacy').prefetch_related('order_items__medicine').order_by('accepted_at')
         return Response({'success': True, 'data': {'deliveries': DeliveryActiveSerializer(fulfillments, many=True).data}})
 

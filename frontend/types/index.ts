@@ -312,6 +312,7 @@ export interface TrackingFulfillment {
   status: string
   pharmacy_name: string | null
   agent: TrackingAgent | null
+  assigned_agent_name: string | null
   distance_km?: number
   eta_minutes?: number
 }
@@ -644,6 +645,7 @@ export interface DeliveryFulfillmentItem {
 export interface DeliveryFulfillment {
   id: string
   order_id: string
+  status: string
   pharmacy_name: string
   pharmacy_address: string
   pharmacy_lat: number

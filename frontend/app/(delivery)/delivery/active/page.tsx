@@ -122,10 +122,17 @@ export default function DeliveryActivePage() {
                   <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${isCod ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
                     {isCod ? 'Collect Cash on Delivery' : 'Already Paid Online'}
                   </span>
-                  <button onClick={() => complete(d)} disabled={completingId === d.id}
-                    className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
-                    {isCod ? 'Confirm Cash Collected' : 'Mark Delivered'}
-                  </button>
+                  {d.status === 'OUT_FOR_DELIVERY' ? (
+                    <button onClick={() => complete(d)} disabled={completingId === d.id}
+                      className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
+                      {isCod ? 'Confirm Cash Collected' : 'Mark Delivered'}
+                    </button>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-600">
+                      <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>storefront</span>
+                      Heading to pharmacy — pharmacy is still preparing this order
+                    </span>
+                  )}
                 </div>
               </div>
             )

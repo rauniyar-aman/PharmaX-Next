@@ -146,10 +146,17 @@ function TrackingPanel({ order, onClose }: { order: any; onClose: () => void }) 
                     </div>
                   )}
                   {t.status === 'AWAITING_DELIVERY' && (
-                    <p className="mt-2 text-[11px] text-blue-600 flex items-center gap-1">
-                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
-                      Waiting for a nearby rider to accept this delivery
-                    </p>
+                    t.assigned_agent_name ? (
+                      <p className="mt-2 text-[11px] text-primary flex items-center gap-1">
+                        <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>sports_motorsports</span>
+                        {t.assigned_agent_name} is assigned and heading to pick up this order
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-[11px] text-blue-600 flex items-center gap-1">
+                        <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
+                        Waiting for a nearby rider to accept this delivery
+                      </p>
+                    )
                   )}
                 </div>
               )

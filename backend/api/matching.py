@@ -334,8 +334,12 @@ def pharmacy_advance_fulfillment(pharmacy, fulfillment):
     if next_status == 'AWAITING_DELIVERY':
         fulfillment.status = next_status
         fulfillment.save(update_fields=['status'])
-        # Doesn't broadcast to riders on its own — see _maybe_broadcast_delivery_for_order()'s
-        # docstring for why a split order waits on every pharmacy leg before any of them go out.
+        # _maybe_finalize_pickup() handles "a rider was already assigned earlier (rider dispatch
+        # now happens at PLACED, well before packing) and this was the last leg to finish" — the
+        # handoff completes right here if so. _maybe_broadcast_delivery_for_order() is now only a
+        # defensive backstop (see its docstring) for orders that reached PLACED before this
+        # broadcast-timing change was deployed.
+        _maybe_finalize_pickup(fulfillment.order)
         _maybe_broadcast_delivery_for_order(fulfillment.order)
         return True, None
 
@@ -377,51 +381,64 @@ def expire_stale_fulfillment_requests():
     return expired_count, unfulfillable_item_ids
 
 
-def _maybe_broadcast_delivery_for_order(order):
-    """Gates broadcast_delivery() so a split order across N pharmacies only ever goes out as ONE
-    combined pickup job for a single rider, not N independent broadcasts that different riders
-    could pick off piecemeal (the exact bug that prompted this: a real 3-item order split across
-    two pharmacies, and the first one to finish packing would previously have been broadcast to
-    riders immediately, on its own, regardless of whether the other pharmacy had even started).
+def _all_legs_awaiting_delivery(order):
+    """True once every non-CANCELLED OrderFulfillment on the order has independently reached
+    AWAITING_DELIVERY — i.e. every pharmacy has explicitly confirmed it's physically packed and
+    ready to hand off. Shared predicate for _maybe_broadcast_delivery_for_order() (the legacy/
+    backstop gate) and _maybe_finalize_pickup() (the handoff gate) — both need the exact same bar,
+    just for different purposes."""
+    fulfillments = list(order.fulfillments.exclude(status='CANCELLED'))
+    return bool(fulfillments) and all(f.status == 'AWAITING_DELIVERY' for f in fulfillments)
 
-    Looks at every non-CANCELLED OrderFulfillment on the order. If any hasn't independently
-    reached AWAITING_DELIVERY yet, does nothing — a fulfillment that gets there first just sits
-    with its status set but delivery_broadcast_at still None (so
-    expire_stale_delivery_broadcasts(), which only compares delivery_broadcast_at, correctly never
-    flags it as a stale broadcast — nothing has actually been broadcast yet). Once every leg is
-    ready, broadcasts all of them.
+
+def _maybe_broadcast_delivery_for_order(order):
+    """DEFENSIVE BACKSTOP ONLY as of the rider-dispatch-timing change — the real broadcast trigger
+    is now sync_order_status()'s AWAITING_PAYMENT -> PLACED transition (broadcasts the moment
+    every leg is known and payment is confirmed, not after packing). This function still exists,
+    called from pharmacy_advance_fulfillment()'s PACKED -> AWAITING_DELIVERY step, purely to cover
+    any order that reached PLACED before that change was deployed (already past the transition
+    that would have broadcast it) — without this, such an order's delivery would never get
+    broadcast at all. In the normal post-deploy case every fulfillment here already has
+    delivery_broadcast_at set from Part A, so the `is None` check below makes this a no-op.
+
+    Still requires every non-CANCELLED leg to be AWAITING_DELIVERY before broadcasting any of them
+    (see _all_legs_awaiting_delivery()) — a split order should never have one leg silently
+    broadcast on its own while a sibling leg hasn't even been asked yet.
 
     KNOWN GAP, accepted for now, not an oversight: if no single delivery agent is ever verified,
     online, AND within BROADCAST_RADIUS_KM of EVERY pharmacy in the set (see
     _agent_eligible_for()'s docstring for why that's the right bar), this combined job can sit
-    AWAITING_DELIVERY indefinitely with nobody ever eligible to accept it — there is currently no
+    unclaimed indefinitely with nobody ever eligible to accept it — there is currently no
     fallback that re-splits it back into independently-broadcast legs.
     expire_stale_delivery_broadcasts() only REPORTS a stale broadcast for admin follow-up, it
     doesn't recover one. Expected to be rare in practice (pharmacies both within
     BROADCAST_RADIUS_KM of the same customer are usually reasonably close to each other too), but
     a real limitation worth remembering if delivery pickups start silently stalling.
     """
-    fulfillments = list(order.fulfillments.exclude(status='CANCELLED'))
-    if not fulfillments or any(f.status != 'AWAITING_DELIVERY' for f in fulfillments):
+    if not _all_legs_awaiting_delivery(order):
         return
-    for f in fulfillments:
+    for f in order.fulfillments.exclude(status='CANCELLED'):
         if f.delivery_broadcast_at is None:
             broadcast_delivery(f)
 
 
 def broadcast_delivery(fulfillment):
-    """Marks one OrderFulfillment (already AWAITING_DELIVERY — see
-    _maybe_broadcast_delivery_for_order(), the only caller) as actually broadcast, and notifies
-    every currently-eligible DeliveryAgent (_agent_eligible_for() — verified, online, and within
-    BROADCAST_RADIUS_KM of every pharmacy on this fulfillment's order, not just this one leg's).
+    """Marks one OrderFulfillment as broadcast to riders, and notifies every currently-eligible
+    DeliveryAgent (_agent_eligible_for() — verified, online, and within BROADCAST_RADIUS_KM of
+    every pharmacy on this fulfillment's order, not just this one leg's). Called from
+    sync_order_status()'s AWAITING_PAYMENT -> PLACED transition (the real trigger — as soon as
+    payment is confirmed and the leg set is known, regardless of prep status) and, as a backstop,
+    from _maybe_broadcast_delivery_for_order(). Does NOT require or imply the fulfillment is
+    AWAITING_DELIVERY — a rider can see and accept this job while it's still ACCEPTED/PREPARED/
+    PACKED; see delivery_agent_accept() and _maybe_finalize_pickup() for what happens once a rider
+    commits versus once the physical handoff actually completes.
 
-    Unlike broadcast_order()/FulfillmentRequest, there's no per-agent request row: any eligible
-    agent can call delivery_agent_accept() at any time while status stays AWAITING_DELIVERY —
-    eligibility is re-checked live at accept time instead of being frozen at broadcast time.
-    Called once per leg on a split order (so a 2-pharmacy order fires this twice) — each pharmacy
-    still gets its own "ready for pickup" admin notification either way, which is the simpler
-    option explicitly allowed over a single merged notification. Returns the list of notified
-    DeliveryAgent ids.
+    Unlike broadcast_order()/FulfillmentRequest, there's no per-agent request row: any eligible,
+    unclaimed agent can call delivery_agent_accept() at any time — eligibility is re-checked live
+    at accept time instead of being frozen at broadcast time. Called once per leg on a split order
+    (so a 2-pharmacy order fires this twice) — each pharmacy still gets its own admin notification
+    either way, which is the simpler option explicitly allowed over a single merged notification.
+    Returns the list of notified DeliveryAgent ids.
     """
     fulfillment.delivery_broadcast_at = timezone.now()
     fulfillment.save(update_fields=['delivery_broadcast_at'])
@@ -430,8 +447,8 @@ def broadcast_delivery(fulfillment):
     if pharmacy is not None:
         from .views import _notify_admins
         _notify_admins(
-            'manage_orders', 'FULFILLMENT_UPDATE', 'Order Ready for Pickup',
-            f'{pharmacy.name} has order #{str(fulfillment.order_id)[:8]} packed and ready for a rider.',
+            'manage_orders', 'FULFILLMENT_UPDATE', 'Delivery Job Broadcast',
+            f'{pharmacy.name} is preparing order #{str(fulfillment.order_id)[:8]} — broadcast to nearby riders.',
             link=f'/admin/orders/{fulfillment.order_id}',
         )
     if pharmacy is None or pharmacy.lat is None or pharmacy.lng is None:
@@ -488,38 +505,35 @@ def _agent_eligible_for(agent, fulfillment):
 
 
 @transaction.atomic
-def delivery_agent_accept(agent, fulfillment):
-    """First-accept-wins, same pattern as pharmacy_accept_item(): locks every non-CANCELLED
-    OrderFulfillment on the SAME order (not just the one the rider clicked), ordered by `id` for
-    consistent lock ordering — avoids deadlocking against another rider racing a different leg of
-    the same split order — so accepting one leg atomically assigns every leg on the order to this
-    one agent. One rider covers the whole order, never just the fulfillment they happened to
-    click; see _maybe_broadcast_delivery_for_order() for why every leg is guaranteed to already be
-    AWAITING_DELIVERY together by the time any of them is broadcast, and _agent_eligible_for() for
-    why eligibility requires proximity to every pharmacy in the set, not just one.
+def _maybe_finalize_pickup(order):
+    """The actual physical-handoff gate, decoupled from delivery_agent_accept() so it can fire
+    from either side of a race between "rider commits" and "pharmacy finishes packing" —
+    whichever happens second is what completes the handoff. Locks every non-CANCELLED
+    OrderFulfillment on the order (order_by('id'), same lock ordering delivery_agent_accept() and
+    pharmacy_advance_fulfillment() both use, so the two can't deadlock racing the same order).
+
+    Finalizes (flips every leg to OUT_FOR_DELIVERY and fires the "picked up" notifications) only
+    once ALL non-CANCELLED legs share the same assigned delivery_agent AND are all
+    AWAITING_DELIVERY (_all_legs_awaiting_delivery()) — i.e. a rider is genuinely committed to
+    every leg AND every pharmacy has confirmed physical readiness. Returns True if it finalized,
+    False otherwise (still waiting on one side or the other).
     """
-    fulfillment_ids = list(
-        OrderFulfillment.objects.filter(order_id=fulfillment.order_id).exclude(status='CANCELLED')
-        .order_by('id').values_list('id', flat=True)
-    )
     fulfillments = list(
-        OrderFulfillment.objects.select_for_update().filter(id__in=fulfillment_ids).order_by('id')
+        OrderFulfillment.objects.select_for_update()
+        .filter(order_id=order.id).exclude(status='CANCELLED').order_by('id')
     )
+    if not fulfillments:
+        return False
 
-    # delivery_broadcast_at, not just status: a leg reaches AWAITING_DELIVERY the moment its OWN
-    # pharmacy finishes packing, but isn't actually broadcast (and shouldn't be acceptable) until
-    # _maybe_broadcast_delivery_for_order() confirms every sibling leg is ready too — same reason
-    # DeliveryRequestListView filters on both fields, not just status.
-    if not fulfillments or any(f.status != 'AWAITING_DELIVERY' or f.delivery_broadcast_at is None for f in fulfillments):
-        return False, 'This delivery is no longer available.'
-
-    if not _agent_eligible_for(agent, fulfillments[0]):
-        return False, 'You are not eligible to accept this delivery (must be verified, online, and near every pharmacy in this pickup).'
+    agent = fulfillments[0].delivery_agent
+    if agent is None or any(f.delivery_agent_id != agent.id for f in fulfillments):
+        return False
+    if any(f.status != 'AWAITING_DELIVERY' for f in fulfillments):
+        return False
 
     for f in fulfillments:
-        f.delivery_agent = agent
         f.status = 'OUT_FOR_DELIVERY'
-        f.save(update_fields=['delivery_agent', 'status'])
+        f.save(update_fields=['status'])
 
     from .views import _notify_admins
     pharmacy_names = ', '.join(f.pharmacy.name for f in fulfillments if f.pharmacy_id) or 'the pharmacy'
@@ -547,6 +561,64 @@ def delivery_agent_accept(agent, fulfillment):
                 link='/pharmacy/orders',
             )
 
+    return True
+
+
+@transaction.atomic
+def delivery_agent_accept(agent, fulfillment):
+    """First-accept-wins, same pattern as pharmacy_accept_item(): locks every non-CANCELLED
+    OrderFulfillment on the SAME order (not just the one the rider clicked), ordered by `id` for
+    consistent lock ordering — avoids deadlocking against another rider racing a different leg of
+    the same split order — so accepting one leg atomically assigns every leg on the order to this
+    one agent. One rider covers the whole order, never just the fulfillment they happened to
+    click; see _agent_eligible_for() for why eligibility requires proximity to every pharmacy in
+    the set, not just one.
+
+    Since rider dispatch now happens as soon as the order is PLACED (see broadcast_delivery()'s
+    docstring), a job can be accepted well before any leg has actually finished packing — this
+    only COMMITS the rider (sets delivery_agent on every leg) and does NOT assume a physical
+    pickup has happened. _maybe_finalize_pickup() is the only thing that ever flips status to
+    OUT_FOR_DELIVERY, whether that happens right here (packing already finished before this
+    accept — the old-timing case) or later from pharmacy_advance_fulfillment() (this accept
+    happened first, and a pharmacy finishing packing is what completes the handoff).
+    """
+    fulfillment_ids = list(
+        OrderFulfillment.objects.filter(order_id=fulfillment.order_id).exclude(status='CANCELLED')
+        .order_by('id').values_list('id', flat=True)
+    )
+    fulfillments = list(
+        OrderFulfillment.objects.select_for_update().filter(id__in=fulfillment_ids).order_by('id')
+    )
+
+    # delivery_broadcast_at, not just status: a job is only acceptable once it's actually been
+    # broadcast (see broadcast_delivery()) and not already claimed by another rider — no longer
+    # tied to AWAITING_DELIVERY, since a rider can now commit well before packing finishes.
+    if not fulfillments or any(
+        f.status in ('OUT_FOR_DELIVERY', 'DELIVERED') or f.delivery_broadcast_at is None or f.delivery_agent_id is not None
+        for f in fulfillments
+    ):
+        return False, 'This delivery is no longer available.'
+
+    if not _agent_eligible_for(agent, fulfillments[0]):
+        return False, 'You are not eligible to accept this delivery (must be verified, online, and near every pharmacy in this pickup).'
+
+    for f in fulfillments:
+        f.delivery_agent = agent
+        f.save(update_fields=['delivery_agent'])
+
+    finalized = _maybe_finalize_pickup(fulfillment.order)
+    if not finalized:
+        # Not physically ready yet — this is the "committed, heading to pharmacy" moment, distinct
+        # from "Out for Delivery" (that notification, and the admin/pharmacy ones, only fire once
+        # _maybe_finalize_pickup() actually completes the handoff — firing them here too would be
+        # a customer-facing lie about a pickup that hasn't happened, and would double-notify in
+        # the case where packing had already finished before this accept).
+        Notification.objects.create(
+            user=fulfillment.order.user, type='ORDER_UPDATE', title='Rider Assigned',
+            message=f'{agent.user.full_name} has been assigned to order #{str(fulfillment.order_id)[:8]} and is heading to pick it up.',
+            link=f'/orders/{fulfillment.order_id}',
+        )
+
     return True, None
 
 
@@ -561,12 +633,21 @@ def update_agent_location(agent, lat, lng):
 def _tracking_payload(fulfillment):
     """Shared shape returned by all three tracking endpoints below. Agent location/distance/ETA
     only make sense once a rider is actually en route — before that (or after DELIVERED) `agent`
-    is just null, not stale coordinates from whenever they last updated their location."""
+    is just null, not stale coordinates from whenever they last updated their location.
+
+    assigned_agent_name, unlike `agent`, is populated as soon as a rider is committed to this leg
+    (see delivery_agent_accept()), regardless of whether they've physically picked it up yet — a
+    rider can now be assigned well before AWAITING_DELIVERY. This is deliberately just a name, not
+    live location/ETA (that's a live-map-before-pickup enhancement, out of scope here) — it exists
+    only so tracking pages can correctly say "a rider is already assigned" instead of "waiting for
+    a nearby rider" during ACCEPTED/PREPARED/PACKED.
+    """
     agent = fulfillment.delivery_agent
     data = {
         'fulfillment_id': str(fulfillment.id),
         'status': fulfillment.status,
         'pharmacy_name': fulfillment.pharmacy.name if fulfillment.pharmacy else None,
+        'assigned_agent_name': agent.user.full_name if agent else None,
     }
     if agent and fulfillment.status == 'OUT_FOR_DELIVERY':
         data['agent'] = {
@@ -642,11 +723,19 @@ def mark_delivered(fulfillment):
 
 
 def expire_stale_delivery_broadcasts():
-    """Reports (does not auto-retry) OrderFulfillments that have sat in AWAITING_DELIVERY longer
-    than BROADCAST_WINDOW_MINUTES with no rider accepting. There's no per-agent request row to
-    flip to EXPIRED here — AWAITING_DELIVERY already means "still up for grabs" — so this is purely
-    a visibility report for admin follow-up (e.g. manually re-broadcasting or widening the radius),
-    not a state change of its own.
+    """Reports (does not auto-retry) OrderFulfillments that were broadcast to riders more than
+    BROADCAST_WINDOW_MINUTES ago and still haven't been claimed by anyone. Keyed on
+    delivery_agent__isnull=True rather than status='AWAITING_DELIVERY': since rider dispatch now
+    happens as soon as an order is PLACED (see broadcast_delivery()'s docstring), a leg can be
+    broadcast well before it's actually packed — a status='AWAITING_DELIVERY' filter would
+    either miss a still-prepping-but-long-unclaimed job entirely, or (worse) fire a "ready for
+    pickup ... no rider accepting" alarm on a job that only just became physically ready,
+    misreporting how long it's genuinely been sitting unclaimed. delivery_agent__isnull=True is
+    the actual "nobody wants this yet" signal, independent of prep stage. There's no per-agent
+    request row to flip to EXPIRED here — this is purely a visibility report for admin follow-up
+    (e.g. manually re-broadcasting or widening the radius), not a state change of its own.
+    Excludes CANCELLED/DELIVERED explicitly — without it, a CANCELLED leg that was broadcast but
+    never claimed before cancellation would falsely re-enter this query forever.
 
     Called opportunistically from already-polled endpoints (DeliveryRequestListView,
     PharmacyRequestListView), same infrastructure-free trigger pattern as
@@ -656,8 +745,8 @@ def expire_stale_delivery_broadcasts():
     re-notify every few seconds for as long as nobody accepts it.
     """
     cutoff = timezone.now() - timedelta(minutes=BROADCAST_WINDOW_MINUTES)
-    stale = list(OrderFulfillment.objects.filter(
-        status='AWAITING_DELIVERY', delivery_broadcast_at__lt=cutoff,
+    stale = list(OrderFulfillment.objects.exclude(status__in=['CANCELLED', 'DELIVERED']).filter(
+        delivery_agent__isnull=True, delivery_broadcast_at__lt=cutoff,
     ).select_related('pharmacy'))
 
     unnotified = [f for f in stale if f.delivery_stale_notified_at is None]
@@ -668,8 +757,8 @@ def expire_stale_delivery_broadcasts():
             pharmacy_name = f.pharmacy.name if f.pharmacy else 'a pharmacy'
             _notify_admins(
                 'manage_orders', 'FULFILLMENT_UPDATE', 'No Rider Accepted Pickup',
-                f'Order #{str(f.order_id)[:8]} has been ready for pickup at {pharmacy_name} for '
-                f'over {BROADCAST_WINDOW_MINUTES} minutes with no rider accepting.',
+                f'Order #{str(f.order_id)[:8]} at {pharmacy_name} has not been accepted by any '
+                f'rider for over {BROADCAST_WINDOW_MINUTES} minutes since being offered.',
                 link=f'/admin/orders/{f.order_id}',
             )
         OrderFulfillment.objects.filter(id__in=[f.id for f in unnotified]).update(delivery_stale_notified_at=now)
@@ -792,10 +881,19 @@ def sync_order_status(order):
                 message=f'Your order #{str(order.id)[:8]} has been placed successfully.',
                 link=f'/orders/{order.id}',
             )
-            # NOT auto-broadcasting to riders here anymore — see pharmacy_advance_fulfillment().
-            # A fulfillment only reaches AWAITING_DELIVERY once the pharmacy manually advances it
-            # through PREPARED -> PACKED -> (broadcast), and that last step itself checks this
-            # order is PLACED (payment confirmed) before it's allowed to go out to riders.
+            # Broadcast to riders right here, the moment payment is confirmed — not after the
+            # pharmacy finishes physically packing (pharmacy_advance_fulfillment() used to be the
+            # only trigger). Every fulfillment on this order already exists at this point (created
+            # by pharmacy_accept_item() while the order was still BROADCASTING) and the full leg
+            # set is finalized, so there's nothing left to wait for — a rider can be traveling
+            # toward the pharmacy while it preps, instead of only learning the job exists once
+            # everything is already packed and staged. broadcast_delivery() itself doesn't assert
+            # anything about fulfillment.status; the `is None` guard here (mirroring
+            # _maybe_broadcast_delivery_for_order()) is what keeps this idempotent, since this
+            # branch has no select_for_update() on `order` to fully rule out a concurrent re-fire.
+            for fulfillment in order.fulfillments.exclude(status='CANCELLED'):
+                if fulfillment.delivery_broadcast_at is None:
+                    broadcast_delivery(fulfillment)
 
     elif order.status == 'PLACED':
         if _all_fulfillments_delivered(order):
