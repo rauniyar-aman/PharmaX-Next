@@ -6,6 +6,8 @@ import { resolveImg } from '@/lib/resolveImg'
 import type { Order } from '@/types'
 
 const STATUS_COLORS: Record<string, string> = {
+  BROADCASTING: 'bg-surface-container text-on-surface-variant',
+  AWAITING_PAYMENT: 'bg-amber-50 text-amber-600',
   PLACED: 'bg-blue-50 text-blue-600',
   CONFIRMED: 'bg-secondary/10 text-secondary',
   PROCESSING: 'bg-amber-50 text-amber-600',
@@ -17,6 +19,8 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const STATUS_ICONS: Record<string, string> = {
+  BROADCASTING: 'wifi_tethering',
+  AWAITING_PAYMENT: 'hourglass_top',
   PLACED: 'receipt_long',
   CONFIRMED: 'check_circle',
   PROCESSING: 'inventory_2',
