@@ -921,7 +921,7 @@ class DeliveryFulfillmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderFulfillment
         fields = [
-            'id', 'order_id', 'pharmacy_name', 'pharmacy_address', 'pharmacy_lat', 'pharmacy_lng',
+            'id', 'order_id', 'status', 'pharmacy_name', 'pharmacy_address', 'pharmacy_lat', 'pharmacy_lng',
             'city', 'items', 'delivery_broadcast_at',
         ]
 

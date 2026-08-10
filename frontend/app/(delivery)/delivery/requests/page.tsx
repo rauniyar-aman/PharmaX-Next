@@ -7,6 +7,11 @@ import type { DeliveryFulfillment } from '@/types'
 
 const POLL_INTERVAL_MS = 4000
 
+// Rider dispatch now happens as soon as an order is PLACED — well before a pharmacy has
+// necessarily finished packing — so this list mixes genuinely-ready jobs with still-mid-prep
+// ones. A rider accepting early just means "heading to pharmacy," not "ready to grab and go."
+const READY_STATUSES = new Set(['AWAITING_DELIVERY'])
+
 export default function DeliveryRequestsPage() {
   const router = useRouter()
   const [requests, setRequests] = useState<DeliveryFulfillment[]>([])
@@ -48,7 +53,7 @@ export default function DeliveryRequestsPage() {
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-on-surface">Available Deliveries</h1>
-        <p className="text-sm text-on-surface-variant mt-1">Pharmacy pickups near you, ready to go. Updates automatically.</p>
+        <p className="text-sm text-on-surface-variant mt-1">Pharmacy pickups near you — some still preparing, some ready now. Updates automatically.</p>
       </div>
 
       {loading ? (
@@ -62,12 +67,20 @@ export default function DeliveryRequestsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
-          {requests.map((req) => (
+          {requests.map((req) => {
+            const ready = READY_STATUSES.has(req.status)
+            return (
             <div key={req.id} className="bg-surface rounded-2xl border border-outline-variant p-4 space-y-3">
-              <div>
-                <p className="text-xs font-semibold text-primary uppercase tracking-wide">Pickup</p>
-                <p className="text-sm font-bold text-on-surface">{req.pharmacy_name}</p>
-                <p className="text-xs text-on-surface-variant">{req.pharmacy_address}</p>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-primary uppercase tracking-wide">Pickup</p>
+                  <p className="text-sm font-bold text-on-surface">{req.pharmacy_name}</p>
+                  <p className="text-xs text-on-surface-variant">{req.pharmacy_address}</p>
+                </div>
+                <span className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full whitespace-nowrap ${ready ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                  <span className="material-symbols-outlined ms-filled" style={{ fontSize: '12px' }}>{ready ? 'inventory_2' : 'hourglass_top'}</span>
+                  {ready ? 'Ready now' : 'Still preparing'}
+                </span>
               </div>
               <div className="text-xs text-on-surface-variant space-y-0.5">
                 {req.items.map((item, i) => (
@@ -83,7 +96,8 @@ export default function DeliveryRequestsPage() {
                 Accept
               </button>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

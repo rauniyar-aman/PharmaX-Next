@@ -244,7 +244,7 @@ export default function PharmacyOrdersPage() {
                       </p>
                     )}
                   </div>
-                ) : o.status === 'AWAITING_DELIVERY' && (
+                ) : o.status === 'AWAITING_DELIVERY' && !o.delivery_agent_name && (
                   <p className="mt-2 text-[11px] text-blue-600 flex items-center gap-1">
                     <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
                     Waiting for a nearby rider to accept this delivery
