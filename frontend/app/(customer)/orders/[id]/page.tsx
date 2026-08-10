@@ -1,15 +1,29 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
 import type { Order } from '@/types'
 
-const STEPS = ['PLACED', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED']
+// The actual marketplace order lifecycle — sync_order_status() only ever moves an Order through
+// these four statuses. CONFIRMED/PROCESSING/SHIPPED/OUT_FOR_DELIVERY exist in the model's choices
+// but are never set by the live flow, so a tracker built around them (as this used to be) never
+// highlights anything for BROADCASTING/AWAITING_PAYMENT and sits frozen on "Placed" for the
+// entire multi-day window between payment and delivery. The fulfillments list below fills that
+// gap with real per-pharmacy-leg progress.
+const STEPS = ['BROADCASTING', 'AWAITING_PAYMENT', 'PLACED', 'DELIVERED']
+const STEP_LABELS: Record<string, string> = {
+  BROADCASTING: 'Finding Pharmacies',
+  AWAITING_PAYMENT: 'Awaiting Payment',
+  PLACED: 'Order Placed',
+  DELIVERED: 'Delivered',
+}
 
 const STATUS_COLORS: Record<string, string> = {
+  BROADCASTING: 'bg-surface-container text-on-surface-variant',
+  AWAITING_PAYMENT: 'bg-amber-50 text-amber-600',
   PLACED: 'bg-blue-50 text-blue-600',
   CONFIRMED: 'bg-secondary/10 text-secondary',
   PROCESSING: 'bg-amber-50 text-amber-600',
@@ -20,10 +34,23 @@ const STATUS_COLORS: Record<string, string> = {
   RETURNED: 'bg-error/10 text-error',
 }
 
+const FULFILLMENT_STATUS_CFG: Record<string, { label: string; color: string; icon: string }> = {
+  BROADCASTING:       { label: 'Awaiting Pharmacy',  color: 'bg-surface-container text-on-surface-variant', icon: 'wifi_tethering' },
+  ACCEPTED:           { label: 'Preparing',           color: 'bg-amber-50 text-amber-600',      icon: 'inventory' },
+  PREPARED:           { label: 'Prepared',            color: 'bg-amber-50 text-amber-600',      icon: 'task_alt' },
+  PACKED:             { label: 'Packed',              color: 'bg-blue-50 text-blue-600',        icon: 'inventory_2' },
+  NO_PHARMACY_FOUND:  { label: 'No Pharmacy Found',   color: 'bg-error/10 text-error',          icon: 'help' },
+  AWAITING_DELIVERY:  { label: 'Ready for Pickup',    color: 'bg-blue-50 text-blue-600',        icon: 'hourglass_top' },
+  OUT_FOR_DELIVERY:   { label: 'Out for Delivery',    color: 'bg-indigo-50 text-indigo-600',    icon: 'sports_motorsports' },
+  DELIVERED:          { label: 'Delivered',           color: 'bg-emerald-50 text-emerald-600',  icon: 'check_circle' },
+  CANCELLED:          { label: 'Cancelled',           color: 'bg-error/10 text-error',          icon: 'cancel' },
+}
+
 interface MedRating { rating: number; comment: string; existing: boolean }
 
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const router = useRouter()
   const [order, setOrder] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
   const [cancelling, setCancelling] = useState(false)
@@ -68,6 +95,15 @@ export default function OrderDetailPage() {
     }
   }
 
+  const handleCompletePayment = () => {
+    if (!order) return
+    // Resumes the same /checkout/payment flow used right after checkout — it only needs
+    // checkoutOrderId (the order + address are already persisted server-side).
+    sessionStorage.setItem('checkoutAllowed', '1')
+    sessionStorage.setItem('checkoutOrderId', order.id)
+    router.push('/checkout/payment')
+  }
+
   const handleRateOrder = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!order || !orderRating) return
@@ -103,8 +139,16 @@ export default function OrderDetailPage() {
 
   const currentStep = STEPS.indexOf(order.status)
   const isCancelled = order.status === 'CANCELLED' || order.status === 'RETURNED'
-  const canCancel = ['PLACED', 'CONFIRMED'].includes(order.status)
+  const canCancel = ['BROADCASTING', 'AWAITING_PAYMENT', 'PLACED', 'CONFIRMED'].includes(order.status)
   const isDelivered = order.status === 'DELIVERED'
+  const awaitingPayment = order.status === 'AWAITING_PAYMENT'
+  const totalPending = awaitingPayment && Number(order.total_amount) === 0
+  // AWAITING_PAYMENT just means "every item got a final answer" — it does NOT mean a pharmacy
+  // accepted something. If nothing was accepted, no OrderFulfillment (and so no fulfillments
+  // entry) was ever created, and paying would just fail server-side, so that path needs its own
+  // "nothing to pay for, cancel instead" messaging rather than the misleading "confirmed" banner.
+  const hasAcceptedItems = !!order.fulfillments?.length
+  const nothingAccepted = awaitingPayment && !hasAcceptedItems
 
   return (
     <div className="space-y-5 max-w-3xl">
@@ -123,6 +167,20 @@ export default function OrderDetailPage() {
           <span className={`px-4 py-1.5 rounded-full text-sm font-semibold ${STATUS_COLORS[order.status] || 'bg-surface-container text-on-surface-variant'}`}>
             {order.status.replace(/_/g, ' ')}
           </span>
+          {awaitingPayment && hasAcceptedItems && (
+            <button onClick={handleCompletePayment}
+              className="px-4 py-1.5 bg-primary text-on-primary text-sm font-semibold rounded-full hover:opacity-90 transition-opacity flex items-center gap-1.5">
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>payments</span>
+              Complete Payment
+            </button>
+          )}
+          {hasAcceptedItems && !isCancelled && (
+            <Link href={`/orders/${order.id}/track`}
+              className="px-4 py-1.5 border border-primary/30 text-primary text-sm font-semibold rounded-full hover:bg-primary/10 transition-colors flex items-center gap-1.5">
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>location_on</span>
+              Track Live Location
+            </Link>
+          )}
           {canCancel && (
             <button onClick={handleCancel} disabled={cancelling}
               className="px-4 py-1.5 border border-error/30 text-error text-sm font-semibold rounded-full hover:bg-error/10 transition-colors disabled:opacity-60 flex items-center gap-1.5">
@@ -132,6 +190,24 @@ export default function OrderDetailPage() {
           )}
         </div>
       </div>
+
+      {awaitingPayment && hasAcceptedItems && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
+          <span className="material-symbols-outlined ms-filled text-amber-600" style={{ fontSize: '20px' }}>info</span>
+          <p className="text-sm text-amber-800">
+            A pharmacy has confirmed your items, but payment hasn't been completed yet — this order won't be prepared until you finish checkout.
+          </p>
+        </div>
+      )}
+
+      {nothingAccepted && (
+        <div className="bg-error/5 border border-error/20 rounded-2xl px-4 py-3 flex items-center gap-3">
+          <span className="material-symbols-outlined ms-filled text-error" style={{ fontSize: '20px' }}>error</span>
+          <p className="text-sm text-error">
+            No pharmacy near your delivery address accepted these items, so there's nothing to pay for. Cancel this order and try again.
+          </p>
+        </div>
+      )}
 
       {!isCancelled && (
         <div className="bg-surface rounded-2xl border border-outline-variant p-5">
@@ -149,7 +225,7 @@ export default function OrderDetailPage() {
                       <span className="text-xs">{i + 1}</span>
                     )}
                   </div>
-                  <p className="text-[10px] text-center text-on-surface-variant mt-1.5 max-w-[60px] leading-tight">{step.replace(/_/g, ' ')}</p>
+                  <p className="text-[10px] text-center text-on-surface-variant mt-1.5 max-w-[60px] leading-tight">{STEP_LABELS[step]}</p>
                 </div>
                 {i < STEPS.length - 1 && (
                   <div className={`flex-1 h-0.5 mx-1 mb-4 ${i < currentStep ? 'bg-primary' : 'bg-outline-variant'}`} />
@@ -157,6 +233,30 @@ export default function OrderDetailPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {!!order.fulfillments?.length && (
+        <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-2">
+          <p className="text-sm font-bold text-on-surface mb-1">Pharmacy Progress</p>
+          {order.fulfillments.map((f) => {
+            const cfg = FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+            return (
+              <div key={f.id} className="flex items-center justify-between gap-3 bg-surface-container-low rounded-xl px-3 py-2.5 flex-wrap">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-on-surface truncate">{f.pharmacy_name || 'Pharmacy'}</p>
+                  <p className="text-xs text-on-surface-variant truncate">
+                    {f.items.map((i) => `${i.medicine_name} × ${i.quantity}`).join(', ')}
+                    {f.delivery_agent_name ? ` · Rider: ${f.delivery_agent_name}` : ''}
+                  </p>
+                </div>
+                <span className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${cfg.color}`}>
+                  <span className="material-symbols-outlined ms-filled" style={{ fontSize: '13px' }}>{cfg.icon}</span>
+                  {cfg.label}
+                </span>
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -240,11 +340,17 @@ export default function OrderDetailPage() {
             )}
             <div className="flex justify-between font-bold text-on-surface border-t border-outline-variant pt-1.5">
               <span>Total</span>
-              <span>NPR {Number(order.total_amount).toFixed(0)}</span>
+              {nothingAccepted ? (
+                <span className="text-error font-semibold">Not applicable</span>
+              ) : totalPending ? (
+                <span className="text-amber-600 font-semibold">Pending payment</span>
+              ) : (
+                <span>NPR {Number(order.total_amount).toFixed(0)}</span>
+              )}
             </div>
             <div className="flex justify-between text-on-surface-variant pt-1">
               <span>Method</span>
-              <span className="text-on-surface capitalize">{order.payment_method?.replace(/_/g, ' ')}</span>
+              <span className="text-on-surface capitalize">{order.payment_method ? order.payment_method.replace(/_/g, ' ') : 'Not selected yet'}</span>
             </div>
             <div className="flex justify-between text-on-surface-variant">
               <span>Status</span>

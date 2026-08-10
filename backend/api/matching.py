@@ -38,8 +38,9 @@ BROADCAST_WINDOW_MINUTES = 10
 # falls back to broadcast_order()'s old per-item behavior (broadcasting to every eligible pharmacy
 # regardless of whether they cover the whole order) — see widen_stale_priority_broadcasts().
 # Deliberately much shorter than BROADCAST_WINDOW_MINUTES: this is a head start, not the whole
-# window an item can sit unanswered before it's unfulfillable.
-PRIORITY_WINDOW_MINUTES = 2
+# window an item can sit unanswered before it's unfulfillable. An explicit decline widens
+# immediately regardless of this window — see pharmacy_decline_item().
+PRIORITY_WINDOW_SECONDS = 30
 EARTH_RADIUS_KM = 6371.0
 
 
@@ -128,7 +129,7 @@ def broadcast_order(order):
     (the case that matters most) when NO pharmacy covers every item: an empty full-coverage pool
     can never become non-empty by waiting, so there's nothing to gain from a delay there.
     widen_stale_priority_broadcasts() is what promotes a genuinely-staged order to the full pool
-    once PRIORITY_WINDOW_MINUTES passes with no full-coverage acceptance.
+    once PRIORITY_WINDOW_SECONDS passes with no full-coverage acceptance.
     """
     result = {'broadcast': [], 'unfulfillable': []}
     address = order.address
@@ -160,6 +161,20 @@ def broadcast_order(order):
     return result
 
 
+def _widen_item_now(item):
+    """(Re-)broadcasts `item` to its FULL eligible pharmacy pool right now — not just whatever
+    full-coverage-only pool broadcast_order() may have started with. Shared by
+    widen_stale_priority_broadcasts() (time-based sweep) and pharmacy_decline_item() (immediate,
+    on an explicit decline). get_or_create inside _create_requests_for_item() makes this
+    idempotent: pharmacies already in the pool are untouched, only the gap gets added. Returns
+    True if the item ended up with at least one request."""
+    address = item.order.address
+    if address is None or address.lat is None or address.lng is None:
+        return False
+    listings = _eligible_pharmacies_for_item(item, address)
+    return _create_requests_for_item(item, listings)
+
+
 def widen_stale_priority_broadcasts():
     """Opportunistic top-up sweep for the full-coverage priority stage above — there's no real
     task scheduler anywhere in this project (the existing "admin/cron-callable"
@@ -168,16 +183,15 @@ def widen_stale_priority_broadcasts():
     introduced here), so this is instead called opportunistically from endpoints that are already
     polled every few seconds in practice (PharmacyRequestListView, OrderFulfillmentSummaryView).
     Known limitation: if literally nobody has a relevant page open, an order can sit in its
-    priority-only stage past PRIORITY_WINDOW_MINUTES until someone does — no worse than the
+    priority-only stage past PRIORITY_WINDOW_SECONDS until someone does — no worse than the
     pre-existing (also-orphaned) expiry mechanism this mirrors.
 
     For every still-unresolved OrderItem (no fulfillment yet) on a still-BROADCASTING order whose
-    oldest PENDING request has aged past the window, (re-)broadcasts to that item's FULL eligible
-    pool — not just whatever full-coverage-only pool broadcast_order() may have started with.
-    _create_requests_for_item()'s get_or_create makes this idempotent: pharmacies already in the
-    pool are untouched, only the gap (partial-coverage pharmacies) gets added.
+    oldest PENDING request has aged past the window, widens via _widen_item_now() above. An
+    explicit decline (see pharmacy_decline_item()) doesn't wait for this sweep at all — this is
+    purely for the passive "nobody responded" case.
     """
-    cutoff = timezone.now() - timedelta(minutes=PRIORITY_WINDOW_MINUTES)
+    cutoff = timezone.now() - timedelta(seconds=PRIORITY_WINDOW_SECONDS)
     stale_item_ids = FulfillmentRequest.objects.filter(
         status='PENDING', created_at__lt=cutoff,
     ).values_list('order_item_id', flat=True).distinct()
@@ -186,15 +200,7 @@ def widen_stale_priority_broadcasts():
         id__in=stale_item_ids, fulfillment__isnull=True, order__status='BROADCASTING',
     ).select_related('order__address', 'medicine')
 
-    widened_item_ids = []
-    for item in items:
-        address = item.order.address
-        if address is None or address.lat is None or address.lng is None:
-            continue
-        listings = _eligible_pharmacies_for_item(item, address)
-        if _create_requests_for_item(item, listings):
-            widened_item_ids.append(item.id)
-    return widened_item_ids
+    return [item.id for item in items if _widen_item_now(item)]
 
 
 @transaction.atomic
@@ -270,12 +276,27 @@ def pharmacy_decline_item(pharmacy, order_item):
 
     No select_for_update needed here: the single conditional UPDATE (WHERE status='PENDING') is
     already atomic — there's no read-then-branch-then-write gap to race on, unlike accept.
+
+    If this decline leaves the item with zero PENDING requests and still unresolved, widens to
+    its full eligible pool immediately rather than waiting on widen_stale_priority_broadcasts()'s
+    PRIORITY_WINDOW_SECONDS timer — a real bug this closes: the only pharmacy staged for a
+    full-coverage-priority item declining used to fall straight through to sync_order_status()
+    seeing "nothing left pending, nothing accepted" and marking the order NO_PHARMACY_FOUND before
+    a partial-coverage pharmacy was ever asked. A decline is a definitive "not interested," unlike
+    a timeout (which the window buffers for a slow-but-willing pharmacy), so there's nothing to
+    gain from waiting here.
     """
     updated = FulfillmentRequest.objects.filter(
         order_item=order_item, pharmacy=pharmacy, status='PENDING',
     ).update(status='DECLINED', responded_at=timezone.now())
     if not updated:
         return False, 'This request is no longer available.'
+
+    if order_item.fulfillment_id is None and not FulfillmentRequest.objects.filter(
+        order_item=order_item, status='PENDING',
+    ).exists():
+        _widen_item_now(order_item)
+
     sync_order_status(order_item.order)
     return True, None
 
@@ -625,12 +646,35 @@ def expire_stale_delivery_broadcasts():
     than BROADCAST_WINDOW_MINUTES with no rider accepting. There's no per-agent request row to
     flip to EXPIRED here — AWAITING_DELIVERY already means "still up for grabs" — so this is purely
     a visibility report for admin follow-up (e.g. manually re-broadcasting or widening the radius),
-    not a state change of its own."""
+    not a state change of its own.
+
+    Called opportunistically from already-polled endpoints (DeliveryRequestListView,
+    PharmacyRequestListView), same infrastructure-free trigger pattern as
+    widen_stale_priority_broadcasts() — see its docstring for why (no real task scheduler exists
+    anywhere in this project). delivery_stale_notified_at makes the admin notification fire once
+    per fulfillment, not on every poll: without it, a broadcast that's been stale for an hour would
+    re-notify every few seconds for as long as nobody accepts it.
+    """
     cutoff = timezone.now() - timedelta(minutes=BROADCAST_WINDOW_MINUTES)
-    stale = OrderFulfillment.objects.filter(
+    stale = list(OrderFulfillment.objects.filter(
         status='AWAITING_DELIVERY', delivery_broadcast_at__lt=cutoff,
-    )
-    return list(stale.values_list('id', flat=True))
+    ).select_related('pharmacy'))
+
+    unnotified = [f for f in stale if f.delivery_stale_notified_at is None]
+    if unnotified:
+        from .views import _notify_admins
+        now = timezone.now()
+        for f in unnotified:
+            pharmacy_name = f.pharmacy.name if f.pharmacy else 'a pharmacy'
+            _notify_admins(
+                'manage_orders', 'FULFILLMENT_UPDATE', 'No Rider Accepted Pickup',
+                f'Order #{str(f.order_id)[:8]} has been ready for pickup at {pharmacy_name} for '
+                f'over {BROADCAST_WINDOW_MINUTES} minutes with no rider accepting.',
+                link=f'/admin/orders/{f.order_id}',
+            )
+        OrderFulfillment.objects.filter(id__in=[f.id for f in unnotified]).update(delivery_stale_notified_at=now)
+
+    return [f.id for f in stale]
 
 
 def _all_items_resolved(order):

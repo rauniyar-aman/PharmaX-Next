@@ -140,6 +140,8 @@ export interface PharmacyOrderFulfillment {
   items: PharmacyOrderFulfillmentItem[]
   delivery_agent_name: string | null
   city: string | null
+  destination_lat: number | null
+  destination_lng: number | null
   accepted_at: string | null
   delivered_at: string | null
   payment_status: 'NOT_APPLICABLE' | 'PENDING' | 'PAID' | 'HIDDEN'

@@ -976,6 +976,7 @@ class OrderFulfillment(models.Model):
     accepted_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
     delivery_broadcast_at = models.DateTimeField(null=True, blank=True)  # set when broadcast_delivery() runs; used to detect a stale delivery broadcast (no per-agent request model exists to check PENDING-ness against, unlike FulfillmentRequest in Stage 2)
+    delivery_stale_notified_at = models.DateTimeField(null=True, blank=True)  # set by expire_stale_delivery_broadcasts() the first time it reports this fulfillment, so the opportunistic poll-triggered sweep notifies admins once, not on every poll
 
     class Meta:
         db_table = 'order_fulfillments'
