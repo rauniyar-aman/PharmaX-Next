@@ -32,11 +32,18 @@ function getPageMeta(pathname: string) {
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [hydrated, setHydrated] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
+
+  // Closes the mobile drawer on every navigation — otherwise it stays open over the newly
+  // loaded page instead of dismissing once its job (picking where to go) is done.
+  useEffect(() => {
+    setMobileSidebarOpen(false)
+  }, [pathname])
   const { user, logout } = useAuthStore()
   const { dark, toggle: toggleDark } = useThemeStore()
   const { notifs, loading: notifLoading, unread, markRead, markAllRead, deleteOne, clearAll } = useNotifications()
@@ -83,23 +90,27 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     )
   }
 
-  const sidebarW = collapsed ? 72 : 256
   const { title, icon } = getPageMeta(pathname)
   const avatarSrc = resolveImg(user.avatar_url)
 
   return (
     <div className="min-h-screen bg-background">
-      <AdminSidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
+      <AdminSidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)}
+        mobileOpen={mobileSidebarOpen} onMobileClose={() => setMobileSidebarOpen(false)} />
 
-      <div className="min-h-screen flex flex-col transition-all duration-300" style={{ marginLeft: sidebarW }}>
-        <header className="sticky top-0 z-40 bg-surface-container-lowest border-b border-outline-variant flex items-center justify-between px-6 h-16 flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+      <div className={`min-h-screen flex flex-col transition-all duration-300 ${collapsed ? 'md:ml-[72px]' : 'md:ml-[256px]'}`}>
+        <header className="sticky top-0 z-30 bg-surface-container-lowest border-b border-outline-variant flex items-center justify-between px-4 sm:px-6 h-16 flex-shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <button onClick={() => setMobileSidebarOpen(true)}
+              className="md:hidden p-2 -ml-1 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors flex-shrink-0">
+              <span className="material-symbols-outlined" style={{ fontSize: '22px' }}>menu</span>
+            </button>
+            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
               <span className="material-symbols-outlined text-primary ms-filled" style={{ fontSize: '18px' }}>{icon}</span>
             </div>
-            <div>
-              <h2 className="text-base font-bold text-on-surface leading-tight">{title}</h2>
-              <p className="text-[10px] text-on-surface-variant leading-tight hidden sm:block">
+            <div className="min-w-0">
+              <h2 className="text-base font-bold text-on-surface leading-tight truncate">{title}</h2>
+              <p className="text-[10px] text-on-surface-variant leading-tight hidden sm:block truncate">
                 {pathname.replace('/admin/', '').split('/').join(' › ')}
               </p>
             </div>
