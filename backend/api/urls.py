@@ -195,6 +195,7 @@ urlpatterns = [
     path('delivery/active/<uuid:pk>/collect-cash/', views.DeliveryCollectCashView.as_view(), name='delivery-collect-cash'),
     path('delivery/active/<uuid:pk>/mark-delivered/', views.DeliveryMarkDeliveredView.as_view(), name='delivery-mark-delivered'),
     path('delivery/agent/location/',            views.DeliveryLocationUpdateView.as_view(), name='delivery-location'),
+    path('delivery/agent/online/',              views.DeliveryOnlineToggleView.as_view(), name='delivery-online'),
 
     # Admin finance / settlement ledgers
     path('admin/finance/pharmacy-payouts/',                  views.AdminPharmacyPayoutListView.as_view(),         name='admin-finance-pharmacy-payouts'),

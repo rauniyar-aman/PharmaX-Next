@@ -2,31 +2,94 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
+import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/auth'
 import { useThemeStore } from '@/store/theme'
+import { useDeliveryRequestsStore } from '@/store/deliveryRequests'
 import Logo from '@/components/common/Logo'
 import api from '@/lib/api'
+import { startRepeatingChime, stopRepeatingChime, installAudioUnlockOnFirstInteraction } from '@/lib/notificationSound'
 
 const NAV_ITEMS = [
   { label: 'Requests', href: '/delivery/requests', icon: 'inbox' },
   { label: 'Active',   href: '/delivery/active',   icon: 'local_shipping' },
 ]
 
+/** Same pattern as the pharmacy app's own online/offline switch — the rider-facing equivalent
+ * of DeliveryAgent.is_online, which nothing anywhere used to let a rider actually toggle. */
+function OnlineToggle({ isOnline, toggling, onToggle }: { isOnline: boolean; toggling: boolean; onToggle: () => void }) {
+  return (
+    <button type="button" onClick={onToggle} disabled={toggling} role="switch" aria-checked={isOnline}
+      title={isOnline ? 'Click to go offline' : 'Click to go online and start receiving delivery requests'}
+      className="flex items-center gap-2 h-9 px-1 rounded-xl disabled:opacity-60">
+      <span className={`text-xs font-semibold whitespace-nowrap ${isOnline ? 'text-emerald-600' : 'text-on-surface-variant'}`}>
+        {isOnline ? 'Online' : 'Offline'}
+      </span>
+      <span className={`inline-flex items-center flex-shrink-0 w-10 h-6 rounded-full transition-colors ${isOnline ? 'bg-emerald-500' : 'bg-surface-container-high border border-outline-variant'}`}>
+        <span className={`inline-block w-4 h-4 rounded-full bg-white shadow-md transform transition-transform ${toggling ? 'animate-pulse' : ''} ${isOnline ? 'translate-x-5' : 'translate-x-1'}`} />
+      </span>
+    </button>
+  )
+}
+
 export default function DeliveryLayout({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)
+  const [togglingOnline, setTogglingOnline] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
   const { user, logout } = useAuthStore()
   const { dark, toggle: toggleDark } = useThemeStore()
+  const requests = useDeliveryRequestsStore((s) => s.requests)
+  const startPolling = useDeliveryRequestsStore((s) => s.startPolling)
+  const stopPolling = useDeliveryRequestsStore((s) => s.stopPolling)
+  const pendingCount = requests.length
+
+  const handleToggleOnline = async () => {
+    if (!user) return
+    const next = !user.delivery_agent_online
+    setTogglingOnline(true)
+    try {
+      const res = await api.patch('/delivery/agent/online/', { is_online: next })
+      useAuthStore.getState().setUser({ ...user, delivery_agent_online: res.data.data.is_online })
+      toast.success(res.data.message)
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update status.')
+    } finally {
+      setTogglingOnline(false)
+    }
+  }
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
     setHydrated(true)
+    // Unlocks the chime's AudioContext on first interaction anywhere on the site — see
+    // (pharmacy)/layout.tsx for why a setInterval-driven retry alone can never do this.
+    installAudioUnlockOnFirstInteraction()
   }, [])
 
   useEffect(() => {
     if (hydrated && !user) router.replace('/signin')
   }, [hydrated, user, router])
+
+  // Single source of truth for the available-deliveries poll lives in the store — started once
+  // here so it runs across every delivery page (Active, not just Requests). A rider who's offline
+  // just always gets an empty list back (the backend already gates on is_online), so this is safe
+  // to run unconditionally rather than only while online.
+  useEffect(() => {
+    if (!hydrated || !user || user.role !== 'DELIVERY_AGENT') return
+    startPolling()
+    return () => stopPolling()
+  }, [hydrated, user, startPolling, stopPolling])
+
+  // Rings continuously — independent of which delivery page the rider is on — for as long as
+  // there's at least one available, unclaimed pickup, same "keep ringing until reviewed" behavior
+  // as the pharmacy app's own alert. Stops the moment the list empties (accepted by this rider,
+  // claimed by someone else, or expired).
+  useEffect(() => {
+    if (pendingCount > 0) startRepeatingChime()
+    else stopRepeatingChime()
+  }, [pendingCount])
+  useEffect(() => () => stopRepeatingChime(), [])
 
   // Refresh delivery_agent_verified on mount and on every navigation, so a verification made
   // mid-session by an admin takes effect without requiring the agent to log out and back in.
@@ -87,6 +150,9 @@ export default function DeliveryLayout({ children }: { children: React.ReactNode
           </div>
 
           <div className="flex items-center gap-2">
+            {!pendingVerification && (
+              <OnlineToggle isOnline={!!user.delivery_agent_online} toggling={togglingOnline} onToggle={handleToggleOnline} />
+            )}
             <button onClick={toggleDark}
               className="p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"
               title={dark ? 'Switch to light mode' : 'Switch to dark mode'}>
