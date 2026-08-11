@@ -67,7 +67,9 @@ export default function DeliveryLayout({ children }: { children: React.ReactNode
       <header className="sticky top-0 z-40 bg-surface-container-lowest border-b border-outline-variant">
         <div className="w-full px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8">
-            <Logo iconSize={32} textClassName="text-lg" />
+            <Link href="/delivery/requests">
+              <Logo iconSize={32} textClassName="text-lg" />
+            </Link>
             {!pendingVerification && (
               <nav className="hidden sm:flex items-center gap-1">
                 {NAV_ITEMS.map((item) => {
