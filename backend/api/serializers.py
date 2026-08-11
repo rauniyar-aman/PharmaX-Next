@@ -56,6 +56,7 @@ class ChangePasswordSerializer(serializers.Serializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     permission_codes = serializers.SerializerMethodField()
     delivery_agent_verified = serializers.SerializerMethodField()
+    delivery_agent_online = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -64,12 +65,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'blood_group', 'allergies', 'avatar_url', 'referral_code', 'role', 'is_active',
             'is_email_verified', 'notif_order_updates',
             'notif_prescription_alerts', 'notif_promotions',
-            'is_super_admin', 'permission_codes', 'delivery_agent_verified',
+            'is_super_admin', 'permission_codes', 'delivery_agent_verified', 'delivery_agent_online',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'email', 'referral_code', 'role', 'is_active', 'is_email_verified',
-            'is_super_admin', 'permission_codes', 'delivery_agent_verified', 'created_at', 'updated_at',
+            'is_super_admin', 'permission_codes', 'delivery_agent_verified', 'delivery_agent_online',
+            'created_at', 'updated_at',
         ]
 
     def get_permission_codes(self, obj):
@@ -83,6 +85,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
         agent = getattr(obj, 'delivery_agent', None)
         return agent.is_verified if agent else False
 
+    def get_delivery_agent_online(self, obj):
+        if obj.role != 'DELIVERY_AGENT':
+            return None
+        agent = getattr(obj, 'delivery_agent', None)
+        return agent.is_online if agent else False
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         if instance.role != 'ADMIN':
@@ -90,6 +98,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             data.pop('permission_codes', None)
         if instance.role != 'DELIVERY_AGENT':
             data.pop('delivery_agent_verified', None)
+            data.pop('delivery_agent_online', None)
         return data
 
 

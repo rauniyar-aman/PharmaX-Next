@@ -4724,6 +4724,30 @@ class DeliveryLocationUpdateView(APIView):
         return Response({'success': True, 'message': 'Location updated.'})
 
 
+class DeliveryOnlineToggleView(APIView):
+    """Lets a rider go online/offline — the actual toggle the DeliveryAgent.is_online field's own
+    comment ("agent toggles this to receive requests at all") always assumed existed. It never
+    did: is_online defaulted to False at signup and nothing anywhere ever flipped it, so no rider
+    could ever appear in broadcast_delivery()/_agent_eligible_for() regardless of location or
+    verification. Same no-pk-in-URL pattern as DeliveryLocationUpdateView — always operates on
+    request.user.delivery_agent."""
+    permission_classes = [IsDeliveryAgent]
+
+    def patch(self, request):
+        is_online = request.data.get('is_online')
+        if not isinstance(is_online, bool):
+            return Response({'success': False, 'message': 'is_online (boolean) is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        agent = request.user.delivery_agent
+        agent.is_online = is_online
+        agent.save(update_fields=['is_online'])
+        return Response({
+            'success': True,
+            'data': {'is_online': agent.is_online},
+            'message': 'You are now online.' if is_online else 'You are now offline.',
+        })
+
+
 # ─── Admin: Finance / Settlement Ledgers (Stage 8 of the financial ledger spec) ────
 #
 # All gated by manage_finance, same permission AdminWalletListView/AdminWalletAdjustView already

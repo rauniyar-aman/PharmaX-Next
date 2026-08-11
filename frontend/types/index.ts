@@ -10,6 +10,7 @@ export interface User {
   is_super_admin?: boolean
   permission_codes?: string[]   // only present when role === 'ADMIN'
   delivery_agent_verified?: boolean | null   // only present when role === 'DELIVERY_AGENT'
+  delivery_agent_online?: boolean | null     // only present when role === 'DELIVERY_AGENT'
   created_at: string
   updated_at: string
 }

@@ -1,11 +1,9 @@
 'use client'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import type { DeliveryFulfillment } from '@/types'
-
-const POLL_INTERVAL_MS = 4000
+import { useDeliveryRequestsStore } from '@/store/deliveryRequests'
 
 // Rider dispatch now happens as soon as an order is PLACED — well before a pharmacy has
 // necessarily finished packing — so this list mixes genuinely-ready jobs with still-mid-prep
@@ -14,24 +12,12 @@ const READY_STATUSES = new Set(['AWAITING_DELIVERY'])
 
 export default function DeliveryRequestsPage() {
   const router = useRouter()
-  const [requests, setRequests] = useState<DeliveryFulfillment[]>([])
-  const [loading, setLoading] = useState(true)
+  // Reads from the shared store (polling started once in (delivery)/layout.tsx, so it keeps
+  // running even when the rider navigates to Active) instead of running its own separate poll.
+  const requests = useDeliveryRequestsStore((s) => s.requests)
+  const loading = useDeliveryRequestsStore((s) => s.loading)
+  const removeRequest = useDeliveryRequestsStore((s) => s.removeRequest)
   const [acceptingId, setAcceptingId] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const load = useCallback((silent = false) => {
-    if (!silent) setLoading(true)
-    api.get('/delivery/requests/')
-      .then((r) => setRequests(r.data.data.requests || []))
-      .catch(() => { if (!silent) toast.error('Failed to load requests.') })
-      .finally(() => { if (!silent) setLoading(false) })
-  }, [])
-
-  useEffect(() => {
-    load()
-    pollRef.current = setInterval(() => load(true), POLL_INTERVAL_MS)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [load])
 
   const accept = async (id: string) => {
     setAcceptingId(id)
@@ -42,7 +28,7 @@ export default function DeliveryRequestsPage() {
     } catch (err: any) {
       const msg = err.response?.data?.message || 'Failed to accept.'
       // someone else won it first, or it expired — either way it's no longer actionable
-      setRequests((prev) => prev.filter((r) => r.id !== id))
+      removeRequest(id)
       toast.error(msg)
     } finally {
       setAcceptingId(null)
