@@ -57,11 +57,20 @@ export default function PublicHeader() {
   const [query, setQuery] = useState('')
   const [notifOpen, setNotifOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
     setHydrated(true)
   }, [])
+
+  // Below md, row 2's nav links used to rely on undiscoverable horizontal scroll (no visual cue
+  // anything was cut off, and no way to trigger it with a mouse on a resized desktop window) --
+  // this drawer replaces that below the breakpoint; row 2 itself only renders at md+ now. Closes
+  // automatically on navigation so it doesn't linger over the page that was just opened.
+  useEffect(() => {
+    setMobileNavOpen(false)
+  }, [pathname])
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -81,9 +90,15 @@ export default function PublicHeader() {
     <header className="sticky top-0 z-30 bg-surface">
       {/* Row 1: utility bar */}
       <div className="border-b border-outline-variant">
-        <div className="w-full px-4 sm:px-6 h-16 flex items-center gap-2 sm:gap-4">
+        <div className="w-full px-2 sm:px-6 h-16 flex items-center gap-0.5 sm:gap-4">
+          <button onClick={() => setMobileNavOpen(true)}
+            className="md:hidden p-1.5 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors flex-shrink-0"
+            aria-label="Open menu">
+            <span className="material-symbols-outlined" style={{ fontSize: '22px' }}>menu</span>
+          </button>
+
           <Link href={hydrated && user?.role === 'CUSTOMER' ? '/dashboard' : '/'} className="flex-shrink-0">
-            <Logo iconSize={32} textClassName="text-lg sm:text-2xl" />
+            <Logo iconSize={28} textClassName="text-base sm:text-2xl" />
           </Link>
 
           <div className="hidden md:block">
@@ -216,8 +231,9 @@ export default function PublicHeader() {
         </div>
       </div>
 
-      {/* Row 2: nav links + search */}
-      <div className="border-b border-outline-variant bg-surface-container-low">
+      {/* Row 2: nav links + search -- md+ only below; the same nav list is reachable via the
+          hamburger drawer (see bottom of this component) below that breakpoint. */}
+      <div className="hidden md:block border-b border-outline-variant bg-surface-container-low">
         <div className="w-full px-4 sm:px-6 h-12 flex items-center gap-6">
           <div className="flex items-center gap-5 overflow-x-auto scrollbar-hide min-w-0">
             {(hydrated && user ? NAV_LINKS : GUEST_NAV_LINKS).map((item) => (
@@ -243,7 +259,7 @@ export default function PublicHeader() {
         </div>
       </div>
 
-      <form onSubmit={handleSearch} className="sm:hidden px-4 py-3 border-b border-outline-variant bg-surface-container-low">
+      <form onSubmit={handleSearch} className="md:hidden px-4 py-3 border-b border-outline-variant bg-surface-container-low">
         <div className="relative">
           <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant" style={{ fontSize: '20px' }}>search</span>
           <input
@@ -255,6 +271,29 @@ export default function PublicHeader() {
           />
         </div>
       </form>
+
+      {mobileNavOpen && (
+        <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={() => setMobileNavOpen(false)} />
+      )}
+      <aside
+        className={`fixed left-0 top-0 h-full w-72 bg-surface flex flex-col z-50 transition-transform duration-300 md:hidden ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        style={{ boxShadow: '2px 0 12px -2px rgba(0,0,0,0.06)' }}
+      >
+        <div className="h-16 px-4 flex items-center justify-between border-b border-outline-variant flex-shrink-0">
+          <Logo iconSize={32} textClassName="text-lg" />
+          <button onClick={() => setMobileNavOpen(false)} className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container transition-colors" aria-label="Close menu">
+            <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>close</span>
+          </button>
+        </div>
+        <nav className="flex-1 overflow-y-auto py-2">
+          {(hydrated && user ? NAV_LINKS : GUEST_NAV_LINKS).map((item) => (
+            <Link key={item.label} href={item.href} onClick={() => setMobileNavOpen(false)}
+              className={`block px-5 py-3 text-sm font-medium transition-colors ${isActive(item.href) ? 'text-primary font-semibold bg-primary/5' : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}`}>
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+      </aside>
     </header>
   )
 }
