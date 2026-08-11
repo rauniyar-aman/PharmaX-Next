@@ -174,8 +174,15 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
   const [showModal, setShowModal] = useState(false)
   const [respondingId, setRespondingId] = useState<string | null>(null)
   const [togglingOnline, setTogglingOnline] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
+
+  // Replaces the old undiscoverable horizontal-scroll nav (no visual cue anything was cut off,
+  // no mouse-friendly way to trigger it) with a real drawer below sm. Auto-closes on navigation.
+  useEffect(() => {
+    setMobileNavOpen(false)
+  }, [pathname])
   const { user, logout } = useAuthStore()
   const { dark, toggle: toggleDark } = useThemeStore()
   const requests = usePharmacyRequestsStore((s) => s.requests)
@@ -358,11 +365,16 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-surface-container-lowest border-b border-outline-variant">
         <div className="w-full px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-8 min-w-0 flex-1">
+          <div className="flex items-center gap-4 sm:gap-8 min-w-0 flex-1">
+            <button onClick={() => setMobileNavOpen(true)}
+              className="xl:hidden p-2 -ml-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors flex-shrink-0"
+              aria-label="Open menu">
+              <span className="material-symbols-outlined" style={{ fontSize: '22px' }}>menu</span>
+            </button>
             <Link href="/pharmacy/dashboard" className="flex-shrink-0">
               <Logo iconSize={32} textClassName="text-lg" />
             </Link>
-            <nav className="hidden sm:flex items-center gap-1 min-w-0 overflow-x-auto scrollbar-hide">
+            <nav className="hidden xl:flex items-center gap-1 min-w-0 overflow-x-auto scrollbar-hide">
               {NAV_ITEMS.map((item) => {
                 const active = pathname.startsWith(item.href)
                 return (
@@ -400,16 +412,32 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
             </button>
           </div>
         </div>
-        <nav className="sm:hidden flex items-center gap-1 px-4 pb-2 -mt-1 overflow-x-auto scrollbar-hide">
+        {showOptIn && <NotificationOptInBanner userId={user.id} onDismiss={() => setShowOptIn(false)} />}
+      </header>
+
+      {mobileNavOpen && (
+        <div className="fixed inset-0 bg-black/40 z-40 xl:hidden" onClick={() => setMobileNavOpen(false)} />
+      )}
+      <aside
+        className={`fixed left-0 top-0 h-full w-72 bg-surface flex flex-col z-50 transition-transform duration-300 xl:hidden ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        style={{ boxShadow: '2px 0 12px -2px rgba(0,0,0,0.06)' }}
+      >
+        <div className="h-16 px-4 flex items-center justify-between border-b border-outline-variant flex-shrink-0">
+          <Logo iconSize={32} textClassName="text-lg" />
+          <button onClick={() => setMobileNavOpen(false)} className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container transition-colors" aria-label="Close menu">
+            <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>close</span>
+          </button>
+        </div>
+        <nav className="flex-1 overflow-y-auto py-2">
           {NAV_ITEMS.map((item) => {
             const active = pathname.startsWith(item.href)
             return (
               <Link key={item.href} href={item.href}
-                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors ${active ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container'}`}>
-                <span className={`material-symbols-outlined ${active ? 'ms-filled' : ''}`} style={{ fontSize: '16px' }}>{item.icon}</span>
+                className={`relative flex items-center gap-3 px-5 py-3 text-sm font-medium transition-colors ${active ? 'text-primary font-semibold bg-primary/5' : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}`}>
+                <span className={`material-symbols-outlined ${active ? 'ms-filled' : ''}`} style={{ fontSize: '20px' }}>{item.icon}</span>
                 {item.label}
                 {item.href === '/pharmacy/requests' && pendingCount > 0 && (
-                  <span className="min-w-[16px] h-[16px] px-1 bg-error text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
+                  <span className="min-w-[18px] h-[18px] px-1 bg-error text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none">
                     {pendingCount > 9 ? '9+' : pendingCount}
                   </span>
                 )}
@@ -417,8 +445,7 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
             )
           })}
         </nav>
-        {showOptIn && <NotificationOptInBanner userId={user.id} onDismiss={() => setShowOptIn(false)} />}
-      </header>
+      </aside>
 
       <main className="w-full px-4 sm:px-6 py-6">{children}</main>
 
