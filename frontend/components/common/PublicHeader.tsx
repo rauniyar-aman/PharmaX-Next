@@ -81,16 +81,16 @@ export default function PublicHeader() {
     <header className="sticky top-0 z-30 bg-surface">
       {/* Row 1: utility bar */}
       <div className="border-b border-outline-variant">
-        <div className="w-full px-4 sm:px-6 h-16 flex items-center gap-4">
+        <div className="w-full px-4 sm:px-6 h-16 flex items-center gap-2 sm:gap-4">
           <Link href={hydrated && user?.role === 'CUSTOMER' ? '/dashboard' : '/'} className="flex-shrink-0">
-            <Logo iconSize={40} textClassName="text-2xl" />
+            <Logo iconSize={32} textClassName="text-lg sm:text-2xl" />
           </Link>
 
           <div className="hidden md:block">
             <DeliveryLocationPicker />
           </div>
 
-          <nav className="flex items-center gap-1.5 sm:gap-2 ml-auto">
+          <nav className="flex items-center gap-1 sm:gap-2 ml-auto">
             <button onClick={toggleDark}
               className="p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"
               title={dark ? 'Switch to light mode' : 'Switch to dark mode'}>
@@ -219,7 +219,7 @@ export default function PublicHeader() {
       {/* Row 2: nav links + search */}
       <div className="border-b border-outline-variant bg-surface-container-low">
         <div className="w-full px-4 sm:px-6 h-12 flex items-center gap-6">
-          <div className="flex items-center gap-5 overflow-x-auto scrollbar-hide">
+          <div className="flex items-center gap-5 overflow-x-auto scrollbar-hide min-w-0">
             {(hydrated && user ? NAV_LINKS : GUEST_NAV_LINKS).map((item) => (
               <Link key={item.label} href={item.href}
                 className={`text-sm font-medium whitespace-nowrap transition-colors ${isActive(item.href) ? 'text-primary font-semibold' : 'text-on-surface-variant hover:text-on-surface'}`}>
