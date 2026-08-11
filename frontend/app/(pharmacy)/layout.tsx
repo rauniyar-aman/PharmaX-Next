@@ -358,16 +358,16 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-surface-container-lowest border-b border-outline-variant">
         <div className="w-full px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <Link href="/pharmacy/dashboard">
+          <div className="flex items-center gap-8 min-w-0 flex-1">
+            <Link href="/pharmacy/dashboard" className="flex-shrink-0">
               <Logo iconSize={32} textClassName="text-lg" />
             </Link>
-            <nav className="hidden sm:flex items-center gap-1">
+            <nav className="hidden sm:flex items-center gap-1 min-w-0 overflow-x-auto scrollbar-hide">
               {NAV_ITEMS.map((item) => {
                 const active = pathname.startsWith(item.href)
                 return (
                   <Link key={item.href} href={item.href}
-                    className={`relative flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-colors ${active ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container'}`}>
+                    className={`relative flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium whitespace-nowrap flex-shrink-0 transition-colors ${active ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container'}`}>
                     <span className={`material-symbols-outlined ${active ? 'ms-filled' : ''}`} style={{ fontSize: '18px' }}>{item.icon}</span>
                     {item.label}
                     {item.href === '/pharmacy/requests' && pendingCount > 0 && (
@@ -381,7 +381,7 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
             </nav>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             {pharmacy && (
               <OnlineToggle isActive={pharmacy.is_active} isVerified={pharmacy.is_verified} toggling={togglingOnline} onToggle={handleToggleOnline} />
             )}
@@ -400,12 +400,12 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
             </button>
           </div>
         </div>
-        <nav className="sm:hidden flex items-center gap-1 px-4 pb-2 -mt-1">
+        <nav className="sm:hidden flex items-center gap-1 px-4 pb-2 -mt-1 overflow-x-auto scrollbar-hide">
           {NAV_ITEMS.map((item) => {
             const active = pathname.startsWith(item.href)
             return (
               <Link key={item.href} href={item.href}
-                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${active ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container'}`}>
+                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors ${active ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container'}`}>
                 <span className={`material-symbols-outlined ${active ? 'ms-filled' : ''}`} style={{ fontSize: '16px' }}>{item.icon}</span>
                 {item.label}
                 {item.href === '/pharmacy/requests' && pendingCount > 0 && (
