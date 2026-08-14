@@ -911,26 +911,38 @@ class PrescriptionMedicineItemConfirmView(APIView):
         }
 
         cart = Cart.objects.filter(user=request.user).first()
+        skipped = []
+        added_count = 0
         for entry in entries:
             if not isinstance(entry, dict):
+                skipped.append({'medicine_item_id': None, 'reason': 'Invalid entry.'})
                 continue
-            db_item = db_items.get(str(entry.get('medicine_item_id')))
+            item_id = entry.get('medicine_item_id')
+            db_item = db_items.get(str(item_id))
             if not db_item:
+                skipped.append({'medicine_item_id': item_id, 'reason': 'Item does not belong to this prescription.'})
                 continue
             try:
                 quantity = int(entry.get('quantity', db_item.quantity))
             except (TypeError, ValueError):
+                skipped.append({'medicine_item_id': item_id, 'reason': 'Invalid quantity.'})
                 continue
             if quantity < 1:
+                skipped.append({'medicine_item_id': item_id, 'reason': 'Quantity must be at least 1.'})
                 continue
             cart = _add_to_cart(request.user, db_item.medicine, quantity)
+            added_count += 1
+
+        if added_count == 0:
+            return Response(
+                {'success': False, 'message': 'None of the submitted items could be confirmed.', 'data': {'skipped': skipped}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         prescription.medicines_reviewed_at = timezone.now()
         prescription.save(update_fields=['medicines_reviewed_at'])
 
-        if cart is None:
-            cart, _ = Cart.objects.get_or_create(user=request.user)
-        return Response({'success': True, 'data': {'cart': CartSerializer(cart).data}})
+        return Response({'success': True, 'data': {'cart': CartSerializer(cart).data, 'skipped': skipped}})
 
 
 # ─── Orders ───────────────────────────────────────────────────────────────────
