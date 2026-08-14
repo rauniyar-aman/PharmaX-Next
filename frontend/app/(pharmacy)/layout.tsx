@@ -288,9 +288,12 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
   }, [pathname])
 
   // Fires on every genuinely-new batch of requests (see store): pop the large centered alert
-  // modal always; if the tab is in the background, also flash the title and — if permission was
-  // granted via the opt-in banner — fire a real OS-level Notification, since none of the on-page
-  // signals are visible to someone who isn't looking at this tab at all.
+  // modal always; if the tab is in the background, also flash the title. The OS-level Notification
+  // fires whenever permission was granted, regardless of tab visibility — deliberately NOT gated
+  // on document.hidden. Notification permission (unlike the chime's AudioContext) persists across
+  // page loads once granted, so this is the one alert channel that still works on a tab the
+  // pharmacy opened and never touched at all this session — exactly the case where the chime is
+  // guaranteed silent (browsers refuse to play ANY audio before a real gesture on that page load).
   useEffect(() => {
     if (!lastArrival) return
     setShowModal(true)
@@ -298,18 +301,18 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
     if (typeof document !== 'undefined' && document.hidden) {
       if (previousTitleRef.current === null) previousTitleRef.current = document.title
       document.title = ALERT_TITLE
+    }
 
-      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        const first = lastArrival.items[0]
-        const body = lastArrival.items.length > 1
-          ? `${lastArrival.items.length} new requests, including ${first.medicine_name}`
-          : `${first.medicine_name} × ${first.quantity}`
-        const n = new Notification('New Order Request — PharmaX', { body, icon: '/PharmaX_Icon.png', tag: 'pharmax-new-request' })
-        n.onclick = () => {
-          window.focus()
-          router.push('/pharmacy/requests')
-          n.close()
-        }
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      const first = lastArrival.items[0]
+      const body = lastArrival.items.length > 1
+        ? `${lastArrival.items.length} new requests, including ${first.medicine_name}`
+        : `${first.medicine_name} × ${first.quantity}`
+      const n = new Notification('New Order Request — PharmaX', { body, icon: '/PharmaX_Icon.png', tag: 'pharmax-new-request' })
+      n.onclick = () => {
+        window.focus()
+        router.push('/pharmacy/requests')
+        n.close()
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

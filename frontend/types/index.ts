@@ -152,6 +152,46 @@ export interface PharmacyOrderFulfillment {
   payout_commission_amount: string | null
 }
 
+export interface DeliveryAgentEarning {
+  id: string
+  fulfillment: string
+  order_id: string
+  amount: string
+  status: 'PENDING' | 'PAID'
+  paid_at: string | null
+  paid_by_name: string | null
+  created_at: string
+}
+
+export interface DeliveryAgentCodLiability {
+  id: string
+  fulfillment: string
+  order_id: string
+  amount_collected: string
+  status: 'PENDING' | 'REMITTED'
+  remittance_method: 'CASH_DEPOSIT' | 'GATEWAY_TOPUP' | null
+  reference: string | null
+  remitted_at: string | null
+  confirmed_by_name: string | null
+  days_outstanding: number | null
+  created_at: string
+}
+
+export interface DeliveryFinanceProfile {
+  cod_record: {
+    liabilities: DeliveryAgentCodLiability[]
+    total_collected: string
+    total_outstanding: string
+    oldest_unremitted_age_days: number | null
+  }
+  earnings_record: {
+    earnings: DeliveryAgentEarning[]
+    total_earned: string
+    total_pending: string
+    total_paid: string
+  }
+}
+
 export interface PharmacyProfile {
   id: string
   name: string
@@ -296,6 +336,8 @@ export interface OrderFulfillmentProgress {
   accepted_at: string | null
   delivery_broadcast_at: string | null
   delivered_at: string | null
+  rider_rating: number | null
+  rider_rating_comment: string | null
 }
 
 // Matches matching._tracking_payload() — GET /orders/<id>/tracking/,
@@ -306,6 +348,8 @@ export interface TrackingAgent {
   phone: string
   lat: number | null
   lng: number | null
+  rating: number | null
+  rating_count: number
 }
 
 export interface TrackingFulfillment {

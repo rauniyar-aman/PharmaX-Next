@@ -50,6 +50,7 @@ urlpatterns = [
     path('orders/<uuid:pk>/', views.OrderDetailView.as_view(), name='order-detail'),
     path('orders/<uuid:pk>/cancel/', views.OrderCancelView.as_view(), name='order-cancel'),
     path('orders/<uuid:pk>/rate/',   views.OrderRateView.as_view(),   name='order-rate'),
+    path('orders/fulfillments/<uuid:pk>/rate-rider/', views.FulfillmentRateRiderView.as_view(), name='fulfillment-rate-rider'),
     path('orders/<uuid:pk>/fulfillment-summary/', views.OrderFulfillmentSummaryView.as_view(), name='order-fulfillment-summary'),
     path('orders/<uuid:pk>/tracking/', views.OrderTrackingView.as_view(), name='order-tracking'),
 
@@ -182,6 +183,7 @@ urlpatterns = [
     path('pharmacy/requests/',                  views.PharmacyRequestListView.as_view(),    name='pharmacy-requests'),
     path('pharmacy/requests/<uuid:pk>/accept/', views.PharmacyRequestAcceptView.as_view(),  name='pharmacy-request-accept'),
     path('pharmacy/requests/<uuid:pk>/decline/', views.PharmacyRequestDeclineView.as_view(), name='pharmacy-request-decline'),
+    path('pharmacy/dashboard-stats/',           views.PharmacyDashboardStatsView.as_view(), name='pharmacy-dashboard-stats'),
     path('pharmacy/orders/',                    views.PharmacyOrderListView.as_view(),      name='pharmacy-orders'),
     path('pharmacy/orders/<uuid:pk>/advance/',  views.PharmacyOrderAdvanceStatusView.as_view(), name='pharmacy-order-advance'),
     path('pharmacy/orders/<uuid:pk>/tracking/', views.PharmacyOrderTrackingView.as_view(), name='pharmacy-order-tracking'),
@@ -189,8 +191,10 @@ urlpatterns = [
     path('pharmacy/team/<uuid:pk>/',            views.PharmacyTeamMemberDetailView.as_view(), name='pharmacy-team-member-detail'),
 
     # Delivery dashboard
+    path('delivery/finance/',                   views.DeliveryFinanceView.as_view(),        name='delivery-finance'),
     path('delivery/requests/',                  views.DeliveryRequestListView.as_view(),    name='delivery-requests'),
     path('delivery/requests/<uuid:pk>/accept/', views.DeliveryRequestAcceptView.as_view(),  name='delivery-request-accept'),
+    path('delivery/requests/<uuid:pk>/decline/', views.DeliveryRequestDeclineView.as_view(), name='delivery-request-decline'),
     path('delivery/active/',                    views.DeliveryActiveListView.as_view(),     name='delivery-active'),
     path('delivery/active/<uuid:pk>/collect-cash/', views.DeliveryCollectCashView.as_view(), name='delivery-collect-cash'),
     path('delivery/active/<uuid:pk>/mark-delivered/', views.DeliveryMarkDeliveredView.as_view(), name='delivery-mark-delivered'),

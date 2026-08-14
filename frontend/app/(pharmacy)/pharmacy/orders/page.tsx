@@ -92,17 +92,17 @@ export default function PharmacyOrdersPage() {
   }, [])
 
   // Once handed to a rider, a simple "rider + distance" line is enough here — the pharmacy's job
-  // is done at that point, unlike the customer's full live map. Polls orders currently
-  // AWAITING_DELIVERY (waiting for ANY rider to accept) or OUT_FOR_DELIVERY (waiting for the
-  // assigned rider to deliver) — both are stages an external actor (a rider, not this pharmacy)
-  // can advance without this page doing anything. The poll response's `status` is merged back
-  // into `orders` itself, not just stashed in a side map — otherwise the primary badge/stepper
-  // stays frozen on whatever it was at page load (e.g. still "Ready for Pickup" after a rider
-  // already accepted, or still "With Rider" after they've delivered), since ADVANCE_ACTION never
-  // changes it once the pharmacy is out of the loop.
+  // is done at that point, unlike the customer's full live map. Polls any order with a rider
+  // already assigned (delivery_agent_name truthy) — a rider can be committed well before
+  // AWAITING_DELIVERY, and the pharmacy should see their contact info/rating from that moment,
+  // not just once OUT_FOR_DELIVERY. The poll response's `status` is merged back into `orders`
+  // itself, not just stashed in a side map — otherwise the primary badge/stepper stays frozen on
+  // whatever it was at page load (e.g. still "Ready for Pickup" after a rider already accepted, or
+  // still "With Rider" after they've delivered), since ADVANCE_ACTION never changes it once the
+  // pharmacy is out of the loop.
   const loadTracking = useCallback(() => {
     const orderIds = Array.from(new Set(
-      orders.filter((o) => o.status === 'AWAITING_DELIVERY' || o.status === 'OUT_FOR_DELIVERY').map((o) => o.order_id)
+      orders.filter((o) => !!o.delivery_agent_name && o.status !== 'DELIVERED' && o.status !== 'CANCELLED').map((o) => o.order_id)
     ))
     if (orderIds.length === 0) return
     Promise.all(orderIds.map((orderId) =>
@@ -253,13 +253,24 @@ export default function PharmacyOrdersPage() {
 
                 <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
                   {o.delivery_agent_name ? (
-                    <p className="text-xs text-on-surface-variant flex items-center gap-1.5">
+                    <p className="text-xs text-on-surface-variant flex items-center gap-1.5 flex-wrap">
                       <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>sports_motorsports</span>
                       Rider: {o.delivery_agent_name}
+                      {trackingByFulfillmentId[o.id]?.agent?.phone && (
+                        <a href={`tel:${trackingByFulfillmentId[o.id].agent!.phone}`} className="text-primary font-semibold hover:underline">
+                          {trackingByFulfillmentId[o.id].agent!.phone}
+                        </a>
+                      )}
+                      {trackingByFulfillmentId[o.id]?.agent?.rating != null && (
+                        <span className="flex items-center gap-0.5">
+                          <span className="material-symbols-outlined ms-filled text-amber-400" style={{ fontSize: '13px' }}>star</span>
+                          {trackingByFulfillmentId[o.id].agent!.rating} ({trackingByFulfillmentId[o.id].agent!.rating_count})
+                        </span>
+                      )}
                       {o.status === 'OUT_FOR_DELIVERY' && trackingByFulfillmentId[o.id]?.distance_km != null && (
                         <span className="text-on-surface-variant"> · ~{trackingByFulfillmentId[o.id].distance_km} km from the delivery address</span>
                       )}
-                      {o.status === 'OUT_FOR_DELIVERY' && trackingByFulfillmentId[o.id]?.agent?.lat != null && (
+                      {o.status !== 'DELIVERED' && o.status !== 'CANCELLED' && trackingByFulfillmentId[o.id]?.agent?.lat != null && (
                         <button onClick={() => setMapExpandedId(mapExpandedId === o.id ? null : o.id)}
                           className="ml-1 text-primary font-semibold hover:underline">
                           {mapExpandedId === o.id ? 'Hide map' : 'Track on map'}
@@ -282,7 +293,7 @@ export default function PharmacyOrdersPage() {
                   )}
                 </div>
 
-                {mapExpandedId === o.id && o.status === 'OUT_FOR_DELIVERY' && trackingByFulfillmentId[o.id]?.agent?.lat != null && (
+                {mapExpandedId === o.id && o.status !== 'DELIVERED' && o.status !== 'CANCELLED' && trackingByFulfillmentId[o.id]?.agent?.lat != null && (
                   <div className="mt-2 h-52 rounded-xl overflow-hidden border border-outline-variant">
                     <LiveTrackingMap
                       riderPosition={{ lat: trackingByFulfillmentId[o.id].agent!.lat as number, lng: trackingByFulfillmentId[o.id].agent!.lng as number }}

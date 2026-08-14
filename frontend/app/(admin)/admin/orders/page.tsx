@@ -80,6 +80,20 @@ export default function AdminOrdersPage() {
     }
   }
 
+  const deleteOrder = async (orderId: string) => {
+    if (!confirm('Permanently delete this cancelled order? This cannot be undone.')) return
+    setUpdating(orderId)
+    try {
+      await api.delete(`/admin/orders/${orderId}/`)
+      toast.success('Order deleted.')
+      fetchOrders()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to delete order.')
+    } finally {
+      setUpdating(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 items-center">
@@ -152,6 +166,12 @@ export default function AdminOrdersPage() {
                           className="w-7 h-7 flex items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant hover:text-primary hover:border-primary transition-colors flex-shrink-0">
                           <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>open_in_new</span>
                         </Link>
+                        {order.status === 'CANCELLED' && (
+                          <button onClick={() => deleteOrder(order.id)} disabled={updating === order.id} title="Permanently delete this cancelled order"
+                            className="w-7 h-7 flex items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant hover:text-error hover:border-error transition-colors flex-shrink-0 disabled:opacity-60">
+                            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

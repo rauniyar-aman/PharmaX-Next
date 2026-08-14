@@ -138,7 +138,7 @@ export default function TrackOrderPage() {
           {tracking.map((t) => {
             const cfg = FULFILLMENT_STATUS_CFG[t.status] || { label: t.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
             const progress = order.fulfillments?.find((f) => f.id === t.fulfillment_id)
-            const outForDelivery = t.status === 'OUT_FOR_DELIVERY' && t.agent && t.agent.lat != null && t.agent.lng != null
+            const hasAgentLocation = !!t.agent && t.agent.lat != null && t.agent.lng != null
 
             return (
               <div key={t.fulfillment_id} className="bg-surface rounded-2xl border border-outline-variant p-5">
@@ -159,20 +159,34 @@ export default function TrackOrderPage() {
 
                 <FulfillmentStepper status={t.status} />
 
-                {outForDelivery && t.agent && (
+                {/* Rider card shows as soon as one is assigned to this leg — not just once
+                    OUT_FOR_DELIVERY — so the customer can see and reach whoever is already
+                    committed to the pickup. The live map only renders once the rider actually has
+                    coordinates to plot. */}
+                {t.agent && (
                   <div className="mt-4 space-y-3">
-                    <div className="h-56 rounded-xl overflow-hidden border border-outline-variant">
-                      <LiveTrackingMap
-                        riderPosition={{ lat: t.agent.lat as number, lng: t.agent.lng as number }}
-                        destination={destination}
-                      />
-                    </div>
+                    {hasAgentLocation && (
+                      <div className="h-56 rounded-xl overflow-hidden border border-outline-variant">
+                        <LiveTrackingMap
+                          riderPosition={{ lat: t.agent.lat as number, lng: t.agent.lng as number }}
+                          destination={destination}
+                        />
+                      </div>
+                    )}
                     <div className="flex items-center justify-between gap-3 bg-surface-container-low rounded-xl px-3 py-2.5 flex-wrap">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <span className="material-symbols-outlined ms-filled text-primary" style={{ fontSize: '20px' }}>sports_motorsports</span>
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-on-surface truncate">{t.agent.name}</p>
-                          <p className="text-xs text-on-surface-variant">{t.agent.phone}</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <a href={`tel:${t.agent.phone}`} className="text-xs text-primary hover:underline">{t.agent.phone}</a>
+                            {t.agent.rating != null && (
+                              <span className="flex items-center gap-0.5 text-xs text-on-surface-variant">
+                                <span className="material-symbols-outlined ms-filled text-amber-400" style={{ fontSize: '13px' }}>star</span>
+                                {t.agent.rating} <span className="text-on-surface-variant/70">({t.agent.rating_count})</span>
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                       {t.distance_km != null && t.eta_minutes != null && (
@@ -186,18 +200,11 @@ export default function TrackOrderPage() {
                   </div>
                 )}
 
-                {t.status === 'AWAITING_DELIVERY' && (
-                  t.assigned_agent_name ? (
-                    <p className="mt-3 text-[11px] text-primary flex items-center gap-1">
-                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>sports_motorsports</span>
-                      {t.assigned_agent_name} is assigned and heading to pick up this order
-                    </p>
-                  ) : (
-                    <p className="mt-3 text-[11px] text-blue-600 flex items-center gap-1">
-                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
-                      Waiting for a nearby rider to accept this delivery
-                    </p>
-                  )
+                {t.status === 'AWAITING_DELIVERY' && !t.agent && (
+                  <p className="mt-3 text-[11px] text-blue-600 flex items-center gap-1">
+                    <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
+                    Waiting for a nearby rider to accept this delivery
+                  </p>
                 )}
               </div>
             )

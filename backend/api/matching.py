@@ -23,7 +23,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import F, Value, FloatField, ExpressionWrapper
+from django.db.models import F, Value, FloatField, ExpressionWrapper, Avg, Count
 from django.db.models.functions import Radians, Sin, Cos, ASin, Sqrt, Power
 from django.utils import timezone
 
@@ -631,16 +631,27 @@ def update_agent_location(agent, lat, lng):
 
 
 def _tracking_payload(fulfillment):
-    """Shared shape returned by all three tracking endpoints below. Agent location/distance/ETA
-    only make sense once a rider is actually en route — before that (or after DELIVERED) `agent`
-    is just null, not stale coordinates from whenever they last updated their location.
+    """Shared shape returned by all three tracking endpoints below. `agent` (contact + rating,
+    plus live location while still in flight) is populated as soon as a rider is committed to this
+    leg (see delivery_agent_accept()) — regardless of whether they've physically picked it up yet,
+    a deliberate product choice: the customer/pharmacy should be able to see and reach whoever is
+    already assigned, not just once they're OUT_FOR_DELIVERY.
 
-    assigned_agent_name, unlike `agent`, is populated as soon as a rider is committed to this leg
-    (see delivery_agent_accept()), regardless of whether they've physically picked it up yet — a
-    rider can now be assigned well before AWAITING_DELIVERY. This is deliberately just a name, not
-    live location/ETA (that's a live-map-before-pickup enhancement, out of scope here) — it exists
-    only so tracking pages can correctly say "a rider is already assigned" instead of "waiting for
-    a nearby rider" during ACCEPTED/PREPARED/PACKED.
+    Live location (lat/lng, and the distance/ETA derived from it) is deliberately withheld once the
+    fulfillment reaches DELIVERED or CANCELLED. DeliveryAgent.lat/lng is the rider's single, ever-
+    updating CURRENT position — not a snapshot frozen at delivery time — so leaving it in this
+    payload after the leg is done would let anyone who was ever delivered to by that rider keep
+    polling and watch their live location indefinitely, for a delivery that's completely over. Name/
+    phone/rating stay visible after DELIVERED (reasonable to keep as a receipt/support reference and
+    to see who the completed rating is for) since none of those are live-updating.
+
+    assigned_agent_name duplicates `agent.name` for pre-existing callers that only ever read the
+    name (e.g. the "assigned and heading to pick up" copy) — kept as its own field for backwards
+    compatibility rather than removed now that `agent` covers the same ground.
+
+    rating/rating_count are an on-the-fly Avg()/Count() over every OrderFulfillment.rider_rating
+    this agent has ever received — not a denormalized column on DeliveryAgent, so there's no
+    separate write path to keep in sync with the source ratings.
     """
     agent = fulfillment.delivery_agent
     data = {
@@ -649,16 +660,25 @@ def _tracking_payload(fulfillment):
         'pharmacy_name': fulfillment.pharmacy.name if fulfillment.pharmacy else None,
         'assigned_agent_name': agent.user.full_name if agent else None,
     }
-    if agent and fulfillment.status == 'OUT_FOR_DELIVERY':
+    if agent:
+        rating_agg = OrderFulfillment.objects.filter(delivery_agent=agent, rider_rating__isnull=False).aggregate(
+            avg=Avg('rider_rating'), count=Count('rider_rating'),
+        )
         data['agent'] = {
             'name': agent.user.full_name, 'phone': agent.phone,
-            'lat': agent.lat, 'lng': agent.lng,
+            'rating': round(rating_agg['avg'], 1) if rating_agg['avg'] is not None else None,
+            'rating_count': rating_agg['count'],
+            'lat': None, 'lng': None,
         }
-        address = fulfillment.order.address
-        if agent.lat is not None and agent.lng is not None and address is not None and address.lat is not None and address.lng is not None:
-            distance_km = _haversine_km(agent.lat, agent.lng, address.lat, address.lng)
-            data['distance_km'] = round(distance_km, 1)
-            data['eta_minutes'] = round((distance_km / 20) * 60)  # rough estimate, 20km/h assumed
+        live_tracking = fulfillment.status not in ('DELIVERED', 'CANCELLED')
+        if live_tracking:
+            data['agent']['lat'] = agent.lat
+            data['agent']['lng'] = agent.lng
+            address = fulfillment.order.address
+            if agent.lat is not None and agent.lng is not None and address is not None and address.lat is not None and address.lng is not None:
+                distance_km = _haversine_km(agent.lat, agent.lng, address.lat, address.lng)
+                data['distance_km'] = round(distance_km, 1)
+                data['eta_minutes'] = round((distance_km / 20) * 60)  # rough estimate, 20km/h assumed
     else:
         data['agent'] = None
     return data
