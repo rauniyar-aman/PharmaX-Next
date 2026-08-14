@@ -18,6 +18,7 @@ export default function DeliveryRequestsPage() {
   const loading = useDeliveryRequestsStore((s) => s.loading)
   const removeRequest = useDeliveryRequestsStore((s) => s.removeRequest)
   const [acceptingId, setAcceptingId] = useState<string | null>(null)
+  const [decliningId, setDecliningId] = useState<string | null>(null)
 
   const accept = async (id: string) => {
     setAcceptingId(id)
@@ -32,6 +33,22 @@ export default function DeliveryRequestsPage() {
       toast.error(msg)
     } finally {
       setAcceptingId(null)
+    }
+  }
+
+  // Just hides this job from THIS rider's own queue (and stops it re-triggering the repeating
+  // chime for them) — every other eligible rider still sees it untouched. See
+  // DeliveryRequestDeclineView on the backend for why this needs its own endpoint rather than a
+  // purely client-side dismiss: without persisting it, the next poll would bring it right back.
+  const decline = async (id: string) => {
+    setDecliningId(id)
+    try {
+      await api.post(`/delivery/requests/${id}/decline/`)
+      removeRequest(id)
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to decline.')
+    } finally {
+      setDecliningId(null)
     }
   }
 
@@ -77,10 +94,16 @@ export default function DeliveryRequestsPage() {
                 <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>flag</span>
                 Drop-off: {req.city || 'Unknown area'}
               </div>
-              <button onClick={() => accept(req.id)} disabled={acceptingId === req.id}
-                className="w-full py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
-                Accept
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => decline(req.id)} disabled={decliningId === req.id || acceptingId === req.id}
+                  className="flex-1 py-2 bg-surface-container-low text-on-surface-variant text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
+                  Decline
+                </button>
+                <button onClick={() => accept(req.id)} disabled={acceptingId === req.id || decliningId === req.id}
+                  className="flex-1 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
+                  Accept
+                </button>
+              </div>
             </div>
             )
           })}

@@ -368,6 +368,7 @@ class AdminOrderFulfillmentSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'pharmacy_name', 'status', 'items', 'delivery_agent_name',
             'accepted_at', 'delivery_broadcast_at', 'delivered_at',
+            'rider_rating', 'rider_rating_comment',
         ]
         read_only_fields = fields
 
@@ -858,12 +859,16 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
         return str(payout.commission_amount) if payout else None
 
     def get_items(self, obj):
+        # Plain .all() (no .select_related() chained on) so this reads from the
+        # prefetch_related('order_items__medicine') cache the view sets up — chaining
+        # .select_related() here builds a distinct queryset that bypasses that cache and fires
+        # one extra query per fulfillment instead of zero.
         return [
             {
                 'medicine_id': str(i.medicine_id), 'medicine_name': i.medicine.name,
                 'quantity': i.quantity, 'unit_price': str(i.unit_price),
             }
-            for i in obj.order_items.select_related('medicine').all()
+            for i in obj.order_items.all()
         ]
 
     def get_delivery_agent_name(self, obj):

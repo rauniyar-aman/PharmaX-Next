@@ -47,6 +47,7 @@ const FULFILLMENT_STATUS_CFG: Record<string, { label: string; color: string; ico
 }
 
 interface MedRating { rating: number; comment: string; existing: boolean }
+interface RiderRating { rating: number; comment: string; existing: boolean }
 
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -54,17 +55,30 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
   const [cancelling, setCancelling] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [orderRating, setOrderRating] = useState(0)
   const [orderComment, setOrderComment] = useState('')
   const [ratingLoading, setRatingLoading] = useState(false)
   const [medRatings, setMedRatings] = useState<Record<string, MedRating>>({})
   const [medSubmitting, setMedSubmitting] = useState<string | null>(null)
+  const [riderRatings, setRiderRatings] = useState<Record<string, RiderRating>>({})
+  const [riderSubmitting, setRiderSubmitting] = useState<string | null>(null)
 
   useEffect(() => {
     api.get(`/orders/${id}/`).then(async (r) => {
       const o: Order = r.data.data.order
       setOrder(o)
       if (o.order_rating) { setOrderRating(o.order_rating); setOrderComment(o.order_comment || '') }
+
+      const ratedFulfillments = (o.fulfillments || []).filter((f) => f.status === 'DELIVERED' && f.delivery_agent_name)
+      if (ratedFulfillments.length) {
+        setRiderRatings(Object.fromEntries(ratedFulfillments.map((f) => [
+          f.id,
+          f.rider_rating
+            ? { rating: f.rider_rating, comment: f.rider_rating_comment || '', existing: true }
+            : { rating: 0, comment: '', existing: false },
+        ])))
+      }
 
       if (o.status === 'DELIVERED') {
         const entries = await Promise.all(o.items.map(async (item) => {
@@ -95,6 +109,19 @@ export default function OrderDetailPage() {
     }
   }
 
+  const handleDelete = async () => {
+    if (!order || !confirm('Permanently delete this cancelled order? This cannot be undone.')) return
+    setDeleting(true)
+    try {
+      await api.delete(`/orders/${order.id}/`)
+      toast.success('Order deleted.')
+      router.push('/orders')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Could not delete order.')
+      setDeleting(false)
+    }
+  }
+
   const handleCompletePayment = () => {
     if (!order) return
     // Resumes the same /checkout/payment flow used right after checkout — it only needs
@@ -115,6 +142,21 @@ export default function OrderDetailPage() {
       toast.error(err.response?.data?.message || 'Could not submit rating.')
     } finally {
       setRatingLoading(false)
+    }
+  }
+
+  const handleRateRider = async (fulfillmentId: string) => {
+    const r = riderRatings[fulfillmentId]
+    if (!r || !r.rating) return
+    setRiderSubmitting(fulfillmentId)
+    try {
+      await api.put(`/orders/fulfillments/${fulfillmentId}/rate-rider/`, { rider_rating: r.rating, rider_rating_comment: r.comment })
+      setRiderRatings((p) => ({ ...p, [fulfillmentId]: { ...p[fulfillmentId], existing: true } }))
+      toast.success('Thanks for rating your rider!')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Could not save rating.')
+    } finally {
+      setRiderSubmitting(null)
     }
   }
 
@@ -174,7 +216,7 @@ export default function OrderDetailPage() {
               Complete Payment
             </button>
           )}
-          {hasAcceptedItems && !isCancelled && (
+          {hasAcceptedItems && !isCancelled && !isDelivered && (
             <Link href={`/orders/${order.id}/track`}
               className="px-4 py-1.5 border border-primary/30 text-primary text-sm font-semibold rounded-full hover:bg-primary/10 transition-colors flex items-center gap-1.5">
               <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>location_on</span>
@@ -186,6 +228,13 @@ export default function OrderDetailPage() {
               className="px-4 py-1.5 border border-error/30 text-error text-sm font-semibold rounded-full hover:bg-error/10 transition-colors disabled:opacity-60 flex items-center gap-1.5">
               <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>cancel</span>
               {cancelling ? 'Cancelling…' : 'Cancel Order'}
+            </button>
+          )}
+          {order.status === 'CANCELLED' && (
+            <button onClick={handleDelete} disabled={deleting}
+              className="px-4 py-1.5 border border-error/30 text-error text-sm font-semibold rounded-full hover:bg-error/10 transition-colors disabled:opacity-60 flex items-center gap-1.5">
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
+              {deleting ? 'Deleting…' : 'Delete Order'}
             </button>
           )}
         </div>
@@ -241,19 +290,39 @@ export default function OrderDetailPage() {
           <p className="text-sm font-bold text-on-surface mb-1">Pharmacy Progress</p>
           {order.fulfillments.map((f) => {
             const cfg = FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+            const rr = riderRatings[f.id]
+            const canRateRider = f.status === 'DELIVERED' && f.delivery_agent_name && rr
             return (
-              <div key={f.id} className="flex items-center justify-between gap-3 bg-surface-container-low rounded-xl px-3 py-2.5 flex-wrap">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-on-surface truncate">{f.pharmacy_name || 'Pharmacy'}</p>
-                  <p className="text-xs text-on-surface-variant truncate">
-                    {f.items.map((i) => `${i.medicine_name} × ${i.quantity}`).join(', ')}
-                    {f.delivery_agent_name ? ` · Rider: ${f.delivery_agent_name}` : ''}
-                  </p>
+              <div key={f.id} className="bg-surface-container-low rounded-xl px-3 py-2.5 space-y-2">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-on-surface truncate">{f.pharmacy_name || 'Pharmacy'}</p>
+                    <p className="text-xs text-on-surface-variant truncate">
+                      {f.items.map((i) => `${i.medicine_name} × ${i.quantity}`).join(', ')}
+                      {f.delivery_agent_name ? ` · Rider: ${f.delivery_agent_name}` : ''}
+                    </p>
+                  </div>
+                  <span className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${cfg.color}`}>
+                    <span className="material-symbols-outlined ms-filled" style={{ fontSize: '13px' }}>{cfg.icon}</span>
+                    {cfg.label}
+                  </span>
                 </div>
-                <span className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${cfg.color}`}>
-                  <span className="material-symbols-outlined ms-filled" style={{ fontSize: '13px' }}>{cfg.icon}</span>
-                  {cfg.label}
-                </span>
+                {canRateRider && (
+                  <div className="flex items-center gap-2 pl-1">
+                    <div className="flex items-center gap-0.5">
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <button key={n} type="button"
+                          onClick={() => setRiderRatings((p) => ({ ...p, [f.id]: { ...p[f.id], rating: n } }))}>
+                          <span className={`material-symbols-outlined ${n <= rr.rating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '18px' }}>star</span>
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => handleRateRider(f.id)} disabled={!rr.rating || riderSubmitting === f.id}
+                      className="text-xs font-semibold text-primary hover:underline disabled:opacity-50 disabled:no-underline">
+                      {riderSubmitting === f.id ? 'Saving…' : rr.existing ? 'Update rider rating' : 'Rate this rider'}
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })}

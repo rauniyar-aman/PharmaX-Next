@@ -977,12 +977,43 @@ class OrderFulfillment(models.Model):
     delivered_at = models.DateTimeField(null=True, blank=True)
     delivery_broadcast_at = models.DateTimeField(null=True, blank=True)  # set when broadcast_delivery() runs; used to detect a stale delivery broadcast (no per-agent request model exists to check PENDING-ness against, unlike FulfillmentRequest in Stage 2)
     delivery_stale_notified_at = models.DateTimeField(null=True, blank=True)  # set by expire_stale_delivery_broadcasts() the first time it reports this fulfillment, so the opportunistic poll-triggered sweep notifies admins once, not on every poll
+    # Customer's rating of the RIDER for this specific leg — separate from Order.order_rating
+    # (rates the overall order experience, not any one person) since a split order can have a
+    # different agent per leg. Same pattern as Order.order_rating/order_comment. DeliveryAgent's
+    # displayed rating is an on-the-fly Avg() over these, not a denormalized column, to avoid a
+    # second write path to keep in sync.
+    rider_rating = models.IntegerField(null=True, blank=True)
+    rider_rating_comment = models.TextField(null=True, blank=True)
 
     class Meta:
         db_table = 'order_fulfillments'
 
     def __str__(self):
         return f'Fulfillment {self.id} — Order {self.order_id}'
+
+
+class DeliveryDecline(models.Model):
+    """Records that a rider explicitly declined a delivery job — the delivery-side equivalent of
+    FulfillmentRequest.status='DECLINED' from Stage 2, except there's no per-agent request row to
+    flip here in the first place: any eligible, online, unclaimed agent can accept a broadcast job
+    at any time (see broadcast_delivery()'s docstring), so without this, a declined job would just
+    silently reappear in that same agent's queue on the very next poll. Purely a per-agent
+    visibility filter — doesn't touch delivery_broadcast_at or any other agent's ability to see or
+    accept the same job.
+
+    Always created for every sibling fulfillment on the same order in one call (see
+    DeliveryRequestDeclineView), never just the one the rider clicked decline on — a combined
+    pickup across multiple pharmacies is a single job even though DeliveryRequestListView shows it
+    as one card per leg, so declining one leg has to mean declining the whole order for this rider,
+    consistent with delivery_agent_accept() treating every leg as one atomic unit."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    agent = models.ForeignKey(DeliveryAgent, on_delete=models.CASCADE, related_name='declines')
+    fulfillment = models.ForeignKey(OrderFulfillment, on_delete=models.CASCADE, related_name='declines')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'delivery_declines'
+        unique_together = ('agent', 'fulfillment')
 
 
 class FulfillmentRequest(models.Model):

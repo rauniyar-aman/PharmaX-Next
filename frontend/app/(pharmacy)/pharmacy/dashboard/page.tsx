@@ -1,12 +1,17 @@
 'use client'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import api from '@/lib/api'
-import type { PharmacyOrderFulfillment, PharmacyListing } from '@/types'
+import type { PharmacyOrderFulfillment } from '@/types'
 import { usePharmacyRequestsStore } from '@/store/pharmacyRequests'
 
-const ACTIVE_STATUSES = ['ACCEPTED', 'AWAITING_DELIVERY', 'OUT_FOR_DELIVERY']
-const LOW_STOCK_THRESHOLD = 5
+type DashboardStats = {
+  active: number
+  delivered: number
+  pending_payout: string
+  total_paid: string
+  low_stock: number
+}
 
 function StatCard({ icon, label, value, href, tone = 'default' }: {
   icon: string; label: string; value: string; href?: string; tone?: 'default' | 'warning' | 'success'
@@ -31,32 +36,19 @@ function StatCard({ icon, label, value, href, tone = 'default' }: {
 }
 
 export default function PharmacyDashboardPage() {
-  const [orders, setOrders] = useState<PharmacyOrderFulfillment[]>([])
-  const [listings, setListings] = useState<PharmacyListing[]>([])
+  const [recentOrders, setRecentOrders] = useState<PharmacyOrderFulfillment[]>([])
+  const [stats, setStats] = useState<DashboardStats>({ active: 0, delivered: 0, pending_payout: '0', total_paid: '0', low_stock: 0 })
   const [showFinance, setShowFinance] = useState(true)
   const [loading, setLoading] = useState(true)
   const pendingRequests = usePharmacyRequestsStore((s) => s.requests.length)
 
   useEffect(() => {
-    Promise.all([
-      api.get('/pharmacy/orders/').then((r) => {
-        setOrders(r.data.data.orders || [])
-        setShowFinance(r.data.data.show_finance !== false)
-      }),
-      api.get('/pharmacy/listings/').then((r) => setListings(r.data.data.listings || [])),
-    ]).finally(() => setLoading(false))
+    api.get('/pharmacy/dashboard-stats/').then((r) => {
+      setStats(r.data.data.stats)
+      setRecentOrders(r.data.data.recent_orders || [])
+      setShowFinance(r.data.data.show_finance !== false)
+    }).finally(() => setLoading(false))
   }, [])
-
-  const stats = useMemo(() => {
-    const active = orders.filter((o) => ACTIVE_STATUSES.includes(o.status)).length
-    const delivered = orders.filter((o) => o.status === 'DELIVERED').length
-    const pendingPayout = orders.filter((o) => o.payment_status === 'PENDING').reduce((s, o) => s + Number(o.payout_amount || 0), 0)
-    const totalPaid = orders.filter((o) => o.payment_status === 'PAID').reduce((s, o) => s + Number(o.payout_amount || 0), 0)
-    const lowStock = listings.filter((l) => l.is_available && l.stock_quantity <= LOW_STOCK_THRESHOLD).length
-    return { active, delivered, pendingPayout, totalPaid, lowStock }
-  }, [orders, listings])
-
-  const recentOrders = orders.slice(0, 5)
 
   return (
     <div className="space-y-6">
@@ -74,11 +66,11 @@ export default function PharmacyDashboardPage() {
           <StatCard icon="check_circle" label="Delivered" value={String(stats.delivered)} href="/pharmacy/orders" tone="success" />
           {showFinance && (
             <>
-              <StatCard icon="account_balance_wallet" label="Pending Payout" value={`NPR ${stats.pendingPayout.toFixed(0)}`} href="/pharmacy/orders" tone={stats.pendingPayout > 0 ? 'warning' : 'default'} />
-              <StatCard icon="paid" label="Total Paid Out" value={`NPR ${stats.totalPaid.toFixed(0)}`} tone="success" />
+              <StatCard icon="account_balance_wallet" label="Pending Payout" value={`NPR ${Number(stats.pending_payout).toFixed(0)}`} href="/pharmacy/orders" tone={Number(stats.pending_payout) > 0 ? 'warning' : 'default'} />
+              <StatCard icon="paid" label="Total Paid Out" value={`NPR ${Number(stats.total_paid).toFixed(0)}`} tone="success" />
             </>
           )}
-          <StatCard icon="production_quantity_limits" label="Low / Out of Stock" value={String(stats.lowStock)} href="/pharmacy/inventory" tone={stats.lowStock > 0 ? 'warning' : 'default'} />
+          <StatCard icon="production_quantity_limits" label="Low / Out of Stock" value={String(stats.low_stock)} href="/pharmacy/inventory" tone={stats.low_stock > 0 ? 'warning' : 'default'} />
         </div>
       )}
 

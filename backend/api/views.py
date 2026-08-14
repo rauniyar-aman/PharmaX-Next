@@ -14,7 +14,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.db.models import Q, Avg, Count, Sum, F
+from django.db.models import Q, Avg, Count, Sum, F, ProtectedError
 from django.db import transaction
 from django.http import HttpResponseRedirect
 from django.conf import settings
@@ -27,7 +27,7 @@ from .models import (
     LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment,
     PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
-    Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment,
+    Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, DeliveryDecline,
     PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours,
     PharmacyDocument, PharmacyLocationChangeRequest,
 )
@@ -1383,6 +1383,22 @@ class OrderDetailView(APIView):
         data['fulfillments'] = AdminOrderFulfillmentSerializer(order.fulfillments.all(), many=True).data
         return Response({'success': True, 'data': {'order': data}})
 
+    def delete(self, request, pk):
+        # Customer self-service equivalent of AdminOrderDetailView.delete() — same CANCELLED-only
+        # restriction and same reasoning (a cancelled order never reached DELIVERED, so it never
+        # has the PROTECTed financial records a delivered one would).
+        try:
+            order = Order.objects.get(id=pk, user=request.user)
+        except Order.DoesNotExist:
+            return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if order.status != 'CANCELLED':
+            return Response({'success': False, 'message': 'Only cancelled orders can be deleted.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            order.delete()
+        except ProtectedError:
+            return Response({'success': False, 'message': 'This order has related records and cannot be deleted.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'message': 'Order deleted.'})
+
 
 class OrderTrackingView(APIView):
     """Live(ish) rider tracking for the customer's own order — one entry per fulfillment, since a
@@ -1489,6 +1505,34 @@ class OrderRateView(APIView):
         order.order_comment = request.data.get('order_comment') or None
         order.save(update_fields=['order_rating', 'order_comment'])
         return Response({'success': True, 'data': {'order': OrderSerializer(order).data}, 'message': 'Order rated.'})
+
+
+class FulfillmentRateRiderView(APIView):
+    """Rates the specific rider who handled one leg of the customer's own order — separate from
+    OrderRateView above (which rates the overall order, not any one person). Restricted to
+    DELIVERED legs that actually had a rider assigned; `order__user=request.user` is the ownership
+    boundary, same pattern as every other customer-scoped order endpoint."""
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, pk):
+        rating = request.data.get('rider_rating')
+        if not rating or not (1 <= int(rating) <= 5):
+            return Response({'success': False, 'message': 'Rating must be between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            fulfillment = OrderFulfillment.objects.get(
+                id=pk, order__user=request.user, status='DELIVERED', delivery_agent__isnull=False,
+            )
+        except OrderFulfillment.DoesNotExist:
+            return Response({'success': False, 'message': 'Delivered fulfillment with a rider not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        fulfillment.rider_rating = int(rating)
+        fulfillment.rider_rating_comment = request.data.get('rider_rating_comment') or None
+        fulfillment.save(update_fields=['rider_rating', 'rider_rating_comment'])
+        return Response({
+            'success': True,
+            'data': {'fulfillment': AdminOrderFulfillmentSerializer(fulfillment).data},
+            'message': 'Rider rated.',
+        })
 
 
 # ─── Payment ──────────────────────────────────────────────────────────────────
@@ -3414,6 +3458,26 @@ class AdminOrderDetailView(APIView):
         )
         return Response({'success': True, 'data': {'order': OrderSerializer(order).data}})
 
+    def delete(self, request, pk):
+        # Restricted to CANCELLED only — every other status is either still in play (BROADCASTING
+        # through OUT_FOR_DELIVERY) or a completed transaction (DELIVERED/RETURNED) worth keeping
+        # for records. A cancelled order never reached DELIVERED, so it never generated a
+        # PharmacyPayout/DeliveryAgentEarning/DeliveryAgentCodLiability row (those are only created
+        # in _create_settlement_records() on the PLACED -> DELIVERED transition) — those FKs are
+        # on_delete=PROTECT, so the ProtectedError catch below is a defensive backstop, not the
+        # expected path.
+        try:
+            order = Order.objects.get(id=pk)
+        except Order.DoesNotExist:
+            return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if order.status != 'CANCELLED':
+            return Response({'success': False, 'message': 'Only cancelled orders can be deleted.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            order.delete()
+        except ProtectedError:
+            return Response({'success': False, 'message': 'This order has related financial records and cannot be deleted.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'message': 'Order deleted.'})
+
 
 class AdminOrderTrackingView(APIView):
     """Admin's on-demand lookup — no ownership scoping (any order), and deliberately no push
@@ -4440,6 +4504,57 @@ class PharmacyRequestDeclineView(APIView):
         return Response({'success': True, 'message': 'Declined.'})
 
 
+class PharmacyDashboardStatsView(APIView):
+    """Aggregates + the 5 most recent orders for the dashboard's stat cards. Computed via DB
+    aggregation over the pharmacy's full order/listing history instead of fetching and
+    serializing every fulfillment + listing just to reduce them to a handful of numbers — that
+    full unpaginated fetch is what PharmacyOrderListView is for, needed by the Order History page
+    for its client-side filters, but it has no place being pulled on every dashboard load."""
+    permission_classes = [IsPharmacy]
+    LOW_STOCK_THRESHOLD = 5
+    ACTIVE_STATUSES = ['ACCEPTED', 'AWAITING_DELIVERY', 'OUT_FOR_DELIVERY']
+
+    def get(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+
+        show_finance = _can_view_finance(request.user, pharmacy)
+        fulfillments = OrderFulfillment.objects.filter(pharmacy=pharmacy)
+        active = fulfillments.filter(status__in=self.ACTIVE_STATUSES).count()
+        delivered = fulfillments.filter(status='DELIVERED').count()
+
+        pending_payout = total_paid = 0
+        if show_finance:
+            payouts = PharmacyPayout.objects.filter(pharmacy=pharmacy)
+            pending_payout = payouts.filter(status='PENDING').aggregate(total=Sum('net_payable'))['total'] or 0
+            total_paid = payouts.filter(status='PAID').aggregate(total=Sum('net_payable'))['total'] or 0
+
+        low_stock = PharmacyMedicineListing.objects.filter(
+            pharmacy=pharmacy, is_available=True, stock_quantity__lte=self.LOW_STOCK_THRESHOLD,
+        ).count()
+
+        recent = fulfillments.select_related(
+            'order__address', 'delivery_agent__user', 'pharmacy_payout',
+        ).prefetch_related('order_items__medicine').order_by('-accepted_at')[:5]
+        recent_serializer = PharmacyOrderFulfillmentSerializer(recent, many=True, context={'show_finance': show_finance})
+
+        return Response({
+            'success': True,
+            'data': {
+                'show_finance': show_finance,
+                'stats': {
+                    'active': active,
+                    'delivered': delivered,
+                    'pending_payout': str(pending_payout),
+                    'total_paid': str(total_paid),
+                    'low_stock': low_stock,
+                },
+                'recent_orders': recent_serializer.data,
+            },
+        })
+
+
 class PharmacyOrderListView(APIView):
     """This pharmacy's own OrderFulfillments (items it won) — scoped the same way as everything
     else here: filtered on the resolved pharmacy."""
@@ -4618,6 +4733,49 @@ class PharmacyTeamMemberDetailView(APIView):
 PRE_PICKUP_STATUSES = ('ACCEPTED', 'PREPARED', 'PACKED', 'AWAITING_DELIVERY')
 
 
+class DeliveryFinanceView(APIView):
+    """The rider's own combined financial profile — both ledgers at once, same shape as
+    AdminAgentFinanceProfileView above but self-scoped (no `agent` param, filtered to
+    request.user.delivery_agent) and read-only: confirming a COD remittance stays an
+    admin-only action (see AdminCodLiabilityConfirmRemittanceView) since a rider self-marking
+    cash they still owe as 'remitted' would defeat the point of the ledger."""
+    permission_classes = [IsDeliveryAgent]
+
+    def get(self, request):
+        agent = request.user.delivery_agent
+
+        liabilities = DeliveryAgentCodLiability.objects.filter(agent=agent).select_related('fulfillment__order', 'confirmed_by').order_by('-created_at')
+        earnings = DeliveryAgentEarning.objects.filter(agent=agent).select_related('fulfillment__order', 'paid_by').order_by('-created_at')
+
+        pending_liabilities = liabilities.filter(status='PENDING')
+        total_collected = liabilities.aggregate(t=Sum('amount_collected'))['t'] or Decimal('0')
+        total_outstanding = pending_liabilities.aggregate(t=Sum('amount_collected'))['t'] or Decimal('0')
+        oldest_pending = pending_liabilities.order_by('created_at').first()
+        oldest_age_days = (timezone.now() - oldest_pending.created_at).days if oldest_pending else None
+
+        total_earned = earnings.aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        total_pending_earnings = earnings.filter(status='PENDING').aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        total_paid_earnings = earnings.filter(status='PAID').aggregate(t=Sum('amount'))['t'] or Decimal('0')
+
+        return Response({
+            'success': True,
+            'data': {
+                'cod_record': {
+                    'liabilities': AdminDeliveryAgentCodLiabilitySerializer(liabilities, many=True).data,
+                    'total_collected': str(total_collected),
+                    'total_outstanding': str(total_outstanding),
+                    'oldest_unremitted_age_days': oldest_age_days,
+                },
+                'earnings_record': {
+                    'earnings': AdminDeliveryAgentEarningSerializer(earnings, many=True).data,
+                    'total_earned': str(total_earned),
+                    'total_pending': str(total_pending_earnings),
+                    'total_paid': str(total_paid_earnings),
+                },
+            },
+        })
+
+
 class DeliveryRequestListView(APIView):
     """Available-to-accept, unclaimed deliveries — every fulfillment this specific agent currently
     qualifies for, per the same live eligibility check delivery_agent_accept() uses.
@@ -4627,7 +4785,8 @@ class DeliveryRequestListView(APIView):
     fulfillment from ACCEPTED through AWAITING_DELIVERY, not just AWAITING_DELIVERY. delivery_agent
     __isnull=True is what "not yet claimed" means now — status alone no longer tells you that,
     since a fulfillment can sit in any of these stages either with or without a rider already
-    assigned (see _maybe_finalize_pickup())."""
+    assigned (see _maybe_finalize_pickup()). Excludes anything this agent has already declined
+    (see DeliveryDecline) — still visible to every other eligible agent."""
     permission_classes = [IsDeliveryAgent]
 
     def get(self, request):
@@ -4638,7 +4797,7 @@ class DeliveryRequestListView(APIView):
         expire_stale_delivery_broadcasts()
         candidates = OrderFulfillment.objects.filter(
             status__in=PRE_PICKUP_STATUSES, delivery_broadcast_at__isnull=False, delivery_agent__isnull=True,
-        ).select_related('pharmacy', 'order__address').prefetch_related('order_items__medicine')
+        ).exclude(declines__agent=agent).select_related('pharmacy', 'order__address').prefetch_related('order_items__medicine')
         eligible = [f for f in candidates if _agent_eligible_for(agent, f)]
         return Response({'success': True, 'data': {'requests': DeliveryFulfillmentSerializer(eligible, many=True).data}})
 
@@ -4656,6 +4815,28 @@ class DeliveryRequestAcceptView(APIView):
         if not ok:
             return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'success': True, 'message': 'Accepted! Head to the pharmacy for pickup.'})
+
+
+class DeliveryRequestDeclineView(APIView):
+    """Lets a rider say "not this one" — see DeliveryDecline's docstring for why a per-agent record
+    is what's actually needed here (there's no request row to flip, unlike Stage 2's pharmacy
+    decline). Records the decline for every sibling fulfillment on the same order at once, since a
+    combined pickup is declined as a whole, not leg by leg."""
+    permission_classes = [IsDeliveryAgent]
+
+    def post(self, request, pk):
+        try:
+            fulfillment = OrderFulfillment.objects.get(pk=pk, status__in=PRE_PICKUP_STATUSES, delivery_agent__isnull=True)
+        except OrderFulfillment.DoesNotExist:
+            return Response({'success': False, 'message': 'Delivery not found or no longer available.'}, status=status.HTTP_404_NOT_FOUND)
+
+        agent = request.user.delivery_agent
+        sibling_ids = OrderFulfillment.objects.filter(order_id=fulfillment.order_id).exclude(status='CANCELLED').values_list('id', flat=True)
+        DeliveryDecline.objects.bulk_create(
+            [DeliveryDecline(agent=agent, fulfillment_id=fid) for fid in sibling_ids],
+            ignore_conflicts=True,
+        )
+        return Response({'success': True, 'message': 'Declined.'})
 
 
 class DeliveryActiveListView(APIView):
