@@ -184,12 +184,28 @@ class Prescription(models.Model):
     expiry_date = models.DateField(null=True, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     checkout_draft = models.BooleanField(default=False)
+    medicines_reviewed_at = models.DateTimeField(null=True, blank=True)  # set once the customer completes
+    # the review screen — prevents the "please review" prompt from nagging them again after they've acted.
 
     class Meta:
         db_table = 'prescriptions'
 
     def __str__(self):
         return f'{self.user.email} — {self.status}'
+
+
+class PrescriptionMedicineItem(models.Model):
+    """One medicine admin identified from a prescription, with a suggested quantity, pending the
+    customer's own review before it becomes a real cart item."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    prescription = models.ForeignKey(Prescription, on_delete=models.CASCADE, related_name='medicine_items')
+    medicine = models.ForeignKey(Medicine, on_delete=models.PROTECT, related_name='+')
+    quantity = models.PositiveIntegerField(default=1)
+    added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'prescription_medicine_items'
 
 
 class Cart(models.Model):
