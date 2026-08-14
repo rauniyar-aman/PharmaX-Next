@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest
+from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -302,6 +302,15 @@ class PrescriptionSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.file.url)
             return obj.file.url
         return obj.file_url or None
+
+
+class PrescriptionMedicineItemSerializer(serializers.ModelSerializer):
+    medicine = MedicineListSerializer(read_only=True)
+
+    class Meta:
+        model = PrescriptionMedicineItem
+        fields = ['id', 'medicine', 'quantity', 'created_at']
+        read_only_fields = ['id', 'created_at']
 
 
 class CartItemSerializer(serializers.ModelSerializer):

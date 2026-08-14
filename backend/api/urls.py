@@ -43,6 +43,8 @@ urlpatterns = [
     # Prescriptions
     path('prescriptions/',          views.PrescriptionListView.as_view(),   name='prescriptions'),
     path('prescriptions/<uuid:pk>/', views.PrescriptionDetailView.as_view(), name='prescription-detail'),
+    path('prescriptions/<uuid:pk>/medicine-items/',         views.PrescriptionMedicineItemListView.as_view(),    name='prescription-medicine-items'),
+    path('prescriptions/<uuid:pk>/medicine-items/confirm/', views.PrescriptionMedicineItemConfirmView.as_view(), name='prescription-medicine-items-confirm'),
 
     # Orders
     path('orders/',          views.OrderListView.as_view(),   name='orders'),
@@ -154,6 +156,8 @@ urlpatterns = [
     path('admin/orders/<uuid:pk>/tracking/',    views.AdminOrderTrackingView.as_view(),     name='admin-order-tracking'),
     path('admin/prescriptions/',                views.AdminPrescriptionListView.as_view(),  name='admin-prescriptions'),
     path('admin/prescriptions/<uuid:pk>/',      views.AdminPrescriptionDetailView.as_view(), name='admin-prescription-detail'),
+    path('admin/prescriptions/<uuid:pk>/medicine-items/',              views.AdminPrescriptionMedicineItemListView.as_view(),   name='admin-prescription-medicine-items'),
+    path('admin/prescriptions/<uuid:pk>/medicine-items/<uuid:item_id>/', views.AdminPrescriptionMedicineItemDetailView.as_view(), name='admin-prescription-medicine-item-detail'),
     path('admin/customers/',                    views.AdminCustomerListView.as_view(),      name='admin-customers'),
     path('admin/customers/<uuid:pk>/',          views.AdminCustomerDetailView.as_view(),    name='admin-customer-detail'),
     path('admin/customers/<uuid:pk>/block/',    views.AdminCustomerBlockView.as_view(),     name='admin-customer-block'),
