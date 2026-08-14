@@ -21,7 +21,7 @@ from django.conf import settings
 from decimal import Decimal
 
 from .models import (
-    User, Address, Category, Brand, Medicine, Prescription,
+    User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem,
     Cart, CartItem, Order, OrderItem, Review, WishlistItem,
     Notification, SystemSetting, StockLog,
     LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment,
@@ -36,7 +36,7 @@ from .serializers import (
     LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
     ChangePasswordSerializer, UserProfileSerializer,
     CategorySerializer, BrandSerializer, MedicineListSerializer, MedicineDetailSerializer,
-    AddressSerializer, PrescriptionSerializer, CartSerializer,
+    AddressSerializer, PrescriptionSerializer, PrescriptionMedicineItemSerializer, CartSerializer,
     CartItemSerializer, OrderSerializer, ReviewSerializer, MyReviewSerializer,
     NotificationSerializer, StockLogSerializer, SystemSettingSerializer,
     LabTestCategorySerializer, LabTestListSerializer, LabTestDetailSerializer, LabTestBookingSerializer,
@@ -676,6 +676,16 @@ class CartView(APIView):
         return Response({'success': True, 'message': 'Cart cleared.'})
 
 
+def _add_to_cart(user, medicine, quantity):
+    """Adds `quantity` of `medicine` to `user`'s cart, incrementing the existing line if already present."""
+    cart, _ = Cart.objects.get_or_create(user=user)
+    item, created = CartItem.objects.get_or_create(cart=cart, medicine=medicine, defaults={'quantity': quantity})
+    if not created:
+        item.quantity += quantity
+        item.save(update_fields=['quantity'])
+    return cart
+
+
 class CartItemView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -689,12 +699,7 @@ class CartItemView(APIView):
         except Medicine.DoesNotExist:
             return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        cart, _ = Cart.objects.get_or_create(user=request.user)
-        item, created = CartItem.objects.get_or_create(cart=cart, medicine=medicine, defaults={'quantity': quantity})
-        if not created:
-            item.quantity += quantity
-            item.save(update_fields=['quantity'])
-
+        cart = _add_to_cart(request.user, medicine, quantity)
         return Response({'success': True, 'data': {'cart': CartSerializer(cart).data}}, status=status.HTTP_201_CREATED)
 
     def put(self, request, pk):
@@ -868,6 +873,64 @@ class PrescriptionDetailView(APIView):
             p.file.delete(save=False)
         p.delete()
         return Response({'success': True, 'message': 'Prescription deleted.'})
+
+
+class PrescriptionMedicineItemListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            prescription = Prescription.objects.get(id=pk, user=request.user)
+        except Prescription.DoesNotExist:
+            return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if prescription.status != 'VERIFIED':
+            return Response({'success': False, 'message': 'This prescription has not been verified yet.'}, status=status.HTTP_400_BAD_REQUEST)
+        items = prescription.medicine_items.select_related('medicine__category', 'medicine__brand').order_by('created_at')
+        return Response({'success': True, 'data': {'medicine_items': PrescriptionMedicineItemSerializer(items, many=True).data}})
+
+
+class PrescriptionMedicineItemConfirmView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            prescription = Prescription.objects.get(id=pk, user=request.user)
+        except Prescription.DoesNotExist:
+            return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if prescription.status != 'VERIFIED':
+            return Response({'success': False, 'message': 'This prescription has not been verified yet.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        entries = request.data.get('items')
+        if not isinstance(entries, list):
+            return Response({'success': False, 'message': "'items' must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+
+        kept_ids = [e.get('medicine_item_id') for e in entries if isinstance(e, dict)]
+        db_items = {
+            str(i.id): i for i in
+            PrescriptionMedicineItem.objects.filter(id__in=kept_ids, prescription=prescription).select_related('medicine')
+        }
+
+        cart = Cart.objects.filter(user=request.user).first()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            db_item = db_items.get(str(entry.get('medicine_item_id')))
+            if not db_item:
+                continue
+            try:
+                quantity = int(entry.get('quantity', db_item.quantity))
+            except (TypeError, ValueError):
+                continue
+            if quantity < 1:
+                continue
+            cart = _add_to_cart(request.user, db_item.medicine, quantity)
+
+        prescription.medicines_reviewed_at = timezone.now()
+        prescription.save(update_fields=['medicines_reviewed_at'])
+
+        if cart is None:
+            cart, _ = Cart.objects.get_or_create(user=request.user)
+        return Response({'success': True, 'data': {'cart': CartSerializer(cart).data}})
 
 
 # ─── Orders ───────────────────────────────────────────────────────────────────
@@ -3521,6 +3584,17 @@ class AdminPrescriptionListView(APIView):
 class AdminPrescriptionDetailView(APIView):
     permission_classes = [require_permission('manage_prescriptions')]
 
+    def get(self, request, pk):
+        try:
+            prescription = Prescription.objects.select_related('user').get(id=pk)
+        except Prescription.DoesNotExist:
+            return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
+        data = PrescriptionSerializer(prescription).data
+        data['customer'] = {'id': str(prescription.user.id), 'full_name': prescription.user.full_name, 'email': prescription.user.email}
+        items = prescription.medicine_items.select_related('medicine__category', 'medicine__brand').order_by('created_at')
+        data['medicine_items'] = PrescriptionMedicineItemSerializer(items, many=True).data
+        return Response({'success': True, 'data': {'prescription': data}})
+
     def put(self, request, pk):
         try:
             prescription = Prescription.objects.select_related('user').get(id=pk)
@@ -3533,13 +3607,67 @@ class AdminPrescriptionDetailView(APIView):
         prescription.status = new_status
         prescription.rejection_reason = rejection_reason if new_status == 'REJECTED' else ''
         prescription.save(update_fields=['status', 'rejection_reason'])
+
+        item_count = prescription.medicine_items.count() if new_status == 'VERIFIED' else 0
+        if item_count:
+            message = f'Your prescription has been verified — we found {item_count} medicine(s). Review and add them to your cart.'
+            link = f'/prescriptions/{prescription.id}/review'
+        else:
+            message = f'Your prescription has been {new_status.lower()}.' + (f' Reason: {rejection_reason}' if rejection_reason else '')
+            link = None
         Notification.objects.create(
             user=prescription.user,
             type='PRESCRIPTION',
             title='Prescription ' + new_status.capitalize(),
-            message=f'Your prescription has been {new_status.lower()}.' + (f' Reason: {rejection_reason}' if rejection_reason else ''),
+            message=message,
+            link=link,
         )
         return Response({'success': True, 'data': {'prescription': PrescriptionSerializer(prescription).data}})
+
+
+class AdminPrescriptionMedicineItemListView(APIView):
+    permission_classes = [require_permission('manage_prescriptions')]
+
+    def post(self, request, pk):
+        try:
+            prescription = Prescription.objects.get(id=pk)
+        except Prescription.DoesNotExist:
+            return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if prescription.status != 'PENDING':
+            return Response({'success': False, 'message': 'Medicines can only be added while the prescription is pending.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        medicine_id = request.data.get('medicine_id')
+        if not medicine_id:
+            return Response({'success': False, 'message': 'medicine_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            quantity = int(request.data.get('quantity', 1))
+        except (TypeError, ValueError):
+            return Response({'success': False, 'message': 'quantity must be a number.'}, status=status.HTTP_400_BAD_REQUEST)
+        if quantity < 1:
+            return Response({'success': False, 'message': 'Quantity must be at least 1.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            medicine = Medicine.objects.get(id=medicine_id)
+        except Medicine.DoesNotExist:
+            return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        item = PrescriptionMedicineItem.objects.create(
+            prescription=prescription, medicine=medicine, quantity=quantity, added_by=request.user,
+        )
+        return Response({'success': True, 'data': {'item': PrescriptionMedicineItemSerializer(item).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminPrescriptionMedicineItemDetailView(APIView):
+    permission_classes = [require_permission('manage_prescriptions')]
+
+    def delete(self, request, pk, item_id):
+        try:
+            prescription = Prescription.objects.get(id=pk)
+        except Prescription.DoesNotExist:
+            return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if prescription.status != 'PENDING':
+            return Response({'success': False, 'message': 'Medicines can only be removed while the prescription is pending.'}, status=status.HTTP_400_BAD_REQUEST)
+        PrescriptionMedicineItem.objects.filter(id=item_id, prescription=prescription).delete()
+        return Response({'success': True, 'message': 'Item removed.'})
 
 
 class AdminCustomerListView(APIView):
