@@ -43,9 +43,11 @@ export default function CheckoutBroadcastingPage() {
     }
 
     const notes = sessionStorage.getItem('checkoutNotes') || ''
-    const prescriptionId = sessionStorage.getItem('checkoutPrescription')
+    const itemPrescriptionsRaw = sessionStorage.getItem('checkoutItemPrescriptions')
     const payload: Record<string, any> = { address_id: addressId, notes }
-    if (prescriptionId) payload.prescription_id = prescriptionId
+    if (itemPrescriptionsRaw) {
+      try { payload.item_prescriptions = JSON.parse(itemPrescriptionsRaw) } catch {}
+    }
 
     // Buy Now: send this exact item instead of letting the backend pull from the cart, so a
     // direct purchase never touches (or clears) whatever's already sitting in the real cart.
@@ -78,6 +80,21 @@ export default function CheckoutBroadcastingPage() {
       try {
         const res = await api.get<{ data: FulfillmentSummary }>(`/orders/${orderId}/fulfillment-summary/`)
         const data = res.data.data
+        if (data.order_status === 'AWAITING_PRESCRIPTION' || data.order_status === 'PRESCRIPTION_REJECTED') {
+          // This order needs an Rx prescription verified before it can go to pharmacies at all —
+          // there's nothing to "resolve" here, so don't show the broadcast-results screen. Send
+          // them to the order itself, where they can see the hold and (if rejected) re-upload.
+          if (pollRef.current) clearInterval(pollRef.current)
+          clearCheckoutSession()
+          toast(
+            data.order_status === 'AWAITING_PRESCRIPTION'
+              ? 'Your order includes prescription medicine(s) awaiting verification.'
+              : 'A prescription for your order was rejected — please upload a new one.',
+            { icon: 'ℹ️' },
+          )
+          router.push(`/orders/${orderId}`)
+          return
+        }
         setSummary(data)
         if (data.order_status !== 'BROADCASTING') {
           if (pollRef.current) clearInterval(pollRef.current)
@@ -110,9 +127,10 @@ export default function CheckoutBroadcastingPage() {
     sessionStorage.removeItem('checkoutAllowed')
     sessionStorage.removeItem('checkoutAddress')
     sessionStorage.removeItem('checkoutNotes')
-    sessionStorage.removeItem('checkoutPrescription')
+    sessionStorage.removeItem('checkoutItemPrescriptions')
     sessionStorage.removeItem('checkoutOrderId')
     sessionStorage.removeItem('checkoutBuyNowItems')
+    sessionStorage.removeItem('checkoutHasRx')
   }
 
   // Shared "where does this tab go once there's nothing left to wait for" logic — used both when
@@ -204,17 +222,24 @@ export default function CheckoutBroadcastingPage() {
   const accepted = summary?.accepted_items || []
   const unfulfilled = summary?.unfulfilled_items || []
   const hasAccepted = accepted.length > 0
+  const hasRx = typeof window !== 'undefined' && sessionStorage.getItem('checkoutHasRx') === '1'
 
   return (
     <div className="max-w-xl space-y-5">
       <div className="flex items-center gap-3 text-sm text-on-surface-variant">
-        <span className="text-on-surface font-medium">1. Shipping</span>
+        {hasRx && (
+          <>
+            <span className="text-on-surface font-medium">1. Prescription</span>
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
+          </>
+        )}
+        <span className="text-on-surface font-medium">{hasRx ? '2' : '1'}. Shipping</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span className="font-semibold text-primary">2. Availability</span>
+        <span className="font-semibold text-primary">{hasRx ? '3' : '2'}. Availability</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span>3. Payment</span>
+        <span>{hasRx ? '4' : '3'}. Payment</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span>4. Confirm</span>
+        <span>{hasRx ? '5' : '4'}. Confirm</span>
       </div>
 
       {hasAccepted ? (

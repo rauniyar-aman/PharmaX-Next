@@ -35,6 +35,8 @@ export default function AdminDashboardPage() {
   // levels: the order-level pill (now including the marketplace-matching statuses this used to be
   // missing entirely) and the per-pharmacy fulfillment-leg badges shown beneath each row.
   const STATUS_COLORS: Record<string, string> = {
+    AWAITING_PRESCRIPTION: 'bg-amber-50 text-amber-600',
+    PRESCRIPTION_REJECTED: 'bg-error/10 text-error',
     BROADCASTING: 'bg-surface-container text-on-surface-variant',
     AWAITING_PAYMENT: 'bg-amber-50 text-amber-600',
     NO_PHARMACY_FOUND: 'bg-error/10 text-error',

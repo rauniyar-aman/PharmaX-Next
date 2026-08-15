@@ -97,8 +97,10 @@ export default function CheckoutPaymentPage() {
     sessionStorage.removeItem('checkoutAllowed')
     sessionStorage.removeItem('checkoutAddress')
     sessionStorage.removeItem('checkoutNotes')
-    sessionStorage.removeItem('checkoutPrescription')
+    sessionStorage.removeItem('checkoutItemPrescriptions')
     sessionStorage.removeItem('checkoutOrderId')
+    sessionStorage.removeItem('checkoutBuyNowItems')
+    sessionStorage.removeItem('checkoutHasRx')
   }
 
   const handlePlace = async () => {
@@ -151,16 +153,24 @@ export default function CheckoutPaymentPage() {
     )
   }
 
+  const hasRx = typeof window !== 'undefined' && sessionStorage.getItem('checkoutHasRx') === '1'
+
   return (
     <div className="max-w-xl space-y-5">
       <div className="flex items-center gap-3 text-sm text-on-surface-variant">
-        <span className="text-on-surface font-medium">1. Shipping</span>
+        {hasRx && (
+          <>
+            <span className="text-on-surface font-medium">1. Prescription</span>
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
+          </>
+        )}
+        <span className="text-on-surface font-medium">{hasRx ? '2' : '1'}. Shipping</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span className="text-on-surface font-medium">2. Availability</span>
+        <span className="text-on-surface font-medium">{hasRx ? '3' : '2'}. Availability</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span className="font-semibold text-primary">3. Payment</span>
+        <span className="font-semibold text-primary">{hasRx ? '4' : '3'}. Payment</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span>4. Confirm</span>
+        <span>{hasRx ? '5' : '4'}. Confirm</span>
       </div>
 
       <h1 className="text-2xl font-bold text-on-surface">Payment Method</h1>

@@ -1,11 +1,11 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
-import type { Order } from '@/types'
+import type { Order, Prescription } from '@/types'
 
 // The actual marketplace order lifecycle — sync_order_status() only ever moves an Order through
 // these four statuses. CONFIRMED/PROCESSING/SHIPPED/OUT_FOR_DELIVERY exist in the model's choices
@@ -22,8 +22,11 @@ const STEP_LABELS: Record<string, string> = {
 }
 
 const STATUS_COLORS: Record<string, string> = {
+  AWAITING_PRESCRIPTION: 'bg-amber-50 text-amber-600',
+  PRESCRIPTION_REJECTED: 'bg-error/10 text-error',
   BROADCASTING: 'bg-surface-container text-on-surface-variant',
   AWAITING_PAYMENT: 'bg-amber-50 text-amber-600',
+  NO_PHARMACY_FOUND: 'bg-error/10 text-error',
   PLACED: 'bg-blue-50 text-blue-600',
   CONFIRMED: 'bg-secondary/10 text-secondary',
   PROCESSING: 'bg-amber-50 text-amber-600',
@@ -63,6 +66,11 @@ export default function OrderDetailPage() {
   const [medSubmitting, setMedSubmitting] = useState<string | null>(null)
   const [riderRatings, setRiderRatings] = useState<Record<string, RiderRating>>({})
   const [riderSubmitting, setRiderSubmitting] = useState<string | null>(null)
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
+  const [rxSelections, setRxSelections] = useState<Record<string, string>>({})
+  const [attaching, setAttaching] = useState(false)
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null)
+  const fileRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   useEffect(() => {
     api.get(`/orders/${id}/`).then(async (r) => {
@@ -94,6 +102,58 @@ export default function OrderDetailPage() {
       }
     }).catch(() => {}).finally(() => setLoading(false))
   }, [id])
+
+  useEffect(() => {
+    if (!order || (order.status !== 'AWAITING_PRESCRIPTION' && order.status !== 'PRESCRIPTION_REJECTED')) return
+    api.get('/prescriptions/').then((r) => {
+      const usable = (r.data.data.prescriptions || []).filter((p: Prescription) => p.status === 'VERIFIED' || p.status === 'PENDING')
+      setPrescriptions(usable)
+    }).catch(() => {})
+  }, [order?.status])
+
+  const handleRxUpload = async (medicineId: string, files: FileList) => {
+    if (files.length === 0) return
+    if (files.length > 10) { toast.error('You can upload up to 10 pages at once.'); return }
+    const formData = new FormData()
+    Array.from(files).forEach((f) => formData.append('files', f))
+    formData.append('group_as_one', 'true')
+    setUploadingFor(medicineId)
+    try {
+      const res = await api.post('/prescriptions/', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+      const newRx = res.data.data.prescription
+      setPrescriptions((p) => [newRx, ...p])
+      setRxSelections((s) => ({ ...s, [medicineId]: newRx.id }))
+      toast.success(files.length > 1 ? `Prescription uploaded (${files.length} pages)!` : 'Prescription uploaded!')
+    } catch {
+      toast.error('Upload failed.')
+    } finally {
+      setUploadingFor(null)
+    }
+  }
+
+  const handleAttachPrescriptions = async () => {
+    if (!order) return
+    const rxItems = order.items.filter((i) => i.medicine.type === 'Rx')
+    const missing = rxItems.filter((i) => !rxSelections[i.medicine.id])
+    if (missing.length > 0) {
+      toast.error(`Please select or upload a prescription for ${missing.map((i) => i.medicine.name).join(', ')}.`)
+      return
+    }
+    setAttaching(true)
+    try {
+      const res = await api.post(`/orders/${order.id}/attach-prescription/`, { item_prescriptions: rxSelections })
+      setOrder(res.data.data.order)
+      toast.success(
+        res.data.data.order.status === 'AWAITING_PRESCRIPTION'
+          ? 'Prescription submitted — we\'ll notify you once it\'s reviewed.'
+          : 'Prescription submitted!'
+      )
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to attach prescription.')
+    } finally {
+      setAttaching(false)
+    }
+  }
 
   const handleCancel = async () => {
     if (!order || !confirm('Are you sure you want to cancel this order?')) return
@@ -181,7 +241,8 @@ export default function OrderDetailPage() {
 
   const currentStep = STEPS.indexOf(order.status)
   const isCancelled = order.status === 'CANCELLED' || order.status === 'RETURNED'
-  const canCancel = ['BROADCASTING', 'AWAITING_PAYMENT', 'PLACED', 'CONFIRMED'].includes(order.status)
+  const needsPrescriptionAction = order.status === 'AWAITING_PRESCRIPTION' || order.status === 'PRESCRIPTION_REJECTED'
+  const canCancel = ['AWAITING_PRESCRIPTION', 'PRESCRIPTION_REJECTED', 'BROADCASTING', 'AWAITING_PAYMENT', 'PLACED', 'CONFIRMED'].includes(order.status)
   const isDelivered = order.status === 'DELIVERED'
   const awaitingPayment = order.status === 'AWAITING_PAYMENT'
   const totalPending = awaitingPayment && Number(order.total_amount) === 0
@@ -258,7 +319,68 @@ export default function OrderDetailPage() {
         </div>
       )}
 
-      {!isCancelled && (
+      {order.status === 'AWAITING_PRESCRIPTION' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
+          <span className="material-symbols-outlined ms-filled text-amber-600" style={{ fontSize: '20px' }}>pending_actions</span>
+          <p className="text-sm text-amber-800">
+            This order includes prescription medicine(s) awaiting verification. We'll confirm the order and send it to nearby pharmacies once approved.
+          </p>
+        </div>
+      )}
+
+      {order.status === 'PRESCRIPTION_REJECTED' && (
+        <div className="bg-error/5 border border-error/20 rounded-2xl px-4 py-3 flex items-center gap-3">
+          <span className="material-symbols-outlined ms-filled text-error" style={{ fontSize: '20px' }}>error</span>
+          <p className="text-sm text-error">A prescription for this order was rejected. Upload a new one below to continue.</p>
+        </div>
+      )}
+
+      {needsPrescriptionAction && (
+        <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-5">
+          <p className="text-sm font-bold text-on-surface">Attach Prescriptions</p>
+          {order.items.filter((i) => i.medicine.type === 'Rx').map((item) => (
+            <div key={item.id} className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary" style={{ fontSize: '18px' }}>medication</span>
+                <p className="text-sm font-semibold text-on-surface">{item.medicine.name}</p>
+              </div>
+              <div className="space-y-2 pl-1">
+                {prescriptions.map((rx) => (
+                  <label key={rx.id} className={`flex items-center gap-3 p-3 rounded-2xl border cursor-pointer transition-colors ${rxSelections[item.medicine.id] === rx.id ? 'border-primary bg-primary/5' : 'border-outline-variant bg-surface hover:border-primary/40'}`}>
+                    <input type="radio" name={`rx-${item.medicine.id}`} value={rx.id} checked={rxSelections[item.medicine.id] === rx.id}
+                      onChange={() => setRxSelections((s) => ({ ...s, [item.medicine.id]: rx.id }))} className="accent-primary" />
+                    <span className="material-symbols-outlined text-on-surface-variant ms-filled" style={{ fontSize: '20px' }}>description</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-on-surface truncate">{rx.file_name || rx.notes || 'Prescription'}</p>
+                      <p className="text-xs text-on-surface-variant">{new Date(rx.uploaded_at).toLocaleDateString()} · <span className={rx.status === 'VERIFIED' ? 'text-emerald-600' : 'text-amber-600'}>{rx.status}</span></p>
+                    </div>
+                    {rx.file_url && (
+                      <a href={resolveImg(rx.file_url) || undefined} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+                        className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-primary hover:bg-primary/10 transition-colors">
+                        View <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>open_in_new</span>
+                      </a>
+                    )}
+                  </label>
+                ))}
+                <div onClick={() => fileRefs.current[item.medicine.id]?.click()}
+                  className="border-2 border-dashed border-outline-variant rounded-2xl p-4 text-center cursor-pointer hover:border-primary hover:bg-primary/5 transition-colors">
+                  <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '26px' }}>upload_file</span>
+                  <p className="text-xs font-medium text-on-surface mt-1">{uploadingFor === item.medicine.id ? 'Uploading...' : 'Click to upload new prescription'}</p>
+                  <p className="text-[11px] text-on-surface-variant">JPG, PNG, PDF · Max 5MB each · Select multiple pages at once</p>
+                  <input ref={(el) => { fileRefs.current[item.medicine.id] = el }} type="file" multiple accept=".jpg,.jpeg,.png,.pdf" className="hidden"
+                    onChange={(e) => { if (e.target.files && e.target.files.length > 0) handleRxUpload(item.medicine.id, e.target.files) }} />
+                </div>
+              </div>
+            </div>
+          ))}
+          <button onClick={handleAttachPrescriptions} disabled={attaching}
+            className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60">
+            {attaching ? 'Submitting...' : 'Submit Prescription'}
+          </button>
+        </div>
+      )}
+
+      {!isCancelled && !needsPrescriptionAction && (
         <div className="bg-surface rounded-2xl border border-outline-variant p-5">
           <p className="text-sm font-bold text-on-surface mb-5">Order Tracking</p>
           <div className="flex items-center">

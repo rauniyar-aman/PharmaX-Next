@@ -5,6 +5,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
+import { downloadFile } from '@/lib/downloadFile'
 
 const STATUS_COLORS: Record<string, string> = {
   PENDING: 'bg-amber-50 text-amber-600',
@@ -32,6 +33,8 @@ export default function AdminPrescriptionDetailPage() {
   const [quantities, setQuantities] = useState<Record<string, string>>({})
   const [addingId, setAddingId] = useState<string | null>(null)
   const [removingId, setRemovingId] = useState<string | null>(null)
+  const [comment, setComment] = useState('')
+  const [downloading, setDownloading] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -85,10 +88,26 @@ export default function AdminPrescriptionDetailPage() {
     }
   }
 
-  const updateStatus = async (status: string, rejection_reason?: string) => {
+  const handleDownloadAll = async (filesToDownload: { id: string | null; file_name: string; file_url: string }[]) => {
+    setDownloading(true)
+    try {
+      for (let i = 0; i < filesToDownload.length; i++) {
+        const url = resolveImg(filesToDownload[i].file_url)
+        if (!url) continue
+        await downloadFile(url, filesToDownload[i].file_name || `prescription-${i + 1}`)
+        if (i < filesToDownload.length - 1) await new Promise((r) => setTimeout(r, 300))
+      }
+    } catch {
+      toast.error('Download failed.')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const updateStatus = async (status: string, rejection_reason?: string, admin_comment?: string) => {
     setUpdating(true)
     try {
-      await api.put(`/admin/prescriptions/${id}/`, { status, rejection_reason })
+      await api.put(`/admin/prescriptions/${id}/`, { status, rejection_reason, admin_comment })
       toast.success(`Prescription ${status.toLowerCase()}.`)
       load()
     } catch (err: any) {
@@ -102,7 +121,7 @@ export default function AdminPrescriptionDetailPage() {
     const reason = window.prompt('Reason for rejecting this prescription:')
     if (reason === null) return
     if (!reason.trim()) { toast.error('A rejection reason is required.'); return }
-    updateStatus('REJECTED', reason.trim())
+    updateStatus('REJECTED', reason.trim(), comment.trim())
   }
 
   if (loading) {
@@ -111,9 +130,10 @@ export default function AdminPrescriptionDetailPage() {
   if (!prescription) return null
 
   const items = prescription.medicine_items || []
-  const fileUrl = resolveImg(prescription.file_url)
-  const isImage = isImageFile(prescription.file_name) || isImageFile(prescription.file_url)
-  const isPdf = isPdfFile(prescription.file_name) || isPdfFile(prescription.file_url)
+  const files: { id: string | null; file_name: string; file_url: string }[] =
+    prescription.all_files && prescription.all_files.length > 0
+      ? prescription.all_files
+      : prescription.file_url ? [{ id: null, file_name: prescription.file_name, file_url: prescription.file_url }] : []
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -146,17 +166,40 @@ export default function AdminPrescriptionDetailPage() {
           <p className="text-sm text-error">Reason: {prescription.rejection_reason}</p>
         )}
 
-        {fileUrl && (
-          isImage ? (
-            <img src={fileUrl} alt="Prescription file" className="max-h-96 rounded-xl border border-outline-variant object-contain" />
-          ) : (
-            <a href={fileUrl} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-3 py-2 border border-outline-variant rounded-xl text-sm font-semibold text-primary hover:bg-surface-container transition-colors">
-              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>{isPdf ? 'picture_as_pdf' : 'description'}</span>
-              {isPdf ? 'Open PDF in new tab' : 'View file'}
-              <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>open_in_new</span>
-            </a>
-          )
+        {!isPending && prescription.admin_comment && (
+          <p className="text-sm text-on-surface-variant italic">"{prescription.admin_comment}"</p>
+        )}
+
+        {files.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              {files.length > 1 && <p className="text-xs font-semibold text-on-surface-variant">{files.length} pages</p>}
+              <button onClick={() => handleDownloadAll(files)} disabled={downloading}
+                className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 border border-outline-variant rounded-lg text-xs font-semibold text-on-surface-variant hover:bg-surface-container transition-colors disabled:opacity-50">
+                <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>{downloading ? 'progress_activity' : 'download'}</span>
+                {files.length > 1 ? 'Download all' : 'Download'}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {files.map((f, i) => {
+                const url = resolveImg(f.file_url)
+                if (!url) return null
+                const isImage = isImageFile(f.file_name) || isImageFile(f.file_url)
+                const isPdf = isPdfFile(f.file_name) || isPdfFile(f.file_url)
+                return isImage ? (
+                  <img key={f.id ?? 'primary'} src={url} alt={`Prescription page ${i + 1}`}
+                    className="max-h-96 rounded-xl border border-outline-variant object-contain" />
+                ) : (
+                  <a key={f.id ?? 'primary'} href={url} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-3 py-2 border border-outline-variant rounded-xl text-sm font-semibold text-primary hover:bg-surface-container transition-colors">
+                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>{isPdf ? 'picture_as_pdf' : 'description'}</span>
+                    {files.length > 1 ? `Open page ${i + 1}` : isPdf ? 'Open PDF in new tab' : 'View file'}
+                    <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>open_in_new</span>
+                  </a>
+                )
+              })}
+            </div>
+          </div>
         )}
       </div>
 
@@ -222,17 +265,25 @@ export default function AdminPrescriptionDetailPage() {
       </div>
 
       {isPending && (
-        <div className="flex items-center gap-3">
-          <button onClick={() => updateStatus('VERIFIED')} disabled={updating}
-            className={`px-4 py-2.5 text-sm font-semibold rounded-xl transition-opacity disabled:opacity-60 ${
-              items.length > 0 ? 'bg-emerald-500 text-white hover:opacity-90' : 'border border-outline-variant text-on-surface-variant hover:bg-surface-container'
-            }`}>
-            Verify{items.length > 0 ? ` (${items.length} medicine${items.length !== 1 ? 's' : ''})` : ''}
-          </button>
-          <button onClick={handleReject} disabled={updating}
-            className="px-4 py-2.5 bg-error text-on-error text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
-            Reject
-          </button>
+        <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
+          <label className="text-sm font-bold text-on-surface" htmlFor="admin-comment">Comment for customer (optional)</label>
+          <textarea id="admin-comment" value={comment} onChange={(e) => setComment(e.target.value)} rows={2}
+            placeholder="e.g. Please confirm your dosage with your doctor before use."
+            className="w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition resize-none" />
+          <p className="text-xs text-on-surface-variant">Shown to the customer whether you verify or reject. A rejection also needs its own required reason.</p>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button onClick={() => updateStatus('VERIFIED', undefined, comment.trim())} disabled={updating}
+              className={`px-4 py-2.5 text-sm font-semibold rounded-xl transition-opacity disabled:opacity-60 ${
+                items.length > 0 ? 'bg-emerald-500 text-white hover:opacity-90' : 'border border-outline-variant text-on-surface-variant hover:bg-surface-container'
+              }`}>
+              Verify{items.length > 0 ? ` (${items.length} medicine${items.length !== 1 ? 's' : ''})` : ''}
+            </button>
+            <button onClick={handleReject} disabled={updating}
+              className="px-4 py-2.5 bg-error text-on-error text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
+              Reject
+            </button>
+          </div>
         </div>
       )}
     </div>

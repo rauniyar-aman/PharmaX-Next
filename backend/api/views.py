@@ -21,7 +21,7 @@ from django.conf import settings
 from decimal import Decimal
 
 from .models import (
-    User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem,
+    User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionFile,
     Cart, CartItem, Order, OrderItem, Review, WishlistItem,
     Notification, SystemSetting, StockLog,
     LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment,
@@ -802,22 +802,29 @@ class AddressDetailView(APIView):
 # ─── Prescriptions ────────────────────────────────────────────────────────────
 
 def _prescription_visibility_filter():
-    """Hides checkout-draft prescriptions until the order they're attached to actually goes through."""
-    active_order = (
-        Q(orders__payment_method='CASH_ON_DELIVERY') & ~Q(orders__status='CANCELLED')
-    ) | (
-        Q(orders__payment_method__in=['ESEWA', 'KHALTI']) & Q(orders__payment_status='PAID')
-    )
-    return Q(checkout_draft=False) | active_order
+    """Hides checkout-draft prescriptions until they're actually tied to a real order — a
+    checkout_draft prescription the customer uploaded but then abandoned before ever placing an
+    order is genuine noise admin shouldn't see. But once ANY order references it (via either the
+    order-level link or a per-medicine one), it's no longer a throwaway draft: that covers an
+    order still awaiting/rejected on this exact prescription (which needs review to ever
+    progress), and equally an order that already ran its course (paid, or NO_PHARMACY_FOUND,
+    or cancelled) — narrowing this to specific order statuses proved too easy to leave stale
+    prescriptions invisible whenever the order's status moved on for unrelated reasons."""
+    linked_to_order = Q(orders__isnull=False) | Q(order_items__isnull=False)
+    return Q(checkout_draft=False) | linked_to_order
 
 
 class PrescriptionListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        prescriptions = Prescription.objects.filter(user=request.user).filter(
-            _prescription_visibility_filter()
-        ).distinct().order_by('-uploaded_at').prefetch_related('medicine_items')
+        # Shows every prescription the customer has ever uploaded, including checkout drafts —
+        # they should be able to browse and view those later regardless of whether that
+        # particular order went through. (Admin's queue still hides drafts via
+        # _prescription_visibility_filter() until they're tied to a real order.)
+        prescriptions = Prescription.objects.filter(user=request.user).order_by('-uploaded_at').prefetch_related(
+            'medicine_items', 'extra_files', 'order_items__order', 'orders',
+        )
         return Response({'success': True, 'data': {'prescriptions': PrescriptionSerializer(prescriptions, many=True).data}})
 
     def post(self, request):
@@ -828,18 +835,39 @@ class PrescriptionListView(APIView):
             return Response({'success': False, 'message': 'You can upload up to 10 files at once.'}, status=status.HTTP_400_BAD_REQUEST)
 
         checkout_draft = str(request.data.get('checkout_draft', '')).lower() == 'true'
-        created = [
-            Prescription.objects.create(
+        # group_as_one: these files are multiple pages/scans of ONE prescription (e.g. a
+        # multi-page PDF split into images) rather than a batch of separate prescriptions —
+        # the primary file becomes Prescription.file, the rest attach as PrescriptionFile rows.
+        group_as_one = str(request.data.get('group_as_one', '')).lower() == 'true'
+
+        if group_as_one:
+            primary, *extra = files
+            prescription = Prescription.objects.create(
                 user=request.user,
-                file=f,
-                file_name=f.name,
+                file=primary,
+                file_name=primary.name,
                 notes=request.data.get('notes', ''),
                 doctor=request.data.get('doctor', ''),
                 hospital=request.data.get('hospital', ''),
                 checkout_draft=checkout_draft,
             )
-            for f in files
-        ]
+            PrescriptionFile.objects.bulk_create([
+                PrescriptionFile(prescription=prescription, file=f, file_name=f.name) for f in extra
+            ])
+            created = [prescription]
+        else:
+            created = [
+                Prescription.objects.create(
+                    user=request.user,
+                    file=f,
+                    file_name=f.name,
+                    notes=request.data.get('notes', ''),
+                    doctor=request.data.get('doctor', ''),
+                    hospital=request.data.get('hospital', ''),
+                    checkout_draft=checkout_draft,
+                )
+                for f in files
+            ]
 
         _notify_admins(
             'manage_prescriptions', 'NEW_PRESCRIPTION', 'New Prescription Uploaded',
@@ -863,16 +891,6 @@ class PrescriptionDetailView(APIView):
         except Prescription.DoesNotExist:
             return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'success': True, 'data': {'prescription': PrescriptionSerializer(p).data}})
-
-    def delete(self, request, pk):
-        try:
-            p = Prescription.objects.get(id=pk, user=request.user)
-        except Prescription.DoesNotExist:
-            return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
-        if p.file:
-            p.file.delete(save=False)
-        p.delete()
-        return Response({'success': True, 'message': 'Prescription deleted.'})
 
 
 class PrescriptionMedicineItemListView(APIView):
@@ -1314,13 +1332,49 @@ class OrderCheckoutView(APIView):
             except Prescription.DoesNotExist:
                 pass
 
+        # Per-medicine prescription assignment — {medicine_id: prescription_id}, lets a customer
+        # attach a different prescription to each Rx medicine instead of one blanket prescription
+        # for the whole order. Falls back to the single `prescription` above for any medicine not
+        # explicitly covered here (keeps older single-prescription clients working unchanged).
+        item_prescriptions_raw = request.data.get('item_prescriptions')
+        item_prescriptions = {}
+        if isinstance(item_prescriptions_raw, dict) and item_prescriptions_raw:
+            candidate_ids = [v for v in item_prescriptions_raw.values() if v]
+            owned_prescriptions = {
+                str(p.id): p for p in Prescription.objects.filter(id__in=candidate_ids, user=request.user)
+            }
+            for medicine_id, presc_id in item_prescriptions_raw.items():
+                matched = owned_prescriptions.get(str(presc_id))
+                if matched:
+                    item_prescriptions[str(medicine_id)] = matched
+
+        # An Rx medicine's prescription must be admin-VERIFIED before the order can be sent to
+        # pharmacies — a still-PENDING one holds the whole order at AWAITING_PRESCRIPTION, and a
+        # REJECTED/missing one holds it at PRESCRIPTION_REJECTED until the customer re-attaches
+        # one. See _reevaluate_order_prescription_gate() for the cascade once admin acts.
+        rx_prescription_statuses = []
+        for medicine, quantity in resolved_items:
+            if medicine.type != 'Rx':
+                continue
+            presc = item_prescriptions.get(str(medicine.id)) or prescription
+            rx_prescription_statuses.append(presc.status if presc else None)
+
+        if not rx_prescription_statuses:
+            initial_status = 'BROADCASTING'
+        elif any(s in (None, 'REJECTED') for s in rx_prescription_statuses):
+            initial_status = 'PRESCRIPTION_REJECTED'
+        elif any(s != 'VERIFIED' for s in rx_prescription_statuses):
+            initial_status = 'AWAITING_PRESCRIPTION'
+        else:
+            initial_status = 'BROADCASTING'
+
         with transaction.atomic():
             order = Order.objects.create(
                 user=request.user,
                 address=address,
-                prescription=prescription,
+                prescription=prescription or next(iter(item_prescriptions.values()), None),
                 total_amount=Decimal('0'),  # recomputed from accepted items once payment is initiated
-                status='BROADCASTING',
+                status=initial_status,
                 payment_status='PENDING',
                 source=source,
                 notes=request.data.get('notes', ''),
@@ -1329,18 +1383,32 @@ class OrderCheckoutView(APIView):
                 OrderItem.objects.create(
                     order=order, medicine=medicine,
                     quantity=quantity, unit_price=medicine.price,
+                    prescription=item_prescriptions.get(str(medicine.id)) or prescription,
                 )
             # Deliberately not decrementing Medicine.stock_quantity here — under the marketplace
             # model, stock lives on PharmacyMedicineListing and is only decremented once a
             # pharmacy actually wins an item, in pharmacy_accept_item().
 
         _maybe_reward_referral(request.user)
-        # Deliberately no "Checking Nearby Pharmacies" notification here — the customer is already
-        # looking at that exact status live on /checkout/broadcasting the instant this fires, so it
-        # was pure noise. The next real notification (Order Ready for Payment / Order Placed) is
-        # the first one that actually tells them something new.
 
-        broadcast_result = broadcast_order(order)
+        if initial_status == 'BROADCASTING':
+            # Deliberately no "Checking Nearby Pharmacies" notification here — the customer is
+            # already looking at that exact status live on /checkout/broadcasting the instant this
+            # fires, so it was pure noise. The next real notification (Order Ready for Payment /
+            # Order Placed) is the first one that actually tells them something new.
+            broadcast_result = broadcast_order(order)
+        else:
+            broadcast_result = {'broadcast': [], 'unfulfillable': []}
+            title = 'Prescription Needed' if initial_status == 'AWAITING_PRESCRIPTION' else 'Prescription Rejected'
+            message = (
+                f'Order #{str(order.id)[:8].upper()} includes prescription medicine(s) — we\'ll notify '
+                'you once it\'s verified and your order is sent to nearby pharmacies.'
+                if initial_status == 'AWAITING_PRESCRIPTION' else
+                f'Order #{str(order.id)[:8].upper()} is on hold — a prescription for it was rejected. '
+                'Please upload a new one to continue.'
+            )
+            Notification.objects.create(user=request.user, type='ORDER', title=title, message=message, link=f'/orders/{order.id}')
+
         order.refresh_from_db()
 
         return Response({
@@ -1493,10 +1561,12 @@ class OrderTrackingView(APIView):
 class OrderCancelView(APIView):
     permission_classes = [IsAuthenticated]
 
+    # AWAITING_PRESCRIPTION/PRESCRIPTION_REJECTED: held before ever reaching pharmacies — a
+    # customer waiting on verification, or asked to re-upload, can still back out entirely.
     # BROADCASTING/AWAITING_PAYMENT: still in the marketplace matching stage, before any payment —
     # this is "stop looking," used by the checkout/broadcasting page's cancel-after-2-minutes option.
     # PLACED/CONFIRMED: already paid/confirmed — the pre-existing customer-initiated cancel path.
-    CANCELLABLE_STATUSES = ('BROADCASTING', 'AWAITING_PAYMENT', 'PLACED', 'CONFIRMED')
+    CANCELLABLE_STATUSES = ('AWAITING_PRESCRIPTION', 'PRESCRIPTION_REJECTED', 'BROADCASTING', 'AWAITING_PAYMENT', 'PLACED', 'CONFIRMED')
 
     def put(self, request, pk):
         try:
@@ -1562,6 +1632,48 @@ class OrderCancelView(APIView):
         _notify_admins('manage_orders', 'ORDER_CANCELLED', 'Order Cancelled',
                         f'{request.user.full_name} cancelled order #{str(order.id)[:8]}.', link='/admin/orders')
         return Response({'success': True, 'data': {'order': OrderSerializer(order).data}, 'message': 'Order cancelled.'})
+
+
+class OrderAttachPrescriptionView(APIView):
+    """Lets the customer re-attach a prescription to an order that's on hold — either still
+    AWAITING_PRESCRIPTION or PRESCRIPTION_REJECTED — e.g. after admin rejects one, so they can
+    upload a replacement without restarting checkout. Body: {item_prescriptions: {medicine_id:
+    prescription_id}}, same shape the checkout endpoint accepts."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            order = Order.objects.prefetch_related('items__medicine', 'items__prescription').get(id=pk, user=request.user)
+        except Order.DoesNotExist:
+            return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if order.status not in ('AWAITING_PRESCRIPTION', 'PRESCRIPTION_REJECTED'):
+            return Response({'success': False, 'message': 'This order is not waiting on a prescription.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        item_prescriptions_raw = request.data.get('item_prescriptions')
+        if not isinstance(item_prescriptions_raw, dict) or not item_prescriptions_raw:
+            return Response({'success': False, 'message': "'item_prescriptions' is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        candidate_ids = [v for v in item_prescriptions_raw.values() if v]
+        owned_prescriptions = {str(p.id): p for p in Prescription.objects.filter(id__in=candidate_ids, user=request.user)}
+
+        updated = 0
+        for item in order.items.all():
+            matched = owned_prescriptions.get(str(item_prescriptions_raw.get(str(item.medicine_id))))
+            if matched:
+                item.prescription = matched
+                item.save(update_fields=['prescription'])
+                updated += 1
+        if updated == 0:
+            return Response({'success': False, 'message': 'None of the submitted prescriptions could be attached.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not order.prescription_id:
+            order.prescription = next(iter(owned_prescriptions.values()), None)
+            order.save(update_fields=['prescription'])
+
+        order.refresh_from_db()
+        _reevaluate_order_prescription_gate(order)
+        order.refresh_from_db()
+        return Response({'success': True, 'data': {'order': OrderSerializer(order).data}})
 
 
 class OrderRateView(APIView):
@@ -2854,7 +2966,9 @@ class AdminReportsView(APIView):
         # NO_PHARMACY_FOUND orders never generated revenue or a real transaction — same reasoning
         # as excluding CANCELLED, everywhere except order_status_counts below, where it's exactly
         # the "how many orders failed to match a pharmacy" figure this status exists to surface.
-        FAILED_STATUSES = ['CANCELLED', 'NO_PHARMACY_FOUND']
+        # AWAITING_PRESCRIPTION/PRESCRIPTION_REJECTED haven't reached pharmacies yet either — not
+        # a sale (or a failure) until they're released or cancelled.
+        FAILED_STATUSES = ['CANCELLED', 'NO_PHARMACY_FOUND', 'AWAITING_PRESCRIPTION', 'PRESCRIPTION_REJECTED']
 
         total_revenue = Order.objects.filter(payment_status='PAID').aggregate(s=Sum('total_amount'))['s'] or 0
         monthly_revenue = Order.objects.filter(payment_status='PAID', placed_at__gte=start_of_month).aggregate(s=Sum('total_amount'))['s'] or 0
@@ -3573,7 +3687,7 @@ class AdminPrescriptionListView(APIView):
     permission_classes = [require_permission('manage_prescriptions')]
 
     def get(self, request):
-        qs = Prescription.objects.select_related('user').filter(_prescription_visibility_filter()).distinct().order_by('-uploaded_at')
+        qs = Prescription.objects.select_related('user').prefetch_related('extra_files').filter(_prescription_visibility_filter()).distinct().order_by('-uploaded_at')
         status_filter = request.query_params.get('status', 'PENDING')
         if status_filter:
             qs = qs.filter(status=status_filter)
@@ -3591,6 +3705,43 @@ class AdminPrescriptionListView(APIView):
                 'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
             },
         })
+
+
+def _reevaluate_order_prescription_gate(order):
+    """Re-checks one AWAITING_PRESCRIPTION/PRESCRIPTION_REJECTED order against the current status
+    of its items' prescriptions, called after an admin verifies or rejects one. If every Rx item
+    is now VERIFIED, releases the order to broadcast_order() as if it had never been held. If any
+    is missing/REJECTED, (re)holds it and tells the customer to re-attach a prescription. Otherwise
+    (some still PENDING) leaves it at AWAITING_PRESCRIPTION with no notification, to avoid spamming
+    the customer once per item on a multi-prescription order."""
+    if order.status not in ('AWAITING_PRESCRIPTION', 'PRESCRIPTION_REJECTED'):
+        return
+    rx_items = [item for item in order.items.all() if item.medicine.type == 'Rx']
+    rx_statuses = [item.prescription.status if item.prescription else None for item in rx_items]
+
+    if not rx_statuses or all(s == 'VERIFIED' for s in rx_statuses):
+        order.status = 'BROADCASTING'
+        order.save(update_fields=['status'])
+        broadcast_order(order)
+        Notification.objects.create(
+            user=order.user, type='ORDER', title='Order Confirmed',
+            message=f'Your prescription was verified — order #{str(order.id)[:8].upper()} has been confirmed and sent to nearby pharmacies.',
+            link=f'/orders/{order.id}',
+        )
+    elif any(s in (None, 'REJECTED') for s in rx_statuses):
+        order.status = 'PRESCRIPTION_REJECTED'
+        order.save(update_fields=['status'])
+        Notification.objects.create(
+            user=order.user, type='ORDER', title='Order On Hold — Prescription Rejected',
+            message=f'A prescription for order #{str(order.id)[:8].upper()} was rejected. Please upload a new one to continue.',
+            link=f'/orders/{order.id}',
+        )
+    elif order.status != 'AWAITING_PRESCRIPTION':
+        # Every Rx item now has a non-rejected prescription, but at least one is still PENDING —
+        # e.g. the customer just replaced a rejected one. No longer rejected, so move it back to
+        # plain "waiting on review" (no notification here — nothing's actually resolved yet).
+        order.status = 'AWAITING_PRESCRIPTION'
+        order.save(update_fields=['status'])
 
 
 class AdminPrescriptionDetailView(APIView):
@@ -3614,11 +3765,13 @@ class AdminPrescriptionDetailView(APIView):
             return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
         new_status = request.data.get('status')
         rejection_reason = request.data.get('rejection_reason', '')
+        admin_comment = (request.data.get('admin_comment') or '').strip()
         if new_status not in ('VERIFIED', 'REJECTED'):
             return Response({'success': False, 'message': 'Status must be VERIFIED or REJECTED.'}, status=status.HTTP_400_BAD_REQUEST)
         prescription.status = new_status
         prescription.rejection_reason = rejection_reason if new_status == 'REJECTED' else ''
-        prescription.save(update_fields=['status', 'rejection_reason'])
+        prescription.admin_comment = admin_comment
+        prescription.save(update_fields=['status', 'rejection_reason', 'admin_comment'])
 
         item_count = prescription.medicine_items.count() if new_status == 'VERIFIED' else 0
         if item_count:
@@ -3627,6 +3780,8 @@ class AdminPrescriptionDetailView(APIView):
         else:
             message = f'Your prescription has been {new_status.lower()}.' + (f' Reason: {rejection_reason}' if rejection_reason else '')
             link = None
+        if admin_comment:
+            message += f' Note from pharmacist: {admin_comment}'
         Notification.objects.create(
             user=prescription.user,
             type='PRESCRIPTION',
@@ -3634,6 +3789,17 @@ class AdminPrescriptionDetailView(APIView):
             message=message,
             link=link,
         )
+
+        # Release or re-hold any order that was waiting on this exact prescription.
+        affected_order_ids = set(prescription.order_items.filter(
+            order__status__in=['AWAITING_PRESCRIPTION', 'PRESCRIPTION_REJECTED']
+        ).values_list('order_id', flat=True))
+        affected_order_ids |= set(prescription.orders.filter(
+            status__in=['AWAITING_PRESCRIPTION', 'PRESCRIPTION_REJECTED']
+        ).values_list('id', flat=True))
+        for order in Order.objects.filter(id__in=affected_order_ids).prefetch_related('items__medicine', 'items__prescription'):
+            _reevaluate_order_prescription_gate(order)
+
         return Response({'success': True, 'data': {'prescription': PrescriptionSerializer(prescription).data}})
 
 

@@ -119,7 +119,18 @@ export default function CartPage() {
                 <span>NPR {total.toFixed(0)}</span>
               </div>
             </div>
-            <button onClick={() => { sessionStorage.setItem('checkoutAllowed', '1'); router.push('/checkout/shipping') }}
+            <button onClick={() => {
+              // A stale Buy Now attempt (e.g. abandoned without completing checkout) leaves
+              // checkoutBuyNowItems sitting in sessionStorage — if left in place, the checkout
+              // flow would mistake this real cart checkout for that old single-item purchase.
+              sessionStorage.removeItem('checkoutBuyNowItems')
+              sessionStorage.removeItem('checkoutItemPrescriptions')
+              sessionStorage.removeItem('checkoutOrderId')
+              sessionStorage.setItem('checkoutAllowed', '1')
+              const hasRx = items.some((i) => i.medicine.type === 'Rx')
+              sessionStorage.setItem('checkoutHasRx', hasRx ? '1' : '0')
+              router.push(hasRx ? '/checkout/prescription' : '/checkout/shipping')
+            }}
               className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity">
               Proceed to Checkout
             </button>

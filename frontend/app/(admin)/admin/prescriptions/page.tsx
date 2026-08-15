@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 
 const STATUS_COLORS: Record<string, string> = {
   PENDING: 'bg-amber-50 text-amber-600',
@@ -26,10 +27,10 @@ export default function AdminPrescriptionsPage() {
 
   useEffect(() => { load() }, [statusFilter])
 
-  const updateStatus = async (id: string, status: string, rejection_reason?: string) => {
+  const updateStatus = async (id: string, status: string, rejection_reason?: string, admin_comment?: string) => {
     setUpdating(id)
     try {
-      await api.put(`/admin/prescriptions/${id}/`, { status, rejection_reason })
+      await api.put(`/admin/prescriptions/${id}/`, { status, rejection_reason, admin_comment })
       toast.success(`Prescription ${status.toLowerCase()}.`)
       load()
     } catch (err: any) {
@@ -39,11 +40,18 @@ export default function AdminPrescriptionsPage() {
     }
   }
 
+  const handleVerify = (id: string) => {
+    const comment = window.prompt('Add an optional comment for the customer (leave blank to skip):', '')
+    if (comment === null) return
+    updateStatus(id, 'VERIFIED', undefined, comment.trim())
+  }
+
   const handleReject = (id: string) => {
     const reason = window.prompt('Reason for rejecting this prescription:')
     if (reason === null) return
     if (!reason.trim()) { toast.error('A rejection reason is required.'); return }
-    updateStatus(id, 'REJECTED', reason.trim())
+    const comment = window.prompt('Add an optional additional comment for the customer (leave blank to skip):', '')
+    updateStatus(id, 'REJECTED', reason.trim(), (comment || '').trim())
   }
 
   return (
@@ -79,6 +87,9 @@ export default function AdminPrescriptionsPage() {
                 {rx.status === 'REJECTED' && rx.rejection_reason && (
                   <p className="text-xs text-error mt-0.5">Reason: {rx.rejection_reason}</p>
                 )}
+                {rx.admin_comment && (
+                  <p className="text-xs text-on-surface-variant mt-0.5 italic">"{rx.admin_comment}"</p>
+                )}
               </Link>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_COLORS[rx.status] || 'bg-surface-container text-on-surface-variant'}`}>
@@ -89,14 +100,14 @@ export default function AdminPrescriptionsPage() {
                   <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
                 </Link>
                 {rx.file_url && (
-                  <a href={rx.file_url} target="_blank" rel="noopener noreferrer"
+                  <a href={resolveImg(rx.file_url) || undefined} target="_blank" rel="noopener noreferrer"
                     className="w-8 h-8 flex items-center justify-center border border-outline-variant rounded-lg hover:bg-surface-container transition-colors text-on-surface-variant">
                     <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>open_in_new</span>
                   </a>
                 )}
                 {rx.status === 'PENDING' && (
                   <>
-                    <button onClick={() => updateStatus(rx.id, 'VERIFIED')} disabled={updating === rx.id}
+                    <button onClick={() => handleVerify(rx.id)} disabled={updating === rx.id}
                       className="px-3 py-1.5 bg-emerald-500 text-white text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60">
                       Verify
                     </button>

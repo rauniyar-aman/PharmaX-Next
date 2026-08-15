@@ -4,11 +4,14 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 
 const TABS = ['Orders', 'Addresses', 'Prescriptions', 'Reviews', 'Wishlist'] as const
 type Tab = typeof TABS[number]
 
 const ORDER_STATUS_COLORS: Record<string, string> = {
+  AWAITING_PRESCRIPTION: 'bg-amber-50 text-amber-600',
+  PRESCRIPTION_REJECTED: 'bg-error/10 text-error',
   PLACED: 'bg-blue-50 text-blue-600',
   CONFIRMED: 'bg-secondary/10 text-secondary',
   PROCESSING: 'bg-amber-50 text-amber-600',
@@ -220,7 +223,7 @@ export default function CustomerDetailPage() {
                   {rx.rejection_reason && <p className="text-xs text-error mt-1">Rejected: {rx.rejection_reason}</p>}
                 </div>
                 {rx.file_url && (
-                  <a href={rx.file_url} target="_blank" rel="noopener noreferrer"
+                  <a href={resolveImg(rx.file_url) || undefined} target="_blank" rel="noopener noreferrer"
                     className="text-xs font-semibold text-primary hover:underline flex items-center gap-1 flex-shrink-0">
                     View File
                     <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>open_in_new</span>

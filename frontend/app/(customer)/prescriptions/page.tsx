@@ -3,7 +3,11 @@ import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
+import { downloadFile } from '@/lib/downloadFile'
 import type { Prescription } from '@/types'
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const STATUS_COLORS: Record<string, string> = {
   PENDING: 'bg-amber-50 text-amber-600',
@@ -17,8 +21,8 @@ export default function PrescriptionsPage() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [notes, setNotes] = useState('')
-  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [selectedCount, setSelectedCount] = useState(0)
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const load = () => {
@@ -41,11 +45,14 @@ export default function PrescriptionsPage() {
     const formData = new FormData()
     Array.from(files).forEach((file) => formData.append('files', file))
     if (notes) formData.append('notes', notes)
+    // Multiple files here are pages of the SAME prescription (e.g. a multi-page scan), not
+    // separate prescriptions — group them into one Prescription with attached extra pages.
+    formData.append('group_as_one', 'true')
 
     setUploading(true)
     try {
       await api.post('/prescriptions/', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
-      toast.success(files.length > 1 ? `${files.length} prescriptions uploaded!` : 'Prescription uploaded!')
+      toast.success(files.length > 1 ? `Prescription uploaded (${files.length} pages)!` : 'Prescription uploaded!')
       setNotes('')
       setSelectedCount(0)
       if (fileRef.current) fileRef.current.value = ''
@@ -57,16 +64,19 @@ export default function PrescriptionsPage() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    setDeletingId(id)
+  const handleDownload = async (rx: Prescription, files: { id: string | null; file_name: string; file_url: string }[]) => {
+    setDownloadingId(rx.id)
     try {
-      await api.delete(`/prescriptions/${id}/`)
-      setPrescriptions((p) => p.filter((rx) => rx.id !== id))
-      toast.success('Prescription deleted.')
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to delete prescription.')
+      for (let i = 0; i < files.length; i++) {
+        const url = resolveImg(files[i].file_url)
+        if (!url) continue
+        await downloadFile(url, files[i].file_name || `prescription-${i + 1}`)
+        if (i < files.length - 1) await sleep(300) // let the browser register each download separately
+      }
+    } catch {
+      toast.error('Download failed.')
     } finally {
-      setDeletingId(null)
+      setDownloadingId(null)
     }
   }
 
@@ -83,7 +93,7 @@ export default function PrescriptionsPage() {
           <p className="text-sm font-medium text-on-surface mt-2">
             {selectedCount > 0 ? `${selectedCount} file${selectedCount > 1 ? 's' : ''} selected` : 'Click to upload prescription(s)'}
           </p>
-          <p className="text-xs text-on-surface-variant mt-1">JPG, PNG, WebP, or PDF · Max 5MB each · Up to 10 files</p>
+          <p className="text-xs text-on-surface-variant mt-1">JPG, PNG, WebP, or PDF · Max 5MB each · Select multiple pages at once</p>
           <input ref={fileRef} type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf" className="hidden"
             onChange={(e) => setSelectedCount(e.target.files?.length || 0)} />
         </div>
@@ -111,45 +121,71 @@ export default function PrescriptionsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {prescriptions.map((rx) => (
-            <div key={rx.id} className="bg-surface rounded-2xl border border-outline-variant p-4 flex items-center gap-4">
-              <div className="w-12 h-12 bg-surface-container-low rounded-xl flex items-center justify-center flex-shrink-0">
-                <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '24px' }}>description</span>
+          {prescriptions.map((rx) => {
+            const files = rx.all_files && rx.all_files.length > 0
+              ? rx.all_files
+              : rx.file_url ? [{ id: null, file_name: rx.file_name || 'Prescription', file_url: rx.file_url }] : []
+            return (
+              <div key={rx.id} className="bg-surface rounded-2xl border border-outline-variant p-4 flex items-center gap-4">
+                <div className="w-12 h-12 bg-surface-container-low rounded-xl flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '24px' }}>description</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-on-surface">{rx.file_name || 'Prescription'}{files.length > 1 && ` · ${files.length} pages`}</p>
+                  {rx.notes && <p className="text-xs text-on-surface-variant mt-0.5 truncate">{rx.notes}</p>}
+                  <p className="text-xs text-on-surface-variant mt-0.5">{new Date(rx.uploaded_at).toLocaleDateString('en-NP', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                  {rx.status === 'REJECTED' && rx.rejection_reason && (
+                    <p className="text-xs text-error mt-0.5">Reason: {rx.rejection_reason}</p>
+                  )}
+                  {rx.admin_comment && (
+                    <p className="text-xs text-on-surface-variant mt-0.5 italic">"{rx.admin_comment}"</p>
+                  )}
+                  {rx.order && (
+                    <Link href={`/orders/${rx.order.id}`} className="inline-flex items-center gap-1 text-xs text-primary font-medium hover:underline mt-0.5">
+                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>receipt_long</span>
+                      Used in order #{rx.order.id.slice(0, 8).toUpperCase()}
+                    </Link>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {rx.status === 'VERIFIED' && (rx.medicine_item_count || 0) > 0 && !rx.medicines_reviewed_at ? (
+                    <Link href={`/prescriptions/${rx.id}/review`}
+                      className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-full hover:opacity-90 transition-opacity">
+                      {rx.medicine_item_count} medicine{rx.medicine_item_count !== 1 ? 's' : ''} ready — Review &amp; Add to Cart
+                    </Link>
+                  ) : (
+                    <span className={`px-3 py-1.5 rounded-full text-xs font-semibold ${STATUS_COLORS[rx.status] || 'bg-surface-container text-on-surface-variant'}`}>
+                      {rx.status}
+                    </span>
+                  )}
+                  {files.length === 1 ? (
+                    <a href={resolveImg(files[0].file_url) || undefined} target="_blank" rel="noopener noreferrer"
+                      className="w-8 h-8 rounded-xl border border-outline-variant flex items-center justify-center hover:bg-surface-container transition-colors">
+                      <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '16px' }}>open_in_new</span>
+                    </a>
+                  ) : files.length > 1 && (
+                    <div className="flex items-center gap-1">
+                      {files.map((f, i) => (
+                        <a key={f.id ?? 'primary'} href={resolveImg(f.file_url) || undefined} target="_blank" rel="noopener noreferrer" title={f.file_name}
+                          className="w-8 h-8 rounded-xl border border-outline-variant flex items-center justify-center hover:bg-surface-container transition-colors text-[10px] font-semibold text-on-surface-variant">
+                          {i + 1}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {files.length > 0 && (
+                    <button onClick={() => handleDownload(rx, files)} disabled={downloadingId === rx.id}
+                      title={files.length > 1 ? 'Download all pages' : 'Download'}
+                      className="w-8 h-8 rounded-xl border border-outline-variant flex items-center justify-center hover:bg-surface-container transition-colors disabled:opacity-50">
+                      <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '16px' }}>
+                        {downloadingId === rx.id ? 'progress_activity' : 'download'}
+                      </span>
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-on-surface">{rx.file_name || 'Prescription'}</p>
-                {rx.notes && <p className="text-xs text-on-surface-variant mt-0.5 truncate">{rx.notes}</p>}
-                <p className="text-xs text-on-surface-variant mt-0.5">{new Date(rx.uploaded_at).toLocaleDateString('en-NP', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-                {rx.status === 'REJECTED' && rx.rejection_reason && (
-                  <p className="text-xs text-error mt-0.5">Reason: {rx.rejection_reason}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {rx.status === 'VERIFIED' && (rx.medicine_item_count || 0) > 0 && !rx.medicines_reviewed_at ? (
-                  <Link href={`/prescriptions/${rx.id}/review`}
-                    className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-full hover:opacity-90 transition-opacity">
-                    {rx.medicine_item_count} medicine{rx.medicine_item_count !== 1 ? 's' : ''} ready — Review &amp; Add to Cart
-                  </Link>
-                ) : (
-                  <span className={`px-3 py-1.5 rounded-full text-xs font-semibold ${STATUS_COLORS[rx.status] || 'bg-surface-container text-on-surface-variant'}`}>
-                    {rx.status}
-                  </span>
-                )}
-                {rx.file_url && (
-                  <a href={rx.file_url} target="_blank" rel="noopener noreferrer"
-                    className="w-8 h-8 rounded-xl border border-outline-variant flex items-center justify-center hover:bg-surface-container transition-colors">
-                    <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '16px' }}>open_in_new</span>
-                  </a>
-                )}
-                <button onClick={() => handleDelete(rx.id)} disabled={deletingId === rx.id}
-                  className="w-8 h-8 rounded-xl border border-outline-variant flex items-center justify-center hover:bg-error/10 hover:border-error/30 hover:text-error transition-colors disabled:opacity-50">
-                  <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '16px' }}>
-                    {deletingId === rx.id ? 'progress_activity' : 'delete'}
-                  </span>
-                </button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

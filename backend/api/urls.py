@@ -51,6 +51,7 @@ urlpatterns = [
     path('orders/checkout/', views.OrderCheckoutView.as_view(), name='order-checkout'),
     path('orders/<uuid:pk>/', views.OrderDetailView.as_view(), name='order-detail'),
     path('orders/<uuid:pk>/cancel/', views.OrderCancelView.as_view(), name='order-cancel'),
+    path('orders/<uuid:pk>/attach-prescription/', views.OrderAttachPrescriptionView.as_view(), name='order-attach-prescription'),
     path('orders/<uuid:pk>/rate/',   views.OrderRateView.as_view(),   name='order-rate'),
     path('orders/fulfillments/<uuid:pk>/rate-rider/', views.FulfillmentRateRiderView.as_view(), name='fulfillment-rate-rider'),
     path('orders/<uuid:pk>/fulfillment-summary/', views.OrderFulfillmentSummaryView.as_view(), name='order-fulfillment-summary'),

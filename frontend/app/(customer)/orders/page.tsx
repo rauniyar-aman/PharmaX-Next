@@ -7,8 +7,11 @@ import { resolveImg } from '@/lib/resolveImg'
 import type { Order } from '@/types'
 
 const STATUS_COLORS: Record<string, string> = {
+  AWAITING_PRESCRIPTION: 'bg-amber-50 text-amber-600',
+  PRESCRIPTION_REJECTED: 'bg-error/10 text-error',
   BROADCASTING: 'bg-surface-container text-on-surface-variant',
   AWAITING_PAYMENT: 'bg-amber-50 text-amber-600',
+  NO_PHARMACY_FOUND: 'bg-error/10 text-error',
   PLACED: 'bg-blue-50 text-blue-600',
   CONFIRMED: 'bg-secondary/10 text-secondary',
   PROCESSING: 'bg-amber-50 text-amber-600',
@@ -20,8 +23,11 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const STATUS_ICONS: Record<string, string> = {
+  AWAITING_PRESCRIPTION: 'pending_actions',
+  PRESCRIPTION_REJECTED: 'error',
   BROADCASTING: 'wifi_tethering',
   AWAITING_PAYMENT: 'hourglass_top',
+  NO_PHARMACY_FOUND: 'search_off',
   PLACED: 'receipt_long',
   CONFIRMED: 'check_circle',
   PROCESSING: 'inventory_2',

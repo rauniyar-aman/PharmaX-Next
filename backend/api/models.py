@@ -181,6 +181,8 @@ class Prescription(models.Model):
     hospital = models.CharField(max_length=255, null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
     rejection_reason = models.TextField(null=True, blank=True)
+    admin_comment = models.TextField(null=True, blank=True)  # optional note admin can leave when verifying or
+    # rejecting, distinct from rejection_reason which is the mandatory reason specifically for a rejection.
     expiry_date = models.DateField(null=True, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     checkout_draft = models.BooleanField(default=False)
@@ -192,6 +194,20 @@ class Prescription(models.Model):
 
     def __str__(self):
         return f'{self.user.email} — {self.status}'
+
+
+class PrescriptionFile(models.Model):
+    """An additional page/file for a Prescription beyond its primary `file` — lets one logical
+    prescription span multiple scanned pages or PDFs instead of being split into separate
+    Prescription records."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    prescription = models.ForeignKey(Prescription, on_delete=models.CASCADE, related_name='extra_files')
+    file = models.FileField(upload_to='prescriptions/')
+    file_name = models.CharField(max_length=255, blank=True, default='')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'prescription_files'
 
 
 class PrescriptionMedicineItem(models.Model):
@@ -242,6 +258,8 @@ class CartItem(models.Model):
 
 class Order(models.Model):
     ORDER_STATUS = [
+        ('AWAITING_PRESCRIPTION', 'Awaiting Prescription Verification'),
+        ('PRESCRIPTION_REJECTED', 'Prescription Rejected'),
         ('BROADCASTING', 'Broadcasting'),
         ('AWAITING_PAYMENT', 'Awaiting Payment'),
         ('NO_PHARMACY_FOUND', 'No Pharmacy Found'),
@@ -267,7 +285,7 @@ class Order(models.Model):
     user = models.ForeignKey(User, on_delete=models.PROTECT, related_name='orders')
     address = models.ForeignKey(Address, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
     prescription = models.ForeignKey(Prescription, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
-    status = models.CharField(max_length=20, choices=ORDER_STATUS, default='PLACED')
+    status = models.CharField(max_length=25, choices=ORDER_STATUS, default='PLACED')
     # CART orders are built from (and clear) the user's persisted Cart on placement; DIRECT
     # ("Buy Now") orders are built from an explicit item list and must NEVER clear the cart —
     # see sync_order_status()'s PLACED transition, which checks this before deleting cart items.
