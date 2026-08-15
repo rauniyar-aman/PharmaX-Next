@@ -817,7 +817,7 @@ class PrescriptionListView(APIView):
     def get(self, request):
         prescriptions = Prescription.objects.filter(user=request.user).filter(
             _prescription_visibility_filter()
-        ).distinct().order_by('-uploaded_at')
+        ).distinct().order_by('-uploaded_at').prefetch_related('medicine_items')
         return Response({'success': True, 'data': {'prescriptions': PrescriptionSerializer(prescriptions, many=True).data}})
 
     def post(self, request):
