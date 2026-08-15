@@ -287,15 +287,20 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
 class PrescriptionSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     medicine_item_count = serializers.SerializerMethodField()
+    all_files = serializers.SerializerMethodField()
+    order = serializers.SerializerMethodField()
 
     class Meta:
         model = Prescription
         fields = [
             'id', 'file_name', 'file_url', 'notes', 'doctor', 'hospital',
-            'status', 'rejection_reason', 'expiry_date', 'uploaded_at', 'checkout_draft',
-            'medicines_reviewed_at', 'medicine_item_count',
+            'status', 'rejection_reason', 'admin_comment', 'expiry_date', 'uploaded_at', 'checkout_draft',
+            'medicines_reviewed_at', 'medicine_item_count', 'all_files', 'order',
         ]
-        read_only_fields = ['id', 'status', 'rejection_reason', 'uploaded_at', 'file_url', 'medicines_reviewed_at', 'medicine_item_count']
+        read_only_fields = [
+            'id', 'status', 'rejection_reason', 'admin_comment', 'uploaded_at', 'file_url',
+            'medicines_reviewed_at', 'medicine_item_count', 'all_files', 'order',
+        ]
 
     def get_file_url(self, obj):
         if obj.file:
@@ -305,8 +310,32 @@ class PrescriptionSerializer(serializers.ModelSerializer):
             return obj.file.url
         return obj.file_url or None
 
+    def _abs_url(self, file_field):
+        request = self.context.get('request')
+        return request.build_absolute_uri(file_field.url) if request else file_field.url
+
+    def get_all_files(self, obj):
+        """Every page/file for this prescription — the primary file first, then any extras
+        uploaded alongside it. Lets a multi-page prescription be reviewed/confirmed in full."""
+        files = []
+        if obj.file:
+            files.append({'id': None, 'file_name': obj.file_name or obj.file.name, 'file_url': self._abs_url(obj.file)})
+        for extra in obj.extra_files.all():
+            files.append({'id': str(extra.id), 'file_name': extra.file_name or extra.file.name, 'file_url': self._abs_url(extra.file)})
+        return files
+
     def get_medicine_item_count(self, obj):
         return obj.medicine_items.count()
+
+    def get_order(self, obj):
+        """The order this prescription was attached to at checkout, if any — prefers the precise
+        per-medicine link (OrderItem.prescription) over the order-level fallback, since one order
+        can carry several prescriptions when each Rx medicine got its own."""
+        item = obj.order_items.select_related('order').order_by('-order__placed_at').first()
+        order = item.order if item else obj.orders.order_by('-placed_at').first()
+        if not order:
+            return None
+        return {'id': str(order.id), 'status': order.status, 'placed_at': order.placed_at}
 
 
 class PrescriptionMedicineItemSerializer(serializers.ModelSerializer):

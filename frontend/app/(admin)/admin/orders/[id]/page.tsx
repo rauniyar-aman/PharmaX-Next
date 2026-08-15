@@ -21,6 +21,8 @@ const POLL_INTERVAL_MS = 10000
 const TERMINAL_STATUSES = ['DELIVERED', 'CANCELLED']
 
 const STATUS_COLORS: Record<string, string> = {
+  AWAITING_PRESCRIPTION: 'bg-amber-50 text-amber-600',
+  PRESCRIPTION_REJECTED: 'bg-error/10 text-error',
   BROADCASTING: 'bg-surface-container text-on-surface-variant',
   AWAITING_PAYMENT: 'bg-amber-50 text-amber-600',
   NO_PHARMACY_FOUND: 'bg-error/10 text-error',

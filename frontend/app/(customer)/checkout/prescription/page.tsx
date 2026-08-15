@@ -3,60 +3,107 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { useCart } from '@/hooks/useCart'
+import { resolveImg } from '@/lib/resolveImg'
 import type { Prescription } from '@/types'
+
+interface RxLine {
+  medicineId: string
+  name: string
+}
 
 export default function CheckoutPrescriptionPage() {
   const router = useRouter()
-  const fileRef = useRef<HTMLInputElement>(null)
+  const { cart } = useCart()
+  const fileRefs = useRef<Record<string, HTMLInputElement | null>>({})
+
+  const [rxLines, setRxLines] = useState<RxLine[] | null>(null)
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
+  const [selections, setSelections] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null)
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if (!sessionStorage.getItem('checkoutAllowed') || !sessionStorage.getItem('checkoutAddress')) {
-        router.replace('/checkout/shipping'); return
-      }
+    if (typeof window === 'undefined') return
+    if (!sessionStorage.getItem('checkoutAllowed')) {
+      router.replace('/cart')
     }
+  }, [])
+
+  // Buy Now bypasses the cart, so its own item list (not the cart's) determines which
+  // medicines need a prescription here — see the medicine detail page's handleBuyNow().
+  useEffect(() => {
+    const buyNowRaw = sessionStorage.getItem('checkoutBuyNowItems')
+    if (buyNowRaw) {
+      try {
+        const items = (JSON.parse(buyNowRaw) as any[]).filter((i) => i.is_rx)
+        Promise.all(
+          items.map((i) =>
+            api.get(`/medicines/${i.medicine_id}/`).then((r) => ({ medicineId: i.medicine_id, name: r.data.data.medicine.name }))
+          )
+        ).then(setRxLines).catch(() => setRxLines([]))
+      } catch {
+        setRxLines([])
+      }
+      return
+    }
+    if (!cart) return
+    setRxLines(
+      cart.items
+        .filter((i) => i.medicine.type === 'Rx')
+        .map((i) => ({ medicineId: i.medicine.id, name: i.medicine.name }))
+    )
+  }, [cart])
+
+  useEffect(() => {
     api.get('/prescriptions/').then((r) => {
       const usable = (r.data.data.prescriptions || []).filter((p: Prescription) => p.status === 'VERIFIED' || p.status === 'PENDING')
       setPrescriptions(usable)
     }).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
-  const handleUpload = async () => {
-    const file = fileRef.current?.files?.[0]
-    if (!file) return
+  const handleUpload = async (medicineId: string, files: FileList) => {
+    if (files.length === 0) return
+    if (files.length > 10) { toast.error('You can upload up to 10 pages at once.'); return }
     const formData = new FormData()
-    formData.append('file', file)
+    Array.from(files).forEach((f) => formData.append('files', f))
     formData.append('checkout_draft', 'true')
-    setUploading(true)
+    // Multiple files here are pages of the SAME prescription (e.g. a multi-page scan), not
+    // separate prescriptions — group them into one Prescription with attached extra pages.
+    formData.append('group_as_one', 'true')
+    setUploadingFor(medicineId)
     try {
       const res = await api.post('/prescriptions/', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
       const newRx = res.data.data.prescription
       setPrescriptions((p) => [newRx, ...p])
-      setSelected(newRx.id)
-      toast.success('Prescription uploaded!')
+      setSelections((s) => ({ ...s, [medicineId]: newRx.id }))
+      toast.success(files.length > 1 ? `Prescription uploaded (${files.length} pages)!` : 'Prescription uploaded!')
     } catch {
       toast.error('Upload failed.')
     } finally {
-      setUploading(false)
+      setUploadingFor(null)
     }
   }
 
   const handleContinue = () => {
-    if (!selected) { toast.error('Please select or upload a prescription.'); return }
-    sessionStorage.setItem('checkoutPrescription', selected)
-    router.push('/checkout/broadcasting')
+    if (!rxLines) return
+    const missing = rxLines.filter((l) => !selections[l.medicineId])
+    if (missing.length > 0) {
+      toast.error(`Please select or upload a prescription for ${missing.map((m) => m.name).join(', ')}.`)
+      return
+    }
+    sessionStorage.setItem('checkoutItemPrescriptions', JSON.stringify(selections))
+    router.push('/checkout/shipping')
   }
+
+  const busy = loading || rxLines === null
 
   return (
     <div className="max-w-xl space-y-5">
       <div className="flex items-center gap-3 text-sm text-on-surface-variant">
-        <span className="text-on-surface font-medium">1. Shipping</span>
+        <span className="font-semibold text-primary">1. Prescription</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span className="font-semibold text-primary">2. Prescription</span>
+        <span>2. Shipping</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
         <span>3. Availability</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
@@ -65,35 +112,70 @@ export default function CheckoutPrescriptionPage() {
         <span>5. Confirm</span>
       </div>
 
-      <h1 className="text-2xl font-bold text-on-surface">Upload Prescription</h1>
-      <p className="text-sm text-on-surface-variant">This order includes a prescription-required medicine. Select or upload a valid prescription to continue.</p>
+      <h1 className="text-2xl font-bold text-on-surface">Attach Prescriptions</h1>
+      <p className="text-sm text-on-surface-variant">
+        Your order includes prescription-required medicines. Select or upload a valid prescription for each one below.
+      </p>
 
-      {loading ? (
+      {busy ? (
         <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
       ) : (
-        <div className="space-y-3">
-          {prescriptions.map((rx) => (
-            <label key={rx.id} className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-colors ${selected === rx.id ? 'border-primary bg-primary/5' : 'border-outline-variant bg-surface hover:border-primary/40'}`}>
-              <input type="radio" name="rx" value={rx.id} checked={selected === rx.id} onChange={() => setSelected(rx.id)} className="accent-primary" />
-              <span className="material-symbols-outlined text-on-surface-variant ms-filled" style={{ fontSize: '22px' }}>description</span>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-on-surface">{rx.notes || 'Prescription'}</p>
-                <p className="text-xs text-on-surface-variant">{new Date(rx.uploaded_at).toLocaleDateString()} · <span className={rx.status === 'VERIFIED' ? 'text-emerald-600' : 'text-amber-600'}>{rx.status}</span></p>
+        <div className="space-y-6">
+          {rxLines!.map((line) => (
+            <div key={line.medicineId} className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary" style={{ fontSize: '18px' }}>medication</span>
+                <p className="text-sm font-bold text-on-surface">{line.name}</p>
               </div>
-            </label>
-          ))}
 
-          <div onClick={() => fileRef.current?.click()}
-            className="border-2 border-dashed border-outline-variant rounded-2xl p-6 text-center cursor-pointer hover:border-primary hover:bg-primary/5 transition-colors">
-            <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '32px' }}>upload_file</span>
-            <p className="text-sm font-medium text-on-surface mt-1">{uploading ? 'Uploading...' : 'Click to upload new prescription'}</p>
-            <p className="text-xs text-on-surface-variant">JPG, PNG, PDF · Max 5MB</p>
-            <input ref={fileRef} type="file" accept=".jpg,.jpeg,.png,.pdf" className="hidden" onChange={handleUpload} />
-          </div>
+              <div className="space-y-2 pl-1">
+                {prescriptions.map((rx) => {
+                  const files = rx.all_files && rx.all_files.length > 0
+                    ? rx.all_files
+                    : rx.file_url ? [{ id: null, file_name: rx.file_name || 'Prescription', file_url: rx.file_url }] : []
+                  return (
+                    <label key={rx.id} className={`flex items-center gap-3 p-3 rounded-2xl border cursor-pointer transition-colors ${selections[line.medicineId] === rx.id ? 'border-primary bg-primary/5' : 'border-outline-variant bg-surface hover:border-primary/40'}`}>
+                      <input type="radio" name={`rx-${line.medicineId}`} value={rx.id} checked={selections[line.medicineId] === rx.id}
+                        onChange={() => setSelections((s) => ({ ...s, [line.medicineId]: rx.id }))} className="accent-primary" />
+                      <span className="material-symbols-outlined text-on-surface-variant ms-filled" style={{ fontSize: '20px' }}>description</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-on-surface truncate">{rx.file_name || rx.notes || 'Prescription'}</p>
+                        <p className="text-xs text-on-surface-variant">
+                          {new Date(rx.uploaded_at).toLocaleDateString()} · <span className={rx.status === 'VERIFIED' ? 'text-emerald-600' : 'text-amber-600'}>{rx.status}</span>
+                          {files.length > 1 && <> · {files.length} pages</>}
+                        </p>
+                      </div>
+                      {files.length > 0 && (
+                        <div className="flex-shrink-0 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          {files.map((f, i) => (
+                            <a key={f.id ?? 'primary'} href={resolveImg(f.file_url) || undefined} target="_blank" rel="noopener noreferrer"
+                              title={f.file_name}
+                              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-primary hover:bg-primary/10 transition-colors">
+                              {files.length > 1 ? `Page ${i + 1}` : 'View'}
+                              <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>open_in_new</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </label>
+                  )
+                })}
+
+                <div onClick={() => fileRefs.current[line.medicineId]?.click()}
+                  className="border-2 border-dashed border-outline-variant rounded-2xl p-4 text-center cursor-pointer hover:border-primary hover:bg-primary/5 transition-colors">
+                  <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '26px' }}>upload_file</span>
+                  <p className="text-xs font-medium text-on-surface mt-1">{uploadingFor === line.medicineId ? 'Uploading...' : 'Click to upload new prescription'}</p>
+                  <p className="text-[11px] text-on-surface-variant">JPG, PNG, PDF · Max 5MB each · Select multiple pages at once</p>
+                  <input ref={(el) => { fileRefs.current[line.medicineId] = el }} type="file" multiple accept=".jpg,.jpeg,.png,.pdf" className="hidden"
+                    onChange={(e) => { if (e.target.files && e.target.files.length > 0) handleUpload(line.medicineId, e.target.files) }} />
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      <button onClick={handleContinue}
+      <button onClick={handleContinue} disabled={busy}
         className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60">
         Continue
       </button>

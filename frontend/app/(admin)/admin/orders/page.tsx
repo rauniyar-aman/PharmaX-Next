@@ -5,8 +5,10 @@ import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
 
-const STATUSES = ['ALL', 'BROADCASTING', 'AWAITING_PAYMENT', 'NO_PHARMACY_FOUND', 'PLACED', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']
+const STATUSES = ['ALL', 'AWAITING_PRESCRIPTION', 'PRESCRIPTION_REJECTED', 'BROADCASTING', 'AWAITING_PAYMENT', 'NO_PHARMACY_FOUND', 'PLACED', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED']
 const STATUS_COLORS: Record<string, string> = {
+  AWAITING_PRESCRIPTION: 'bg-amber-50 text-amber-600',
+  PRESCRIPTION_REJECTED: 'bg-error/10 text-error',
   BROADCASTING: 'bg-surface-container text-on-surface-variant',
   AWAITING_PAYMENT: 'bg-amber-50 text-amber-600',
   NO_PHARMACY_FOUND: 'bg-error/10 text-error',

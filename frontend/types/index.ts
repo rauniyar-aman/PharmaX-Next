@@ -306,8 +306,11 @@ export interface Address {
 }
 
 export type OrderStatus =
+  | 'AWAITING_PRESCRIPTION'
+  | 'PRESCRIPTION_REJECTED'
   | 'BROADCASTING'
   | 'AWAITING_PAYMENT'
+  | 'NO_PHARMACY_FOUND'
   | 'PLACED'
   | 'CONFIRMED'
   | 'PROCESSING'
@@ -425,10 +428,13 @@ export interface Prescription {
   doctor?: string | null
   hospital?: string | null
   rejection_reason?: string | null
+  admin_comment?: string | null
   status: PrescriptionStatus
   uploaded_at: string
   medicines_reviewed_at?: string | null
   medicine_item_count?: number
+  all_files?: { id: string | null; file_name: string; file_url: string }[]
+  order?: { id: string; status: string; placed_at: string } | null
 }
 
 export interface PrescriptionMedicineItem {

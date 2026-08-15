@@ -16,6 +16,8 @@ interface ReportsData {
 }
 
 const STATUS_COLORS: Record<string, string> = {
+  AWAITING_PRESCRIPTION: 'bg-amber-400',
+  PRESCRIPTION_REJECTED: 'bg-error',
   PLACED: 'bg-blue-400',
   CONFIRMED: 'bg-secondary',
   PROCESSING: 'bg-amber-400',

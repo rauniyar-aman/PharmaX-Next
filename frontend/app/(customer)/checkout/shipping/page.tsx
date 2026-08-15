@@ -4,7 +4,6 @@ import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import { useCart } from '@/hooks/useCart'
 import type { Address } from '@/types'
 import type { PickedLocation } from '@/components/map/MapPicker'
 
@@ -19,7 +18,6 @@ const MapPicker = dynamic(() => import('@/components/map/MapPicker'), {
 
 export default function CheckoutShippingPage() {
   const router = useRouter()
-  const { cart } = useCart()
   const [addresses, setAddresses] = useState<Address[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
@@ -113,31 +111,32 @@ export default function CheckoutShippingPage() {
     if (!selected) { toast.error('Please select a delivery address.'); return }
     sessionStorage.setItem('checkoutAddress', selected)
     sessionStorage.setItem('checkoutNotes', notes)
-
-    // Buy Now bypasses the cart, so its own item list (not the cart's) determines whether a
-    // prescription is needed — see the medicine detail page's handleBuyNow().
-    const buyNowRaw = sessionStorage.getItem('checkoutBuyNowItems')
-    let hasRx = cart?.items.some((i) => i.medicine.type === 'Rx')
-    if (buyNowRaw) {
-      try {
-        hasRx = JSON.parse(buyNowRaw).some((i: any) => i.is_rx)
-      } catch {}
-    }
-    router.push(hasRx ? '/checkout/prescription' : '/checkout/broadcasting')
+    router.push('/checkout/broadcasting')
   }
 
   if (loading) return <div className="flex items-center justify-center py-24"><div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
 
+  // The prescription step (if this order needs one) already happened before Shipping — see the
+  // cart page and the medicine detail page's handleBuyNow(), which route Rx checkouts there first
+  // and set this flag so later steps can still number themselves correctly.
+  const hasRx = typeof window !== 'undefined' && sessionStorage.getItem('checkoutHasRx') === '1'
+
   return (
     <div className="max-w-xl space-y-5">
       <div className="flex items-center gap-3 text-sm text-on-surface-variant">
-        <span className="font-semibold text-primary">1. Shipping</span>
+        {hasRx && (
+          <>
+            <span className="text-on-surface font-medium">1. Prescription</span>
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
+          </>
+        )}
+        <span className="font-semibold text-primary">{hasRx ? '2' : '1'}. Shipping</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span>2. Availability</span>
+        <span>{hasRx ? '3' : '2'}. Availability</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span>3. Payment</span>
+        <span>{hasRx ? '4' : '3'}. Payment</span>
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
-        <span>4. Confirm</span>
+        <span>{hasRx ? '5' : '4'}. Confirm</span>
       </div>
 
       <h1 className="text-2xl font-bold text-on-surface">Delivery Address</h1>

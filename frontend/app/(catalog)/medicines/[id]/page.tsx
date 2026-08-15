@@ -101,11 +101,14 @@ export default function MedicineDetailPage() {
     // Bypasses the cart entirely — checkout/broadcasting reads this instead of the cart, and the
     // backend tags the resulting order source='DIRECT' so placing it never touches (or clears)
     // whatever's already sitting in the customer's actual cart.
+    sessionStorage.removeItem('checkoutItemPrescriptions')
+    sessionStorage.removeItem('checkoutOrderId')
     sessionStorage.setItem('checkoutAllowed', '1')
+    sessionStorage.setItem('checkoutHasRx', medicine.type === 'Rx' ? '1' : '0')
     sessionStorage.setItem('checkoutBuyNowItems', JSON.stringify([
       { medicine_id: medicine.id, quantity: qty, is_rx: medicine.type === 'Rx' },
     ]))
-    router.push('/checkout/shipping')
+    router.push(medicine.type === 'Rx' ? '/checkout/prescription' : '/checkout/shipping')
   }
 
   const handleWishlist = async () => {
