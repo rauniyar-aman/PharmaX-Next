@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 
@@ -70,7 +71,7 @@ export default function AdminPrescriptionsPage() {
               <div className="w-10 h-10 bg-surface-container-low rounded-xl flex items-center justify-center flex-shrink-0">
                 <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '22px' }}>description</span>
               </div>
-              <div className="flex-1 min-w-0">
+              <Link href={`/admin/prescriptions/${rx.id}`} className="flex-1 min-w-0 hover:opacity-80 transition-opacity">
                 <p className="text-sm font-semibold text-on-surface">{rx.customer?.full_name || 'Customer'}</p>
                 <p className="text-xs text-on-surface-variant">{rx.customer?.email}</p>
                 {rx.notes && <p className="text-xs text-on-surface-variant mt-0.5 truncate">{rx.notes}</p>}
@@ -78,11 +79,15 @@ export default function AdminPrescriptionsPage() {
                 {rx.status === 'REJECTED' && rx.rejection_reason && (
                   <p className="text-xs text-error mt-0.5">Reason: {rx.rejection_reason}</p>
                 )}
-              </div>
+              </Link>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_COLORS[rx.status] || 'bg-surface-container text-on-surface-variant'}`}>
                   {rx.status}
                 </span>
+                <Link href={`/admin/prescriptions/${rx.id}`}
+                  className="w-8 h-8 flex items-center justify-center border border-outline-variant rounded-lg hover:bg-surface-container transition-colors text-on-surface-variant">
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
+                </Link>
                 {rx.file_url && (
                   <a href={rx.file_url} target="_blank" rel="noopener noreferrer"
                     className="w-8 h-8 flex items-center justify-center border border-outline-variant rounded-lg hover:bg-surface-container transition-colors text-on-surface-variant">
