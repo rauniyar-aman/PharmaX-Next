@@ -3688,7 +3688,9 @@ class AdminPrescriptionListView(APIView):
 
     def get(self, request):
         qs = Prescription.objects.select_related('user').prefetch_related('extra_files').filter(_prescription_visibility_filter()).distinct().order_by('-uploaded_at')
-        status_filter = request.query_params.get('status', 'PENDING')
+        # No status param at all means the frontend's "ALL" tab — genuinely no filter, not a
+        # hidden default to PENDING (which silently broke "ALL" whenever nothing was pending).
+        status_filter = request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)
         page = max(1, int(request.query_params.get('page', 1)))
