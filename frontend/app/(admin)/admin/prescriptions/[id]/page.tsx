@@ -46,7 +46,7 @@ export default function AdminPrescriptionDetailPage() {
   const isPending = prescription?.status === 'PENDING'
 
   useEffect(() => {
-    if (!isPending) return
+    if (!isPending || !catalogSearch.trim()) { setCatalog([]); return }
     setLoadingCatalog(true)
     const t = setTimeout(() => {
       api.get('/admin/medicines/', { params: { search: catalogSearch, limit: 20 } })
@@ -149,16 +149,12 @@ export default function AdminPrescriptionDetailPage() {
         {fileUrl && (
           isImage ? (
             <img src={fileUrl} alt="Prescription file" className="max-h-96 rounded-xl border border-outline-variant object-contain" />
-          ) : isPdf ? (
-            <div className="space-y-2">
-              <iframe src={fileUrl} className="w-full h-96 rounded-xl border border-outline-variant" title="Prescription PDF" />
-              <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1">
-                Open in new tab <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>open_in_new</span>
-              </a>
-            </div>
           ) : (
-            <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1">
-              View file <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>open_in_new</span>
+            <a href={fileUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-2 border border-outline-variant rounded-xl text-sm font-semibold text-primary hover:bg-surface-container transition-colors">
+              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>{isPdf ? 'picture_as_pdf' : 'description'}</span>
+              {isPdf ? 'Open PDF in new tab' : 'View file'}
+              <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>open_in_new</span>
             </a>
           )
         )}
@@ -175,6 +171,8 @@ export default function AdminPrescriptionDetailPage() {
             <div className="divide-y divide-outline-variant max-h-80 overflow-y-auto">
               {loadingCatalog ? (
                 [...Array(3)].map((_, i) => <div key={i} className="px-4 py-3"><div className="h-6 bg-surface-container-low rounded animate-pulse" /></div>)
+              ) : !catalogSearch.trim() ? (
+                <div className="px-4 py-8 text-center text-sm text-on-surface-variant">Search the catalog above to add a medicine.</div>
               ) : catalog.length === 0 ? (
                 <div className="px-4 py-8 text-center text-sm text-on-surface-variant">No medicines found.</div>
               ) : catalog.map((m) => (
