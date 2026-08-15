@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import type { Prescription } from '@/types'
@@ -124,9 +125,16 @@ export default function PrescriptionsPage() {
                 )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
-                <span className={`px-3 py-1.5 rounded-full text-xs font-semibold ${STATUS_COLORS[rx.status] || 'bg-surface-container text-on-surface-variant'}`}>
-                  {rx.status}
-                </span>
+                {rx.status === 'VERIFIED' && (rx.medicine_item_count || 0) > 0 && !rx.medicines_reviewed_at ? (
+                  <Link href={`/prescriptions/${rx.id}/review`}
+                    className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-full hover:opacity-90 transition-opacity">
+                    {rx.medicine_item_count} medicine{rx.medicine_item_count !== 1 ? 's' : ''} ready — Review &amp; Add to Cart
+                  </Link>
+                ) : (
+                  <span className={`px-3 py-1.5 rounded-full text-xs font-semibold ${STATUS_COLORS[rx.status] || 'bg-surface-container text-on-surface-variant'}`}>
+                    {rx.status}
+                  </span>
+                )}
                 {rx.file_url && (
                   <a href={rx.file_url} target="_blank" rel="noopener noreferrer"
                     className="w-8 h-8 rounded-xl border border-outline-variant flex items-center justify-center hover:bg-surface-container transition-colors">

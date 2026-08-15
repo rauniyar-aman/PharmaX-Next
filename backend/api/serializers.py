@@ -286,14 +286,16 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
 
 class PrescriptionSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
+    medicine_item_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Prescription
         fields = [
             'id', 'file_name', 'file_url', 'notes', 'doctor', 'hospital',
             'status', 'rejection_reason', 'expiry_date', 'uploaded_at', 'checkout_draft',
+            'medicines_reviewed_at', 'medicine_item_count',
         ]
-        read_only_fields = ['id', 'status', 'rejection_reason', 'uploaded_at', 'file_url']
+        read_only_fields = ['id', 'status', 'rejection_reason', 'uploaded_at', 'file_url', 'medicines_reviewed_at', 'medicine_item_count']
 
     def get_file_url(self, obj):
         if obj.file:
@@ -302,6 +304,9 @@ class PrescriptionSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.file.url)
             return obj.file.url
         return obj.file_url or None
+
+    def get_medicine_item_count(self, obj):
+        return obj.medicine_items.count()
 
 
 class PrescriptionMedicineItemSerializer(serializers.ModelSerializer):

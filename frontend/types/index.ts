@@ -427,6 +427,15 @@ export interface Prescription {
   rejection_reason?: string | null
   status: PrescriptionStatus
   uploaded_at: string
+  medicines_reviewed_at?: string | null
+  medicine_item_count?: number
+}
+
+export interface PrescriptionMedicineItem {
+  id: string
+  medicine: Medicine
+  quantity: number
+  created_at: string
 }
 
 export interface SystemSettings {
