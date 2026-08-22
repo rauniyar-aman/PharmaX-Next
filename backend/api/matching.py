@@ -19,6 +19,7 @@ the function body rather than at module level — views.py already imports from 
 import time, so a top-level `from .views import _get_setting` here would be a circular import.
 """
 import math
+import secrets
 from datetime import timedelta
 from decimal import Decimal
 
@@ -307,6 +308,20 @@ def pharmacy_decline_item(pharmacy, order_item):
 FULFILLMENT_PREP_SEQUENCE = ['ACCEPTED', 'PREPARED', 'PACKED', 'AWAITING_DELIVERY']
 
 
+def _fulfillment_prescription_ready(fulfillment):
+    """False if this fulfillment's slice of the order includes an Rx item whose prescription
+    isn't yet admin-VERIFIED. Gates both pharmacy_advance_fulfillment() (a pharmacy can't start
+    actually preparing it) and every rider-dispatch trigger below (a rider shouldn't be asked to
+    go fetch medicine that isn't legally dispensable yet) — riders are normally broadcast the
+    moment payment clears, well before the pharmacy finishes prepping, so without this check an
+    unverified Rx order's rider request would go out regardless of pharmacy_advance_fulfillment's
+    own gate."""
+    return not any(
+        item.medicine.type == 'Rx' and (not item.prescription or item.prescription.status != 'VERIFIED')
+        for item in fulfillment.order_items.select_related('medicine', 'prescription')
+    )
+
+
 def pharmacy_advance_fulfillment(pharmacy, fulfillment):
     """Manually advances one fulfillment one step through ACCEPTED -> PREPARED -> PACKED ->
     AWAITING_DELIVERY (broadcast to nearby riders) — replaces the old behavior where the last
@@ -324,6 +339,9 @@ def pharmacy_advance_fulfillment(pharmacy, fulfillment):
 
     if fulfillment.order.status != 'PLACED':
         return False, "Waiting for the customer's payment to be confirmed before this order can be prepared."
+
+    if not _fulfillment_prescription_ready(fulfillment):
+        return False, 'Waiting for a prescription to be verified before this order can be prepared.'
 
     current = fulfillment.status
     if current not in FULFILLMENT_PREP_SEQUENCE[:-1]:
@@ -357,6 +375,36 @@ def pharmacy_advance_fulfillment(pharmacy, fulfillment):
             link=f'/orders/{fulfillment.order_id}',
         )
 
+    return True, None
+
+
+def pharmacy_verify_pickup_code(pharmacy, fulfillment, code):
+    """Pharmacy enters the code the rider recites/shows in person, confirming the person standing
+    at the counter is genuinely the rider assigned to this leg — not just anyone who knows the
+    order exists. Required (see _maybe_finalize_pickup()) before this leg can ever flip to
+    OUT_FOR_DELIVERY, regardless of how ready the pharmacy or how committed the rider otherwise
+    are.
+
+    No lockout on repeated wrong attempts — this is a 4-digit code checked by an authenticated,
+    already-verified pharmacy account against a fulfillment already assigned to them (see the
+    ownership check below), not a public-facing brute-force surface: a rogue pharmacy account
+    already has full visibility into every other detail of an order assigned to it, so guessing
+    this code buys it nothing it doesn't already have.
+    """
+    if fulfillment.pharmacy_id != pharmacy.id:
+        return False, 'This order does not belong to your pharmacy.'
+    if fulfillment.status != 'AWAITING_DELIVERY':
+        return False, 'This order is not ready for pickup yet.'
+    if not fulfillment.delivery_agent_id:
+        return False, 'No rider has been assigned to this order yet.'
+    if fulfillment.pickup_verified_at:
+        return False, 'Pickup was already verified for this order.'
+    if not fulfillment.pickup_code or (code or '').strip() != fulfillment.pickup_code:
+        return False, 'Incorrect code — ask the rider to confirm it and try again.'
+
+    fulfillment.pickup_verified_at = timezone.now()
+    fulfillment.save(update_fields=['pickup_verified_at'])
+    _maybe_finalize_pickup(fulfillment.order)
     return True, None
 
 
@@ -418,7 +466,10 @@ def _maybe_broadcast_delivery_for_order(order):
     if not _all_legs_awaiting_delivery(order):
         return
     for f in order.fulfillments.exclude(status='CANCELLED'):
-        if f.delivery_broadcast_at is None:
+        # A leg can only reach AWAITING_DELIVERY via pharmacy_advance_fulfillment(), which already
+        # refuses to advance it while unverified — this check is just defense-in-depth against any
+        # other path ever setting that status directly.
+        if f.delivery_broadcast_at is None and _fulfillment_prescription_ready(f):
             broadcast_delivery(f)
 
 
@@ -507,16 +558,18 @@ def _agent_eligible_for(agent, fulfillment):
 @transaction.atomic
 def _maybe_finalize_pickup(order):
     """The actual physical-handoff gate, decoupled from delivery_agent_accept() so it can fire
-    from either side of a race between "rider commits" and "pharmacy finishes packing" —
-    whichever happens second is what completes the handoff. Locks every non-CANCELLED
-    OrderFulfillment on the order (order_by('id'), same lock ordering delivery_agent_accept() and
-    pharmacy_advance_fulfillment() both use, so the two can't deadlock racing the same order).
+    from either side of a race between "rider commits" and "pharmacy finishes packing" — but in
+    practice now always completes via pharmacy_verify_pickup_code(), since that's the only place
+    pickup_verified_at ever gets set. Locks every non-CANCELLED OrderFulfillment on the order
+    (order_by('id'), same lock ordering delivery_agent_accept() and pharmacy_advance_fulfillment()
+    both use, so the two can't deadlock racing the same order).
 
     Finalizes (flips every leg to OUT_FOR_DELIVERY and fires the "picked up" notifications) only
-    once ALL non-CANCELLED legs share the same assigned delivery_agent AND are all
-    AWAITING_DELIVERY (_all_legs_awaiting_delivery()) — i.e. a rider is genuinely committed to
-    every leg AND every pharmacy has confirmed physical readiness. Returns True if it finalized,
-    False otherwise (still waiting on one side or the other).
+    once ALL non-CANCELLED legs share the same assigned delivery_agent, are all AWAITING_DELIVERY
+    (_all_legs_awaiting_delivery()), AND have all had their pickup_code verified by their pharmacy
+    — i.e. a rider is genuinely committed to every leg, every pharmacy has confirmed physical
+    readiness, AND every pharmacy has confirmed it actually handed the package to that exact
+    rider. Returns True if it finalized, False otherwise (still waiting on one of the three).
     """
     fulfillments = list(
         OrderFulfillment.objects.select_for_update()
@@ -529,6 +582,8 @@ def _maybe_finalize_pickup(order):
     if agent is None or any(f.delivery_agent_id != agent.id for f in fulfillments):
         return False
     if any(f.status != 'AWAITING_DELIVERY' for f in fulfillments):
+        return False
+    if any(f.pickup_verified_at is None for f in fulfillments):
         return False
 
     for f in fulfillments:
@@ -564,6 +619,13 @@ def _maybe_finalize_pickup(order):
     return True
 
 
+def _generate_pickup_code():
+    """4-digit numeric, easy for a rider to read aloud and a pharmacy to type — not trying to be
+    unguessable against a determined attacker, just to confirm the person standing at the counter
+    is genuinely the assigned rider rather than anyone who happened to see the order details."""
+    return f'{secrets.randbelow(10000):04d}'
+
+
 @transaction.atomic
 def delivery_agent_accept(agent, fulfillment):
     """First-accept-wins, same pattern as pharmacy_accept_item(): locks every non-CANCELLED
@@ -580,7 +642,14 @@ def delivery_agent_accept(agent, fulfillment):
     pickup has happened. _maybe_finalize_pickup() is the only thing that ever flips status to
     OUT_FOR_DELIVERY, whether that happens right here (packing already finished before this
     accept — the old-timing case) or later from pharmacy_advance_fulfillment() (this accept
-    happened first, and a pharmacy finishing packing is what completes the handoff).
+    happened first, and a pharmacy finishing packing is what completes the handoff) — and even
+    then only once every leg's pickup_code has been verified by its pharmacy (see
+    pharmacy_verify_pickup_code()).
+
+    Also generates one pickup_code, shared across every leg on this order, and shown only to the
+    rider — the pharmacy never sees it through its own API, only whatever the rider tells them in
+    person. A rider could already see every other order detail here; this is specifically about
+    proving it's THEM standing at the counter, not just someone who knows the order exists.
     """
     fulfillment_ids = list(
         OrderFulfillment.objects.filter(order_id=fulfillment.order_id).exclude(status='CANCELLED')
@@ -602,9 +671,11 @@ def delivery_agent_accept(agent, fulfillment):
     if not _agent_eligible_for(agent, fulfillments[0]):
         return False, 'You are not eligible to accept this delivery (must be verified, online, and near every pharmacy in this pickup).'
 
+    code = _generate_pickup_code()
     for f in fulfillments:
         f.delivery_agent = agent
-        f.save(update_fields=['delivery_agent'])
+        f.pickup_code = code
+        f.save(update_fields=['delivery_agent', 'pickup_code'])
 
     finalized = _maybe_finalize_pickup(fulfillment.order)
     if not finalized:
@@ -659,6 +730,10 @@ def _tracking_payload(fulfillment):
         'status': fulfillment.status,
         'pharmacy_name': fulfillment.pharmacy.name if fulfillment.pharmacy else None,
         'assigned_agent_name': agent.user.full_name if agent else None,
+        # A leg sitting at ACCEPTED reads identically whether it's just been claimed or is stuck
+        # waiting on pharmacy_advance_fulfillment()'s prescription gate — callers use this to swap
+        # the "Preparing" label for something honest instead of implying active prep is underway.
+        'prescription_ready': _fulfillment_prescription_ready(fulfillment),
     }
     if agent:
         rating_agg = OrderFulfillment.objects.filter(delivery_agent=agent, rider_rating__isnull=False).aggregate(
@@ -911,7 +986,15 @@ def sync_order_status(order):
             # anything about fulfillment.status; the `is None` guard here (mirroring
             # _maybe_broadcast_delivery_for_order()) is what keeps this idempotent, since this
             # branch has no select_for_update() on `order` to fully rule out a concurrent re-fire.
+            # _fulfillment_prescription_ready() skips any leg still waiting on an Rx item's
+            # verification — a rider shouldn't be asked to fetch medicine that can't be dispensed
+            # yet. Once verified, _notify_prescription_order_outcome() in views.py fires the
+            # delayed broadcast; if that's somehow missed, pharmacy_advance_fulfillment()'s own
+            # gate plus _maybe_broadcast_delivery_for_order()'s backstop still catch it once the
+            # pharmacy reaches AWAITING_DELIVERY.
             for fulfillment in order.fulfillments.exclude(status='CANCELLED'):
+                if not _fulfillment_prescription_ready(fulfillment):
+                    continue
                 if fulfillment.delivery_broadcast_at is None:
                     broadcast_delivery(fulfillment)
 

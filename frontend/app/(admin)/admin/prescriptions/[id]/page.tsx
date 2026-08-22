@@ -152,6 +152,13 @@ export default function AdminPrescriptionDetailPage() {
               {[prescription.doctor, prescription.hospital].filter(Boolean).join(' · ') || 'No doctor/hospital info'}
             </p>
             <p className="text-xs text-on-surface-variant mt-1">Uploaded {new Date(prescription.uploaded_at).toLocaleDateString()}</p>
+            {prescription.order && (
+              <Link href={`/admin/orders/${prescription.order.id}`}
+                className="inline-flex items-center gap-1 text-xs text-primary font-medium hover:underline mt-1">
+                <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>receipt_long</span>
+                Order #{prescription.order.id.slice(0, 8).toUpperCase()}
+              </Link>
+            )}
           </div>
           <span className={`px-3 py-1.5 rounded-full text-xs font-semibold ${STATUS_COLORS[prescription.status] || 'bg-surface-container text-on-surface-variant'}`}>
             {prescription.status}

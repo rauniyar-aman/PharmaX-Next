@@ -79,18 +79,27 @@ export default function AdminPrescriptionsPage() {
               <div className="w-10 h-10 bg-surface-container-low rounded-xl flex items-center justify-center flex-shrink-0">
                 <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '22px' }}>description</span>
               </div>
-              <Link href={`/admin/prescriptions/${rx.id}`} className="flex-1 min-w-0 hover:opacity-80 transition-opacity">
-                <p className="text-sm font-semibold text-on-surface">{rx.customer?.full_name || 'Customer'}</p>
-                <p className="text-xs text-on-surface-variant">{rx.customer?.email}</p>
-                {rx.notes && <p className="text-xs text-on-surface-variant mt-0.5 truncate">{rx.notes}</p>}
-                <p className="text-xs text-on-surface-variant mt-0.5">{new Date(rx.uploaded_at).toLocaleDateString()}</p>
-                {rx.status === 'REJECTED' && rx.rejection_reason && (
-                  <p className="text-xs text-error mt-0.5">Reason: {rx.rejection_reason}</p>
+              <div className="flex-1 min-w-0">
+                <Link href={`/admin/prescriptions/${rx.id}`} className="block hover:opacity-80 transition-opacity">
+                  <p className="text-sm font-semibold text-on-surface">{rx.customer?.full_name || 'Customer'}</p>
+                  <p className="text-xs text-on-surface-variant">{rx.customer?.email}</p>
+                  {rx.notes && <p className="text-xs text-on-surface-variant mt-0.5 truncate">{rx.notes}</p>}
+                  <p className="text-xs text-on-surface-variant mt-0.5">{new Date(rx.uploaded_at).toLocaleDateString()}</p>
+                  {rx.status === 'REJECTED' && rx.rejection_reason && (
+                    <p className="text-xs text-error mt-0.5">Reason: {rx.rejection_reason}</p>
+                  )}
+                  {rx.admin_comment && (
+                    <p className="text-xs text-on-surface-variant mt-0.5 italic">"{rx.admin_comment}"</p>
+                  )}
+                </Link>
+                {rx.order && (
+                  <Link href={`/admin/orders/${rx.order.id}`}
+                    className="inline-flex items-center gap-1 text-xs text-primary font-medium hover:underline mt-0.5">
+                    <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>receipt_long</span>
+                    Order #{rx.order.id.slice(0, 8).toUpperCase()}
+                  </Link>
                 )}
-                {rx.admin_comment && (
-                  <p className="text-xs text-on-surface-variant mt-0.5 italic">"{rx.admin_comment}"</p>
-                )}
-              </Link>
+              </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_COLORS[rx.status] || 'bg-surface-container text-on-surface-variant'}`}>
                   {rx.status}

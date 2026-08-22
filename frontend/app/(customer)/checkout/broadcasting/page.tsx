@@ -80,21 +80,9 @@ export default function CheckoutBroadcastingPage() {
       try {
         const res = await api.get<{ data: FulfillmentSummary }>(`/orders/${orderId}/fulfillment-summary/`)
         const data = res.data.data
-        if (data.order_status === 'AWAITING_PRESCRIPTION' || data.order_status === 'PRESCRIPTION_REJECTED') {
-          // This order needs an Rx prescription verified before it can go to pharmacies at all —
-          // there's nothing to "resolve" here, so don't show the broadcast-results screen. Send
-          // them to the order itself, where they can see the hold and (if rejected) re-upload.
-          if (pollRef.current) clearInterval(pollRef.current)
-          clearCheckoutSession()
-          toast(
-            data.order_status === 'AWAITING_PRESCRIPTION'
-              ? 'Your order includes prescription medicine(s) awaiting verification.'
-              : 'A prescription for your order was rejected — please upload a new one.',
-            { icon: 'ℹ️' },
-          )
-          router.push(`/orders/${orderId}`)
-          return
-        }
+        // Searching for a pharmacy proceeds immediately regardless of prescription verification —
+        // only preparing the order (once a pharmacy accepts and payment is confirmed) waits on
+        // that — so this poll never needs to special-case a prescription hold.
         setSummary(data)
         if (data.order_status !== 'BROADCASTING') {
           if (pollRef.current) clearInterval(pollRef.current)

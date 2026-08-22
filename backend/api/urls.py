@@ -191,6 +191,7 @@ urlpatterns = [
     path('pharmacy/dashboard-stats/',           views.PharmacyDashboardStatsView.as_view(), name='pharmacy-dashboard-stats'),
     path('pharmacy/orders/',                    views.PharmacyOrderListView.as_view(),      name='pharmacy-orders'),
     path('pharmacy/orders/<uuid:pk>/advance/',  views.PharmacyOrderAdvanceStatusView.as_view(), name='pharmacy-order-advance'),
+    path('pharmacy/orders/<uuid:pk>/verify-pickup/', views.PharmacyVerifyPickupView.as_view(), name='pharmacy-verify-pickup'),
     path('pharmacy/orders/<uuid:pk>/tracking/', views.PharmacyOrderTrackingView.as_view(), name='pharmacy-order-tracking'),
     path('pharmacy/team/',                      views.PharmacyTeamListView.as_view(),       name='pharmacy-team'),
     path('pharmacy/team/<uuid:pk>/',            views.PharmacyTeamMemberDetailView.as_view(), name='pharmacy-team-member-detail'),

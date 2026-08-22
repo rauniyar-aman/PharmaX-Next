@@ -104,7 +104,9 @@ export default function AdminDashboardPage() {
                       {fulfillments.length > 0 ? (
                         <div className="mt-1 space-y-0.5">
                           {fulfillments.map((f: any) => {
-                            const cfg = FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'text-on-surface-variant' }
+                            const cfg = f.status === 'ACCEPTED' && !f.prescription_ready
+                              ? { label: 'Awaiting Prescription', color: 'text-amber-600' }
+                              : FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'text-on-surface-variant' }
                             return (
                               <p key={f.id} className="text-[11px] text-on-surface-variant truncate">
                                 <span className="font-medium text-on-surface">{f.pharmacy_name || 'Pharmacy'}</span>

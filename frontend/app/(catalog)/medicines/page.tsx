@@ -293,7 +293,7 @@ export default function MedicinesPage() {
         </div>
 
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 3xl:grid-cols-7 4xl:grid-cols-8 gap-3">
             {Array.from({ length: 12 }).map((_, i) => <MedicineCardSkeleton key={i} />)}
           </div>
         ) : medicines.length === 0 ? (
@@ -303,7 +303,7 @@ export default function MedicinesPage() {
             <p className="text-sm text-on-surface-variant mt-1">Try adjusting your filters</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 3xl:grid-cols-7 4xl:grid-cols-8 gap-3">
             {medicines.map((med) => (
               <MedicineCard
                 key={med.id}

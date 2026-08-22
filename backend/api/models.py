@@ -1011,6 +1011,13 @@ class OrderFulfillment(models.Model):
     delivered_at = models.DateTimeField(null=True, blank=True)
     delivery_broadcast_at = models.DateTimeField(null=True, blank=True)  # set when broadcast_delivery() runs; used to detect a stale delivery broadcast (no per-agent request model exists to check PENDING-ness against, unlike FulfillmentRequest in Stage 2)
     delivery_stale_notified_at = models.DateTimeField(null=True, blank=True)  # set by expire_stale_delivery_broadcasts() the first time it reports this fulfillment, so the opportunistic poll-triggered sweep notifies admins once, not on every poll
+    # Pickup handoff security: generated for the rider the moment they accept (see
+    # delivery_agent_accept()), shown only to them, never to the pharmacy via its own API. The
+    # pharmacy must collect this from whoever shows up in person and submit it back to confirm
+    # it's genuinely the assigned rider before _maybe_finalize_pickup() will flip this leg to
+    # OUT_FOR_DELIVERY — not just someone who knows the order exists.
+    pickup_code = models.CharField(max_length=6, null=True, blank=True)
+    pickup_verified_at = models.DateTimeField(null=True, blank=True)
     # Customer's rating of the RIDER for this specific leg — separate from Order.order_rating
     # (rates the overall order experience, not any one person) since a split order can have a
     # different agent per leg. Same pattern as Order.order_rating/order_comment. DeliveryAgent's

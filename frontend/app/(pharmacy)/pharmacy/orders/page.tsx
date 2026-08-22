@@ -80,6 +80,8 @@ export default function PharmacyOrdersPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('ALL')
   const [advancingId, setAdvancingId] = useState<string | null>(null)
+  const [pickupCodes, setPickupCodes] = useState<Record<string, string>>({})
+  const [verifyingId, setVerifyingId] = useState<string | null>(null)
   const [trackingByFulfillmentId, setTrackingByFulfillmentId] = useState<Record<string, TrackingFulfillment>>({})
   const [mapExpandedId, setMapExpandedId] = useState<string | null>(null)
   const trackingPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -131,6 +133,22 @@ export default function PharmacyOrdersPage() {
       toast.error(err.response?.data?.message || 'Could not update status.')
     } finally {
       setAdvancingId(null)
+    }
+  }
+
+  const verifyPickup = async (id: string) => {
+    const code = (pickupCodes[id] || '').trim()
+    if (!code) { toast.error('Enter the code the rider gave you.'); return }
+    setVerifyingId(id)
+    try {
+      const res = await api.post(`/pharmacy/orders/${id}/verify-pickup/`, { code })
+      setOrders((prev) => prev.map((o) => (o.id === id ? res.data.data.order : o)))
+      setPickupCodes((prev) => ({ ...prev, [id]: '' }))
+      toast.success('Pickup verified — handed off to the rider.')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Could not verify code.')
+    } finally {
+      setVerifyingId(null)
     }
   }
 
@@ -198,8 +216,17 @@ export default function PharmacyOrdersPage() {
             // since the pharmacy is blocked from acting on it (see pharmacy_advance_fulfillment()
             // on the backend), so show "Awaiting Payment" instead until order_status is PLACED.
             const awaitingPayment = !!ADVANCE_ACTION[o.status] && o.order_status !== 'PLACED'
+            // Payment can clear before admin has verified an Rx item's prescription — same idea
+            // as awaitingPayment above, but for the separate prescription gate in
+            // pharmacy_advance_fulfillment(). Only relevant once payment's no longer the blocker.
+            const awaitingPrescription = !!ADVANCE_ACTION[o.status] && !awaitingPayment && !o.prescription_ready
+            const awaitingPickupCode = o.status === 'AWAITING_DELIVERY' && !!o.delivery_agent_name && !o.pickup_verified_at
             const cfg = awaitingPayment
               ? { label: 'Awaiting Payment', color: 'bg-amber-50 text-amber-600', icon: 'hourglass_top' }
+              : awaitingPrescription
+              ? { label: 'Awaiting Prescription', color: 'bg-amber-50 text-amber-600', icon: 'pending_actions' }
+              : awaitingPickupCode
+              ? { label: 'Verify Rider', color: 'bg-primary/10 text-primary', icon: 'pin' }
               : STATUS_CFG[o.status] || { label: o.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
             const payCfg = PAYMENT_CFG[o.payment_status]
             return (
@@ -233,7 +260,7 @@ export default function PharmacyOrdersPage() {
 
                 {ADVANCE_ACTION[o.status] ? (
                   <div className="mt-2 flex items-center gap-2 flex-wrap">
-                    <button onClick={() => advanceStatus(o.id)} disabled={advancingId === o.id || awaitingPayment}
+                    <button onClick={() => advanceStatus(o.id)} disabled={advancingId === o.id || awaitingPayment || awaitingPrescription}
                       className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50">
                       {advancingId === o.id ? 'Updating…' : ADVANCE_ACTION[o.status]}
                     </button>
@@ -243,12 +270,35 @@ export default function PharmacyOrdersPage() {
                         Waiting for the customer's payment to be confirmed
                       </p>
                     )}
+                    {awaitingPrescription && (
+                      <p className="text-[11px] text-amber-600 flex items-center gap-1">
+                        <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>pending_actions</span>
+                        Waiting for a prescription to be verified
+                      </p>
+                    )}
                   </div>
-                ) : o.status === 'AWAITING_DELIVERY' && !o.delivery_agent_name && (
+                ) : o.status === 'AWAITING_DELIVERY' && !o.delivery_agent_name ? (
                   <p className="mt-2 text-[11px] text-blue-600 flex items-center gap-1">
                     <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>hourglass_top</span>
                     Waiting for a nearby rider to accept this delivery
                   </p>
+                ) : awaitingPickupCode && (
+                  <div className="mt-2 bg-primary/5 border border-primary/20 rounded-xl px-3 py-2.5 space-y-2">
+                    <p className="text-[11px] font-semibold text-primary flex items-center gap-1">
+                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>pin</span>
+                      {o.delivery_agent_name} is here to pick up — ask for their code
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input type="text" inputMode="numeric" maxLength={4} placeholder="4-digit code"
+                        value={pickupCodes[o.id] || ''}
+                        onChange={(e) => setPickupCodes((prev) => ({ ...prev, [o.id]: e.target.value.replace(/\D/g, '') }))}
+                        className="w-28 px-3 py-1.5 border border-outline-variant rounded-lg bg-surface text-sm text-on-surface tracking-widest font-mono focus:outline-none focus:border-primary" />
+                      <button onClick={() => verifyPickup(o.id)} disabled={verifyingId === o.id}
+                        className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50">
+                        {verifyingId === o.id ? 'Verifying…' : 'Verify & Hand Off'}
+                      </button>
+                    </div>
+                  </div>
                 )}
 
                 <div className="mt-2 flex items-center justify-between flex-wrap gap-2">

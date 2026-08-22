@@ -141,7 +141,12 @@ export default function AdminOrderDetailPage() {
         <div className="space-y-3">
           <p className="text-sm font-bold text-on-surface">Fulfillment Progress</p>
           {tracking.map((t) => {
-            const cfg = FULFILLMENT_STATUS_CFG[t.status] || { label: t.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+            // ACCEPTED looks identical whether the pharmacy is genuinely prepping or just
+            // blocked by pharmacy_advance_fulfillment()'s prescription gate — don't claim
+            // "Preparing" when nothing can actually be prepared yet.
+            const cfg = t.status === 'ACCEPTED' && !t.prescription_ready
+              ? { label: 'Awaiting Prescription', color: 'bg-amber-50 text-amber-600', icon: 'pending_actions' }
+              : FULFILLMENT_STATUS_CFG[t.status] || { label: t.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
             const progress = order.fulfillments.find((f) => f.id === t.fulfillment_id)
             const outForDelivery = t.status === 'OUT_FOR_DELIVERY' && t.agent && t.agent.lat != null && t.agent.lng != null
 
