@@ -116,7 +116,9 @@ function TrackingPanel({ order, onClose }: { order: any; onClose: () => void }) 
             <p className="text-sm text-on-surface-variant text-center py-8">No pharmacy has been assigned to this order yet.</p>
           ) : (
             tracking.map((t) => {
-              const fcfg = FULFILLMENT_STATUS_CFG[t.status] || { label: t.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+              const fcfg = t.status === 'ACCEPTED' && !t.prescription_ready
+                ? { label: 'Awaiting Prescription', color: 'bg-amber-50 text-amber-600', icon: 'pending_actions' }
+                : FULFILLMENT_STATUS_CFG[t.status] || { label: t.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
               const outForDelivery = t.status === 'OUT_FOR_DELIVERY' && t.agent && t.agent.lat != null && t.agent.lng != null
               return (
                 <div key={t.fulfillment_id} className="bg-surface rounded-2xl border border-outline-variant p-4">
@@ -303,7 +305,9 @@ export default function AdminDeliveryPage() {
                       ) : (
                         <div className="flex flex-wrap gap-1">
                           {order.fulfillments.map((f: any) => {
-                            const fcfg = FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+                            const fcfg = f.status === 'ACCEPTED' && !f.prescription_ready
+                              ? { label: 'Awaiting Prescription', color: 'bg-amber-50 text-amber-600', icon: 'pending_actions' }
+                              : FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
                             return (
                               <span key={f.id} title={f.pharmacy_name}
                                 className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${fcfg.color}`}>

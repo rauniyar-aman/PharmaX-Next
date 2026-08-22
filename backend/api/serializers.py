@@ -367,10 +367,28 @@ class CartSerializer(serializers.ModelSerializer):
 
 class OrderItemSerializer(serializers.ModelSerializer):
     medicine = MedicineListSerializer(read_only=True)
+    prescription = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderItem
         fields = ['id', 'medicine', 'quantity', 'unit_price', 'prescription']
+
+    def get_prescription(self, obj):
+        """Full per-item prescription context, not just the bare id — the customer needs to see
+        exactly which medicine's prescription was rejected (and why), not just that "a"
+        prescription somewhere on the order was rejected. The rejected prescription itself is
+        never deleted (see PrescriptionDetailView — no delete endpoint exists), so this still
+        surfaces it (file, reason) even though it's no longer eligible to be re-selected."""
+        p = obj.prescription
+        if not p:
+            return None
+        return {
+            'id': str(p.id),
+            'status': p.status,
+            'file_name': p.file_name or (p.file.name if p.file else ''),
+            'file_url': p.file.url if p.file else (p.file_url or None),
+            'rejection_reason': p.rejection_reason if p.status == 'REJECTED' else None,
+        }
 
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -378,13 +396,14 @@ class OrderSerializer(serializers.ModelSerializer):
     shipping_address = AddressSerializer(source='address', read_only=True)
     user = serializers.SerializerMethodField()
     coupon_code = serializers.SerializerMethodField()
+    prescription_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = [
             'id', 'user', 'status', 'total_amount', 'delivery_charge', 'discount', 'coupon_code',
             'wallet_used', 'payment_method', 'payment_status', 'notes', 'order_rating', 'order_comment',
-            'placed_at', 'updated_at', 'items', 'shipping_address', 'prescription',
+            'placed_at', 'updated_at', 'items', 'shipping_address', 'prescription', 'prescription_status',
         ]
         read_only_fields = ['id', 'placed_at', 'updated_at']
 
@@ -397,6 +416,21 @@ class OrderSerializer(serializers.ModelSerializer):
     def get_coupon_code(self, obj):
         return obj.coupon.code if obj.coupon_id else None
 
+    def get_prescription_status(self, obj):
+        """Rolls up every Rx item's prescription into one status for the order: None if it has no
+        Rx items, VERIFIED once every Rx item's prescription is admin-verified (so a pharmacy can
+        actually start preparing it — see pharmacy_advance_fulfillment()'s gate), REJECTED if any
+        is missing or rejected (customer needs to re-attach one), else PENDING — still awaiting
+        review, though searching for a pharmacy proceeds regardless of this status."""
+        rx_statuses = [i.prescription.status if i.prescription else None for i in obj.items.all() if i.medicine.type == 'Rx']
+        if not rx_statuses:
+            return None
+        if any(s in (None, 'REJECTED') for s in rx_statuses):
+            return 'REJECTED'
+        if all(s == 'VERIFIED' for s in rx_statuses):
+            return 'VERIFIED'
+        return 'PENDING'
+
 
 class AdminOrderFulfillmentSerializer(serializers.ModelSerializer):
     """Per-pharmacy-leg progress for admin's Order detail/list — this is the piece that answers
@@ -405,13 +439,14 @@ class AdminOrderFulfillmentSerializer(serializers.ModelSerializer):
     pharmacy_name = serializers.CharField(source='pharmacy.name', read_only=True)
     delivery_agent_name = serializers.SerializerMethodField()
     items = serializers.SerializerMethodField()
+    prescription_ready = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderFulfillment
         fields = [
             'id', 'pharmacy_name', 'status', 'items', 'delivery_agent_name',
             'accepted_at', 'delivery_broadcast_at', 'delivered_at',
-            'rider_rating', 'rider_rating_comment',
+            'rider_rating', 'rider_rating_comment', 'prescription_ready',
         ]
         read_only_fields = fields
 
@@ -423,6 +458,16 @@ class AdminOrderFulfillmentSerializer(serializers.ModelSerializer):
             {'medicine_name': i.medicine.name, 'quantity': i.quantity}
             for i in obj.order_items.select_related('medicine').all()
         ]
+
+    def get_prescription_ready(self, obj):
+        """False if this leg includes an Rx item whose prescription isn't yet VERIFIED — admin's
+        status label needs this because a fulfillment sits at ACCEPTED (labeled "Preparing")
+        whether it's actively being prepped or just blocked by pharmacy_advance_fulfillment()'s
+        gate; without this the two look identical."""
+        return not any(
+            item.medicine.type == 'Rx' and (not item.prescription or item.prescription.status != 'VERIFIED')
+            for item in obj.order_items.select_related('medicine', 'prescription').all()
+        )
 
 
 class AdminFulfillmentRequestSerializer(serializers.ModelSerializer):
@@ -853,6 +898,7 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
     payout_paid_at = serializers.SerializerMethodField()
     payout_gross_amount = serializers.SerializerMethodField()
     payout_commission_amount = serializers.SerializerMethodField()
+    prescription_ready = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderFulfillment
@@ -861,8 +907,21 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
             'delivery_agent_name', 'city', 'destination_lat', 'destination_lng',
             'accepted_at', 'delivered_at',
             'payment_status', 'payout_amount', 'payout_paid_at',
-            'payout_gross_amount', 'payout_commission_amount',
+            'payout_gross_amount', 'payout_commission_amount', 'prescription_ready',
+            # Deliberately exposes whether pickup was verified but NEVER pickup_code itself — the
+            # pharmacy has to actually collect the code from the rider in person, not read it off
+            # their own dashboard.
+            'pickup_verified_at',
         ]
+
+    def get_prescription_ready(self, obj):
+        """False if any Rx item in THIS pharmacy's slice still needs a verified prescription —
+        mirrors pharmacy_advance_fulfillment()'s gate, so the dashboard can explain why "advance"
+        is blocked before the pharmacy even tries."""
+        return not any(
+            item.medicine.type == 'Rx' and (not item.prescription or item.prescription.status != 'VERIFIED')
+            for item in obj.order_items.all()
+        )
 
     def get_payment_status(self, obj):
         # context['show_finance'] is set by the view from _can_view_finance() — False for a team
@@ -1010,7 +1069,7 @@ class DeliveryActiveSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'order_id', 'status', 'pharmacy_name', 'pharmacy_address', 'pharmacy_lat', 'pharmacy_lng',
             'customer_name', 'customer_phone', 'delivery_address', 'delivery_lat', 'delivery_lng',
-            'payment_method', 'items', 'accepted_at',
+            'payment_method', 'items', 'accepted_at', 'pickup_code', 'pickup_verified_at',
         ]
 
     def get_customer_name(self, obj):

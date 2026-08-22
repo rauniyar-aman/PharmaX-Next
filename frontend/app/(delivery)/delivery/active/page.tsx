@@ -118,6 +118,18 @@ export default function DeliveryActivePage() {
                   ))}
                 </div>
 
+                {d.status !== 'OUT_FOR_DELIVERY' && d.pickup_code && (
+                  <div className="bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="text-xs font-semibold text-primary">
+                        {d.status === 'AWAITING_DELIVERY' ? 'Ready for pickup — give this code to the pharmacy' : 'Pharmacy is still preparing — give this code when you arrive'}
+                      </p>
+                      <p className="text-[11px] text-on-surface-variant mt-0.5">They'll enter it to confirm it's really you.</p>
+                    </div>
+                    <p className="text-2xl font-bold tracking-[0.3em] text-primary font-mono">{d.pickup_code}</p>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between">
                   <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${isCod ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
                     {isCod ? 'Collect Cash on Delivery' : 'Already Paid Online'}
@@ -130,7 +142,7 @@ export default function DeliveryActivePage() {
                   ) : (
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-600">
                       <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>storefront</span>
-                      Heading to pharmacy — pharmacy is still preparing this order
+                      {d.status === 'AWAITING_DELIVERY' ? 'Waiting for the pharmacy to verify your code' : 'Heading to pharmacy — pharmacy is still preparing this order'}
                     </span>
                   )}
                 </div>

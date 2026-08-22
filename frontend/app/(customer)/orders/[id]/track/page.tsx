@@ -136,7 +136,9 @@ export default function TrackOrderPage() {
       {!isCancelled && !!tracking?.length && (
         <div className="space-y-3">
           {tracking.map((t) => {
-            const cfg = FULFILLMENT_STATUS_CFG[t.status] || { label: t.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+            const cfg = t.status === 'ACCEPTED' && !t.prescription_ready
+              ? { label: 'Awaiting Prescription', color: 'bg-amber-50 text-amber-600', icon: 'pending_actions' }
+              : FULFILLMENT_STATUS_CFG[t.status] || { label: t.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
             const progress = order.fulfillments?.find((f) => f.id === t.fulfillment_id)
             const hasAgentLocation = !!t.agent && t.agent.lat != null && t.agent.lng != null
 

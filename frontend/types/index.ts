@@ -150,6 +150,10 @@ export interface PharmacyOrderFulfillment {
   payout_paid_at: string | null
   payout_gross_amount: string | null
   payout_commission_amount: string | null
+  prescription_ready: boolean
+  // Whether the rider's pickup code has been verified — never the code itself, which the
+  // pharmacy has to actually collect from the rider in person, not read off this dashboard.
+  pickup_verified_at: string | null
 }
 
 export interface DeliveryAgentEarning {
@@ -328,6 +332,13 @@ export interface OrderItem {
   medicine: Medicine
   quantity: number
   unit_price: string
+  prescription?: {
+    id: string
+    status: PrescriptionStatus
+    file_name: string
+    file_url: string | null
+    rejection_reason: string | null
+  } | null
 }
 
 export interface OrderFulfillmentProgress {
@@ -341,6 +352,7 @@ export interface OrderFulfillmentProgress {
   delivered_at: string | null
   rider_rating: number | null
   rider_rating_comment: string | null
+  prescription_ready: boolean
 }
 
 // Matches matching._tracking_payload() — GET /orders/<id>/tracking/,
@@ -363,6 +375,11 @@ export interface TrackingFulfillment {
   assigned_agent_name: string | null
   distance_km?: number
   eta_minutes?: number
+  // False if this leg has an Rx item whose prescription isn't yet verified — a fulfillment
+  // sitting at ACCEPTED looks identical whether it's genuinely being prepped or just blocked by
+  // pharmacy_advance_fulfillment()'s gate, so callers use this to avoid the misleading "Preparing"
+  // label when nothing can actually be prepared yet.
+  prescription_ready: boolean
 }
 
 export interface Order {
@@ -384,6 +401,11 @@ export interface Order {
   items: OrderItem[]
   shipping_address?: Address | null
   fulfillments?: OrderFulfillmentProgress[]
+  // Rolled up from every Rx item's prescription: null if the order has none, VERIFIED once every
+  // Rx item's prescription is admin-verified, REJECTED if any is missing/rejected, else PENDING.
+  // Searching for a pharmacy proceeds regardless — a pharmacy just can't start preparing an item
+  // until this is VERIFIED (see pharmacy_advance_fulfillment() on the backend).
+  prescription_status?: 'PENDING' | 'VERIFIED' | 'REJECTED' | null
 }
 
 // GET /admin/orders/<id>/ — Order.user is just an id/name/email/phone stub (see above); this
@@ -731,6 +753,10 @@ export interface DeliveryActiveFulfillment {
   payment_method: string | null
   items: DeliveryFulfillmentItem[]
   accepted_at: string | null
+  // Shown only to the rider — give this to the pharmacy in person so they can verify it's really
+  // you picking up. Null once already verified (pickup_verified_at set, status moves on).
+  pickup_code: string | null
+  pickup_verified_at: string | null
 }
 
 export type PayoutStatus = 'PENDING' | 'PAID'

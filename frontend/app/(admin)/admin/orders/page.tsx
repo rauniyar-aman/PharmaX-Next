@@ -185,7 +185,9 @@ export default function AdminOrdersPage() {
                             <div className="space-y-1.5 pb-1">
                               <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wide">Fulfillment Progress</p>
                               {order.fulfillments.map((f: any) => {
-                                const cfg = FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+                                const cfg = f.status === 'ACCEPTED' && !f.prescription_ready
+                                  ? { label: 'Awaiting Prescription', color: 'bg-amber-50 text-amber-600', icon: 'pending_actions' }
+                                  : FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
                                 return (
                                   <div key={f.id} className="flex items-center justify-between gap-3 bg-surface rounded-xl border border-outline-variant px-3 py-2 flex-wrap">
                                     <div className="min-w-0">

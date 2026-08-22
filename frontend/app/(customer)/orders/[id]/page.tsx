@@ -104,12 +104,22 @@ export default function OrderDetailPage() {
   }, [id])
 
   useEffect(() => {
-    if (!order || (order.status !== 'AWAITING_PRESCRIPTION' && order.status !== 'PRESCRIPTION_REJECTED')) return
+    if (!order || order.prescription_status !== 'REJECTED') return
+    // Pre-fill whichever Rx items already have a non-rejected prescription attached, so the
+    // customer only has to touch the one(s) that actually got rejected — resubmitting shouldn't
+    // force them to re-pick prescriptions that were already fine.
+    const preset: Record<string, string> = {}
+    for (const item of order.items) {
+      if (item.medicine.type === 'Rx' && item.prescription && item.prescription.status !== 'REJECTED') {
+        preset[item.medicine.id] = item.prescription.id
+      }
+    }
+    setRxSelections((s) => ({ ...preset, ...s }))
     api.get('/prescriptions/').then((r) => {
       const usable = (r.data.data.prescriptions || []).filter((p: Prescription) => p.status === 'VERIFIED' || p.status === 'PENDING')
       setPrescriptions(usable)
     }).catch(() => {})
-  }, [order?.status])
+  }, [order?.prescription_status])
 
   const handleRxUpload = async (medicineId: string, files: FileList) => {
     if (files.length === 0) return
@@ -144,9 +154,9 @@ export default function OrderDetailPage() {
       const res = await api.post(`/orders/${order.id}/attach-prescription/`, { item_prescriptions: rxSelections })
       setOrder(res.data.data.order)
       toast.success(
-        res.data.data.order.status === 'AWAITING_PRESCRIPTION'
-          ? 'Prescription submitted — we\'ll notify you once it\'s reviewed.'
-          : 'Prescription submitted!'
+        res.data.data.order.prescription_status === 'VERIFIED'
+          ? 'Prescription submitted — the pharmacy can now prepare your order!'
+          : 'Prescription submitted — we\'ll notify you once it\'s reviewed.'
       )
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to attach prescription.')
@@ -241,8 +251,11 @@ export default function OrderDetailPage() {
 
   const currentStep = STEPS.indexOf(order.status)
   const isCancelled = order.status === 'CANCELLED' || order.status === 'RETURNED'
-  const needsPrescriptionAction = order.status === 'AWAITING_PRESCRIPTION' || order.status === 'PRESCRIPTION_REJECTED'
-  const canCancel = ['AWAITING_PRESCRIPTION', 'PRESCRIPTION_REJECTED', 'BROADCASTING', 'AWAITING_PAYMENT', 'PLACED', 'CONFIRMED'].includes(order.status)
+  // Searching for a pharmacy (and even a pharmacy accepting) happens regardless of prescription
+  // status — only actually needs customer action once one's been REJECTED. A plain PENDING one
+  // just needs a plain "still under review" note, nothing to do.
+  const needsPrescriptionAction = order.prescription_status === 'REJECTED'
+  const canCancel = ['BROADCASTING', 'AWAITING_PAYMENT', 'PLACED', 'CONFIRMED'].includes(order.status)
   const isDelivered = order.status === 'DELIVERED'
   const awaitingPayment = order.status === 'AWAITING_PAYMENT'
   const totalPending = awaitingPayment && Number(order.total_amount) === 0
@@ -319,19 +332,19 @@ export default function OrderDetailPage() {
         </div>
       )}
 
-      {order.status === 'AWAITING_PRESCRIPTION' && (
+      {order.prescription_status === 'PENDING' && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
           <span className="material-symbols-outlined ms-filled text-amber-600" style={{ fontSize: '20px' }}>pending_actions</span>
           <p className="text-sm text-amber-800">
-            This order includes prescription medicine(s) awaiting verification. We'll confirm the order and send it to nearby pharmacies once approved.
+            This order includes prescription medicine(s) awaiting verification. The pharmacy search continues as normal — we'll let the pharmacy start preparing it once approved.
           </p>
         </div>
       )}
 
-      {order.status === 'PRESCRIPTION_REJECTED' && (
+      {order.prescription_status === 'REJECTED' && (
         <div className="bg-error/5 border border-error/20 rounded-2xl px-4 py-3 flex items-center gap-3">
           <span className="material-symbols-outlined ms-filled text-error" style={{ fontSize: '20px' }}>error</span>
-          <p className="text-sm text-error">A prescription for this order was rejected. Upload a new one below to continue.</p>
+          <p className="text-sm text-error">A prescription for this order was rejected. Upload a new one below so the pharmacy can prepare it.</p>
         </div>
       )}
 
@@ -344,6 +357,37 @@ export default function OrderDetailPage() {
                 <span className="material-symbols-outlined text-primary" style={{ fontSize: '18px' }}>medication</span>
                 <p className="text-sm font-semibold text-on-surface">{item.medicine.name}</p>
               </div>
+
+              {item.prescription?.status === 'REJECTED' ? (
+                <div className="ml-6 flex items-start gap-2 bg-error/5 border border-error/20 rounded-xl px-3 py-2">
+                  <span className="material-symbols-outlined text-error flex-shrink-0" style={{ fontSize: '16px' }}>error</span>
+                  <div className="min-w-0">
+                    <p className="text-xs text-error font-medium">
+                      Rejected{item.prescription.rejection_reason ? `: ${item.prescription.rejection_reason}` : ''}
+                    </p>
+                    {item.prescription.file_url && (
+                      <a href={resolveImg(item.prescription.file_url) || undefined} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-error/80 hover:underline inline-flex items-center gap-1 mt-0.5">
+                        View the rejected file ({item.prescription.file_name})
+                        <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>open_in_new</span>
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ) : item.prescription?.status === 'VERIFIED' ? (
+                <p className="ml-6 text-xs text-emerald-600 flex items-center gap-1">
+                  <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>check_circle</span>
+                  Already verified — no action needed unless you want to change it.
+                </p>
+              ) : item.prescription?.status === 'PENDING' ? (
+                <p className="ml-6 text-xs text-amber-600 flex items-center gap-1">
+                  <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>hourglass_top</span>
+                  Awaiting review — no action needed unless you want to change it.
+                </p>
+              ) : (
+                <p className="ml-6 text-xs text-on-surface-variant">No prescription attached yet.</p>
+              )}
+
               <div className="space-y-2 pl-1">
                 {prescriptions.map((rx) => (
                   <label key={rx.id} className={`flex items-center gap-3 p-3 rounded-2xl border cursor-pointer transition-colors ${rxSelections[item.medicine.id] === rx.id ? 'border-primary bg-primary/5' : 'border-outline-variant bg-surface hover:border-primary/40'}`}>
@@ -380,7 +424,7 @@ export default function OrderDetailPage() {
         </div>
       )}
 
-      {!isCancelled && !needsPrescriptionAction && (
+      {!isCancelled && (
         <div className="bg-surface rounded-2xl border border-outline-variant p-5">
           <p className="text-sm font-bold text-on-surface mb-5">Order Tracking</p>
           <div className="flex items-center">
@@ -411,7 +455,9 @@ export default function OrderDetailPage() {
         <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-2">
           <p className="text-sm font-bold text-on-surface mb-1">Pharmacy Progress</p>
           {order.fulfillments.map((f) => {
-            const cfg = FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+            const cfg = f.status === 'ACCEPTED' && !f.prescription_ready
+              ? { label: 'Awaiting Prescription', color: 'bg-amber-50 text-amber-600', icon: 'pending_actions' }
+              : FULFILLMENT_STATUS_CFG[f.status] || { label: f.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
             const rr = riderRatings[f.id]
             const canRateRider = f.status === 'DELIVERED' && f.delivery_agent_name && rr
             return (
