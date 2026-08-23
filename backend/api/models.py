@@ -170,9 +170,15 @@ class Prescription(models.Model):
         ('REJECTED', 'Rejected'),
         ('EXPIRED', 'Expired'),
     ]
+    SOURCE = [('UPLOAD', 'Uploaded by Patient'), ('CONSULTATION', 'Issued by Doctor')]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='prescriptions')
+    # default='UPLOAD' means every existing and future patient-uploaded prescription is
+    # completely unaffected by this field's existence — purely additive.
+    source = models.CharField(max_length=20, choices=SOURCE, default='UPLOAD')
+    # One consultation produces at most one resulting prescription record, hence OneToOne.
+    appointment = models.OneToOneField('DoctorAppointment', on_delete=models.SET_NULL, null=True, blank=True, related_name='prescription')
     file = models.FileField(upload_to='prescriptions/', null=True, blank=True)
     file_name = models.CharField(max_length=255, blank=True, default='')
     file_url = models.CharField(max_length=500, blank=True, default='')
@@ -465,6 +471,27 @@ class LabTestBooking(models.Model):
 
     def __str__(self):
         return f'{self.lab_test.name} — {self.user.email} ({self.status})'
+
+
+class PrescriptionLabTestItem(models.Model):
+    """A lab test a doctor suggested during a consultation — mirrors PrescriptionMedicineItem but
+    has no quantity (a lab test isn't quantified the way a medicine is) and, unlike a medicine,
+    isn't bulk-confirmed into a cart: each one gets routed through the real individual lab test
+    booking flow, one at a time, with the patient choosing their own address/date/time."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    prescription = models.ForeignKey(Prescription, on_delete=models.CASCADE, related_name='lab_test_items')
+    lab_test = models.ForeignKey(LabTest, on_delete=models.PROTECT, related_name='+')
+    added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    # Set once the patient actually books this suggestion — lets both the patient and the doctor
+    # see which suggested tests were actually followed through on, not just suggested.
+    booking = models.ForeignKey(LabTestBooking, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'prescription_lab_test_items'
+
+    def __str__(self):
+        return f'{self.lab_test.name} — {self.prescription_id}'
 
 
 class BlogPost(models.Model):
