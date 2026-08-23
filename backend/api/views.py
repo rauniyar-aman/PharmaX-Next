@@ -4660,6 +4660,36 @@ class DoctorOwnAppointmentListView(APIView):
         return Response({'success': True, 'data': {'appointments': DoctorAppointmentSerializer(qs, many=True).data}})
 
 
+class DoctorAppointmentConfirmView(APIView):
+    """The doctor's own path to PENDING -> CONFIRMED — previously only AdminAppointmentDetailView
+    could do this. Mirrors it exactly: an unconditional status flip once PENDING, not gated on
+    payment_status, same as admin's existing capability (e.g. a manually-arranged/offline payment
+    admin or the doctor themselves has already confirmed outside the app)."""
+    permission_classes = [IsDoctor]
+
+    def post(self, request, pk):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        try:
+            appt = doctor.appointments.get(id=pk)
+        except DoctorAppointment.DoesNotExist:
+            return Response({'success': False, 'message': 'Appointment not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if appt.status != 'PENDING':
+            return Response({'success': False, 'message': f'Can only confirm a pending appointment (current status: {appt.status}).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        appt.status = 'CONFIRMED'
+        appt.save(update_fields=['status'])
+
+        Notification.objects.create(
+            user=appt.user, type='APPOINTMENT_UPDATE', title='Appointment Confirmed',
+            message=f'Dr. {doctor.name} has confirmed your appointment on {appt.scheduled_date} at {appt.time_slot}.',
+            link=f'/doctor-consult/appointments/{appt.id}',
+        )
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment confirmed.'})
+
+
 class DoctorAppointmentSetMeetingLinkView(APIView):
     permission_classes = [IsDoctor]
 

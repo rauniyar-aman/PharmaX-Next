@@ -218,6 +218,7 @@ urlpatterns = [
     path('doctor/availability/',                views.DoctorAvailabilityListView.as_view(), name='doctor-availability'),
     path('doctor/availability/<uuid:pk>/',      views.DoctorAvailabilityDetailView.as_view(), name='doctor-availability-detail'),
     path('doctor/appointments/',                views.DoctorOwnAppointmentListView.as_view(), name='doctor-own-appointments'),
+    path('doctor/appointments/<uuid:pk>/confirm/', views.DoctorAppointmentConfirmView.as_view(), name='doctor-appointment-confirm'),
     path('doctor/appointments/<uuid:pk>/set-meeting-link/', views.DoctorAppointmentSetMeetingLinkView.as_view(), name='doctor-appointment-set-meeting-link'),
     path('doctor/appointments/<uuid:pk>/complete/', views.DoctorAppointmentCompleteView.as_view(), name='doctor-appointment-complete'),
     path('doctor/payouts/',                     views.DoctorPayoutListView.as_view(), name='doctor-payouts'),
