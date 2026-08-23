@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import type { DoctorAppointment, AppointmentStatus } from '@/types'
@@ -58,19 +59,6 @@ export default function DoctorAppointmentsPage() {
       load()
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to set meeting link.')
-    } finally {
-      setActingId(null)
-    }
-  }
-
-  const complete = async (id: string) => {
-    setActingId(id)
-    try {
-      const res = await api.post(`/doctor/appointments/${id}/complete/`)
-      toast.success(res.data.message || 'Appointment marked complete.')
-      load()
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to complete appointment.')
     } finally {
       setActingId(null)
     }
@@ -151,10 +139,10 @@ export default function DoctorAppointmentsPage() {
                   <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>videocam</span>
                   {a.meeting_link}
                 </a>
-                <button onClick={() => complete(a.id)} disabled={actingId === a.id}
-                  className="px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60 flex-shrink-0">
-                  {actingId === a.id ? 'Completing...' : 'Mark Complete'}
-                </button>
+                <Link href={`/doctor/appointments/${a.id}`}
+                  className="px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity flex-shrink-0">
+                  Complete Consultation
+                </Link>
               </div>
             )}
 
