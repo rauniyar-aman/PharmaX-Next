@@ -10,6 +10,7 @@ export default function AddDoctorPage() {
   const [form, setForm] = useState({
     name: '', specialty: '', qualification: '', experience_years: '', consultation_fee: '',
     photo_url: '', bio: '', languages: '', is_active: true,
+    email: '', phone: '', password: '', license_number: '', onboarding_fee_amount: '',
   })
   const [saving, setSaving] = useState(false)
 
@@ -23,6 +24,7 @@ export default function AddDoctorPage() {
         ...form,
         experience_years: Number(form.experience_years) || 0,
         consultation_fee: Number(form.consultation_fee),
+        onboarding_fee_amount: Number(form.onboarding_fee_amount) || 0,
       })
       toast.success('Doctor added!')
       router.push('/admin/doctor-consult')
@@ -95,6 +97,41 @@ export default function AddDoctorPage() {
             <input type="checkbox" checked={form.is_active} onChange={(e) => set('is_active', e.target.checked)} className="accent-primary" />
             Active (visible for booking)
           </label>
+        </div>
+
+        <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
+          <div>
+            <p className="text-sm font-bold text-on-surface">Login Account</p>
+            <p className="text-xs text-on-surface-variant mt-0.5">Created together with the doctor record, same as a pharmacy or delivery agent account.</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-medium text-on-surface-variant">Email *</label>
+              <input type="email" required value={form.email} onChange={(e) => set('email', e.target.value)}
+                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-on-surface-variant">Phone *</label>
+              <input type="text" required value={form.phone} onChange={(e) => set('phone', e.target.value)}
+                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-on-surface-variant">Password *</label>
+              <input type="password" required minLength={6} value={form.password} onChange={(e) => set('password', e.target.value)}
+                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-on-surface-variant">License Number *</label>
+              <input type="text" required value={form.license_number} onChange={(e) => set('license_number', e.target.value)}
+                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-on-surface-variant">Onboarding Fee (NPR)</label>
+              <input type="number" min="0" value={form.onboarding_fee_amount} onChange={(e) => set('onboarding_fee_amount', e.target.value)}
+                placeholder="0"
+                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+            </div>
+          </div>
         </div>
 
         <div className="flex gap-3">

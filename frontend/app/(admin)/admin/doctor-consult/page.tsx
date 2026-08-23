@@ -83,7 +83,9 @@ function DoctorsTab() {
                 <tr><td colSpan={7} className="px-4 py-12 text-center text-on-surface-variant">No doctors yet</td></tr>
               ) : doctors.map((d) => (
                 <tr key={d.id} className="hover:bg-surface-container-low transition-colors">
-                  <td className="px-4 py-3 font-medium text-on-surface">Dr. {d.name}</td>
+                  <td className="px-4 py-3 font-medium text-on-surface">
+                    <Link href={`/admin/doctor-consult/${d.id}`} className="hover:text-primary hover:underline">Dr. {d.name}</Link>
+                  </td>
                   <td className="px-4 py-3 text-on-surface-variant">{d.specialty}</td>
                   <td className="px-4 py-3 text-on-surface-variant">{d.experience_years} yrs</td>
                   <td className="px-4 py-3 font-semibold text-on-surface">NPR {Number(d.consultation_fee).toFixed(0)}</td>
@@ -95,10 +97,6 @@ function DoctorsTab() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5">
-                      <Link href={`/admin/doctor-consult/${d.id}`}
-                        className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container transition-colors text-on-surface-variant">
-                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>edit</span>
-                      </Link>
                       <button onClick={() => handleDelete(d.id)} disabled={deleting === d.id}
                         className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-error/10 transition-colors text-error">
                         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
