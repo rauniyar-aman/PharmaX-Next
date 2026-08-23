@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest
+from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -208,6 +208,80 @@ class AdminDeliveryAgentCreateSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=20)
     password = serializers.CharField(min_length=6, write_only=True)
     vehicle_type = serializers.CharField(max_length=50, required=False, allow_blank=True)
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Email already registered.')
+        return value
+
+    def validate_phone(self, value):
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError('Phone number already registered.')
+        return value
+
+
+class AdminDoctorSerializer(serializers.ModelSerializer):
+    email = serializers.SerializerMethodField()
+    user_is_active = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Doctor
+        fields = [
+            'id', 'name', 'specialty', 'qualification', 'experience_years', 'consultation_fee',
+            'photo_url', 'bio', 'languages', 'is_active', 'rating', 'total_reviews', 'total_consultations',
+            'email', 'user_is_active', 'license_number', 'is_verified',
+            'onboarding_fee_amount', 'onboarding_fee_paid', 'onboarding_fee_paid_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'rating', 'total_reviews', 'total_consultations', 'email', 'user_is_active', 'created_at', 'updated_at']
+
+    def get_email(self, obj):
+        # user is nullable — legacy doctors created before login accounts existed have none yet.
+        return obj.user.email if obj.user_id else None
+
+    def get_user_is_active(self, obj):
+        return obj.user.is_active if obj.user_id else None
+
+
+class AdminDoctorCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255)
+    specialty = serializers.CharField(max_length=100)
+    qualification = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    experience_years = serializers.IntegerField(required=False, default=0)
+    consultation_fee = serializers.DecimalField(max_digits=10, decimal_places=2)
+    photo_url = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    bio = serializers.CharField(required=False, allow_blank=True)
+    languages = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    email = serializers.EmailField()
+    phone = serializers.CharField(max_length=20)
+    password = serializers.CharField(min_length=6, write_only=True)
+    license_number = serializers.CharField(max_length=100)
+    onboarding_fee_amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, default=Decimal('0'))
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Email already registered.')
+        return value
+
+    def validate_phone(self, value):
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError('Phone number already registered.')
+        return value
+
+    def validate_license_number(self, value):
+        if Doctor.objects.filter(license_number=value).exists():
+            raise serializers.ValidationError('License number already registered.')
+        return value
+
+
+class AdminDoctorLinkAccountSerializer(serializers.Serializer):
+    """For the legacy Doctor rows created before login accounts existed (Doctor.user is null) —
+    creates the missing User and attaches it. Rejects outright if the doctor already has one;
+    linking is a one-time action, not a way to reassign an existing login."""
+    full_name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    phone = serializers.CharField(max_length=20)
+    password = serializers.CharField(min_length=6, write_only=True)
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
@@ -768,6 +842,13 @@ class DoctorSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'rating', 'total_reviews', 'total_consultations', 'created_at', 'updated_at']
 
 
+class DoctorAvailabilitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DoctorAvailability
+        fields = ['id', 'day_of_week', 'start_time', 'end_time', 'slot_duration_minutes', 'is_active']
+        read_only_fields = ['id']
+
+
 class DoctorAppointmentSerializer(serializers.ModelSerializer):
     doctor = DoctorSerializer(read_only=True)
     doctor_id = serializers.UUIDField(write_only=True)
@@ -777,9 +858,15 @@ class DoctorAppointmentSerializer(serializers.ModelSerializer):
         model = DoctorAppointment
         fields = [
             'id', 'user', 'doctor', 'doctor_id', 'scheduled_date', 'time_slot',
-            'status', 'fee_amount', 'reason', 'meeting_link', 'booked_at', 'updated_at',
+            'status', 'fee_amount', 'reason', 'meeting_link',
+            'fee_charged', 'is_plus_free', 'payment_status', 'payment_method',
+            'booked_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'status', 'fee_amount', 'meeting_link', 'booked_at', 'updated_at']
+        read_only_fields = [
+            'id', 'status', 'fee_amount', 'meeting_link',
+            'fee_charged', 'is_plus_free', 'payment_status', 'payment_method',
+            'booked_at', 'updated_at',
+        ]
 
     def get_user(self, obj):
         return {'id': str(obj.user_id), 'full_name': obj.user.full_name, 'email': obj.user.email, 'phone': obj.user.phone}
@@ -1109,6 +1196,37 @@ class AdminPharmacyPayoutSerializer(serializers.ModelSerializer):
             'id', 'pharmacy', 'pharmacy_name', 'fulfillment', 'order_id',
             'gross_amount', 'commission_rate', 'commission_amount', 'net_payable',
             'funding_source', 'status', 'paid_at', 'paid_by_name', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class DoctorPayoutSerializer(serializers.ModelSerializer):
+    """Doctor's own earnings ledger — same fields as AdminDoctorPayoutSerializer minus the
+    doctor-identifying ones, since a doctor only ever sees their own rows."""
+    patient_name = serializers.CharField(source='appointment.user.full_name', read_only=True)
+    appointment_date = serializers.DateField(source='appointment.scheduled_date', read_only=True)
+
+    class Meta:
+        model = DoctorPayout
+        fields = [
+            'id', 'appointment', 'patient_name', 'appointment_date',
+            'gross_amount', 'commission_rate', 'commission_amount', 'net_payable',
+            'status', 'paid_at', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class AdminDoctorPayoutSerializer(serializers.ModelSerializer):
+    doctor_name = serializers.CharField(source='doctor.name', read_only=True)
+    appointment_date = serializers.DateField(source='appointment.scheduled_date', read_only=True)
+    paid_by_name = serializers.CharField(source='paid_by.full_name', read_only=True)
+
+    class Meta:
+        model = DoctorPayout
+        fields = [
+            'id', 'doctor', 'doctor_name', 'appointment', 'appointment_date',
+            'gross_amount', 'commission_rate', 'commission_amount', 'net_payable',
+            'status', 'paid_at', 'paid_by_name', 'created_at',
         ]
         read_only_fields = fields
 

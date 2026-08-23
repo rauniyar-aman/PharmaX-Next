@@ -64,6 +64,8 @@ urlpatterns = [
     path('payment/esewa/failure/',    views.EsewaFailureView.as_view(),        name='payment-esewa-failure'),
     path('payment/khalti/initiate/',  views.PaymentKhaltiInitiateView.as_view(), name='payment-khalti-initiate'),
     path('payment/khalti/verify/',    views.KhaltiVerifyView.as_view(),        name='payment-khalti-verify'),
+    path('payment/khalti/initiate-appointment/', views.AppointmentKhaltiInitiateView.as_view(), name='payment-khalti-initiate-appointment'),
+    path('payment/khalti/verify-appointment/',   views.AppointmentKhaltiVerifyView.as_view(),   name='payment-khalti-verify-appointment'),
 
     # Notifications
     path('notifications/',            views.NotificationListView.as_view(),   name='notifications'),
@@ -95,6 +97,7 @@ urlpatterns = [
     path('doctors/',                    views.DoctorListView.as_view(),       name='doctors'),
     path('doctors/<uuid:pk>/',          views.DoctorDetailView.as_view(),     name='doctor-detail'),
     path('doctors/<uuid:pk>/reviews/',  views.DoctorReviewsView.as_view(),    name='doctor-reviews'),
+    path('doctors/<uuid:pk>/slots/',    views.DoctorSlotsView.as_view(),      name='doctor-slots'),
 
     # PharmaX Plus
     path('plus/plans/',                 views.PlusPlanListView.as_view(),     name='plus-plans'),
@@ -140,6 +143,10 @@ urlpatterns = [
     path('admin/fulfillment-requests/expire-stale/', views.AdminExpireFulfillmentRequestsView.as_view(), name='admin-expire-fulfillment-requests'),
     path('admin/doctors/',                      views.AdminDoctorListView.as_view(),        name='admin-doctors'),
     path('admin/doctors/<uuid:pk>/',            views.AdminDoctorDetailView.as_view(),      name='admin-doctor-detail'),
+    path('admin/doctors/<uuid:pk>/mark-onboarding-paid/', views.AdminDoctorMarkOnboardingPaidView.as_view(), name='admin-doctor-mark-onboarding-paid'),
+    path('admin/doctors/<uuid:pk>/link-account/', views.AdminDoctorLinkAccountView.as_view(), name='admin-doctor-link-account'),
+    path('admin/doctors/<uuid:pk>/payouts/',     views.AdminDoctorPayoutListView.as_view(),  name='admin-doctor-payouts'),
+    path('admin/doctors/<uuid:pk>/payouts/<uuid:payout_id>/mark-paid/', views.AdminDoctorPayoutMarkPaidView.as_view(), name='admin-doctor-payout-mark-paid'),
     path('admin/appointments/',                 views.AdminAppointmentListView.as_view(),   name='admin-appointments'),
     path('admin/appointments/<uuid:pk>/',       views.AdminAppointmentDetailView.as_view(), name='admin-appointment-detail'),
     path('admin/plus-plans/',                   views.AdminPlusPlanListView.as_view(),      name='admin-plus-plans'),
@@ -206,6 +213,14 @@ urlpatterns = [
     path('delivery/active/<uuid:pk>/mark-delivered/', views.DeliveryMarkDeliveredView.as_view(), name='delivery-mark-delivered'),
     path('delivery/agent/location/',            views.DeliveryLocationUpdateView.as_view(), name='delivery-location'),
     path('delivery/agent/online/',              views.DeliveryOnlineToggleView.as_view(), name='delivery-online'),
+
+    # Doctor dashboard
+    path('doctor/availability/',                views.DoctorAvailabilityListView.as_view(), name='doctor-availability'),
+    path('doctor/availability/<uuid:pk>/',      views.DoctorAvailabilityDetailView.as_view(), name='doctor-availability-detail'),
+    path('doctor/appointments/',                views.DoctorOwnAppointmentListView.as_view(), name='doctor-own-appointments'),
+    path('doctor/appointments/<uuid:pk>/set-meeting-link/', views.DoctorAppointmentSetMeetingLinkView.as_view(), name='doctor-appointment-set-meeting-link'),
+    path('doctor/appointments/<uuid:pk>/complete/', views.DoctorAppointmentCompleteView.as_view(), name='doctor-appointment-complete'),
+    path('doctor/payouts/',                     views.DoctorPayoutListView.as_view(), name='doctor-payouts'),
 
     # Admin finance / settlement ledgers
     path('admin/finance/pharmacy-payouts/',                  views.AdminPharmacyPayoutListView.as_view(),         name='admin-finance-pharmacy-payouts'),

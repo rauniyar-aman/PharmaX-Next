@@ -30,6 +30,13 @@ class IsDeliveryAgent(BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.role == 'DELIVERY_AGENT')
 
 
+class IsDoctor(BasePermission):
+    """Doctor-dashboard endpoints. Same shape as IsPharmacy — role-only. Every view still has to
+    scope to request.user.doctor itself (via the OneToOneField on Doctor.user)."""
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role == 'DOCTOR')
+
+
 def require_permission(code: str):
     """Factory: returns a permission class checking for a specific granted permission code.
     Super admins pass automatically regardless of code."""
