@@ -248,6 +248,45 @@ class AdminDeliveryAgentCreateSerializer(serializers.Serializer):
         return value
 
 
+class AdminLabCollectorSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(source='user.full_name', read_only=True)
+    email = serializers.EmailField(source='user.email', read_only=True)
+    user_is_active = serializers.BooleanField(source='user.is_active', read_only=True)
+    outstanding_cod_balance = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LabCollector
+        fields = [
+            'id', 'full_name', 'email', 'phone', 'lat', 'lng', 'is_verified', 'is_online',
+            'user_is_active', 'outstanding_cod_balance', 'created_at',
+        ]
+        read_only_fields = ['id', 'full_name', 'email', 'is_online', 'user_is_active', 'outstanding_cod_balance', 'created_at']
+
+    def get_outstanding_cod_balance(self, obj):
+        # same reasoning as AdminDeliveryAgentSerializer.get_outstanding_cod_balance() — surfaced
+        # here so an admin verifying/suspending a collector can see at a glance whether they're
+        # currently holding platform cash.
+        total = obj.cod_liabilities.filter(status='PENDING').aggregate(t=Sum('amount_collected'))['t']
+        return str(total or Decimal('0'))
+
+
+class AdminLabCollectorCreateSerializer(serializers.Serializer):
+    full_name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    phone = serializers.CharField(max_length=20)
+    password = serializers.CharField(min_length=6, write_only=True)
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Email already registered.')
+        return value
+
+    def validate_phone(self, value):
+        if User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError('Phone number already registered.')
+        return value
+
+
 class AdminDoctorSerializer(serializers.ModelSerializer):
     email = serializers.SerializerMethodField()
     user_is_active = serializers.SerializerMethodField()

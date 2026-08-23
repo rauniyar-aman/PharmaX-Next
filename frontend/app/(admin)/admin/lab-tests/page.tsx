@@ -1,8 +1,9 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 import type { LabTest, LabTestCategory, LabTestBooking, LabTestBookingStatus } from '@/types'
 
 const TABS = ['Tests', 'Categories', 'Bookings'] as const
@@ -17,6 +18,16 @@ const STATUS_COLORS: Record<string, string> = {
   SAMPLE_COLLECTED: 'bg-primary/10 text-primary',
   REPORT_READY: 'bg-emerald-50 text-emerald-600',
   CANCELLED: 'bg-error/10 text-error',
+}
+// SAMPLE_COLLECTED/REPORT_READY are deliberately excluded — the backend now rejects setting
+// either directly through this free-form override (AdminLabTestBookingDetailView.put()); they
+// only happen through collector_confirm_sample_collected() and the report upload endpoint below.
+const ADMIN_EDITABLE_STATUSES: LabTestBookingStatus[] = ['PENDING', 'CONFIRMED', 'CANCELLED']
+
+const PAYMENT_METHOD_LABEL: Record<string, string> = {
+  KHALTI: 'Khalti',
+  ESEWA: 'eSewa',
+  CASH_ON_DELIVERY: 'Cash on Collection',
 }
 
 export default function AdminLabTestsPage() {
@@ -213,11 +224,51 @@ function CategoriesTab() {
   )
 }
 
+function ReportCell({ booking, uploading, onUpload }: {
+  booking: LabTestBooking
+  uploading: boolean
+  onUpload: (bookingId: string, file: File) => void
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  if (booking.report_file_url) {
+    return (
+      <a href={resolveImg(booking.report_file_url) || '#'} target="_blank" rel="noopener noreferrer"
+        className="text-xs font-semibold text-primary hover:underline whitespace-nowrap flex items-center gap-1">
+        <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>description</span>View Report
+      </a>
+    )
+  }
+
+  const eligible = booking.status === 'SAMPLE_COLLECTED' && booking.payment_status === 'PAID'
+  if (!eligible) {
+    return (
+      <span className="text-xs text-on-surface-variant" title="Needs SAMPLE_COLLECTED status and settled payment before a report can be uploaded.">—</span>
+    )
+  }
+
+  return (
+    <>
+      <input ref={inputRef} type="file" accept="application/pdf,image/*" className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) onUpload(booking.id, file)
+          e.target.value = ''
+        }} />
+      <button onClick={() => inputRef.current?.click()} disabled={uploading}
+        className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60 whitespace-nowrap">
+        {uploading ? 'Uploading...' : 'Upload Report'}
+      </button>
+    </>
+  )
+}
+
 function BookingsTab() {
   const [bookings, setBookings] = useState<LabTestBooking[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [updating, setUpdating] = useState<string | null>(null)
+  const [uploadingId, setUploadingId] = useState<string | null>(null)
 
   const fetchBookings = useCallback(() => {
     setLoading(true)
@@ -233,10 +284,25 @@ function BookingsTab() {
       await api.put(`/admin/lab-test-bookings/${id}/`, { status: newStatus })
       toast.success('Booking updated.')
       fetchBookings()
-    } catch {
-      toast.error('Failed to update booking.')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update booking.')
     } finally {
       setUpdating(null)
+    }
+  }
+
+  const uploadReport = async (id: string, file: File) => {
+    setUploadingId(id)
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const res = await api.post(`/admin/lab-test-bookings/${id}/upload-report/`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+      setBookings((prev) => prev.map((b) => (b.id === id ? res.data.data.booking : b)))
+      toast.success('Report uploaded.')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to upload report.')
+    } finally {
+      setUploadingId(null)
     }
   }
 
@@ -255,16 +321,16 @@ function BookingsTab() {
           <table className="w-full text-sm">
             <thead className="bg-surface-container-low border-b border-outline-variant">
               <tr>
-                {['Test', 'Customer', 'Date', 'Time Slot', 'Amount', 'Status', 'Actions'].map((h) => (
+                {['Test', 'Customer', 'Collector', 'Date', 'Time Slot', 'Amount', 'Payment', 'Status', 'Report'].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-on-surface-variant whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant">
               {loading ? (
-                [...Array(5)].map((_, i) => <tr key={i}><td colSpan={7} className="px-4 py-3"><div className="h-6 bg-surface-container-low rounded animate-pulse" /></td></tr>)
+                [...Array(5)].map((_, i) => <tr key={i}><td colSpan={9} className="px-4 py-3"><div className="h-6 bg-surface-container-low rounded animate-pulse" /></td></tr>)
               ) : bookings.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-on-surface-variant">No bookings found</td></tr>
+                <tr><td colSpan={9} className="px-4 py-12 text-center text-on-surface-variant">No bookings found</td></tr>
               ) : bookings.map((b) => (
                 <tr key={b.id} className="hover:bg-surface-container-low transition-colors">
                   <td className="px-4 py-3 font-medium text-on-surface">{b.lab_test?.name}</td>
@@ -272,19 +338,32 @@ function BookingsTab() {
                     <p className="text-sm text-on-surface">{b.user?.full_name}</p>
                     <p className="text-xs text-on-surface-variant">{b.user?.email}</p>
                   </td>
+                  <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap">{b.collector?.full_name || 'Unassigned'}</td>
                   <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap">{new Date(b.scheduled_date).toLocaleDateString()}</td>
                   <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap">{b.time_slot}</td>
                   <td className="px-4 py-3 font-semibold text-on-surface">NPR {Number(b.total_amount).toFixed(0)}</td>
-                  <td className="px-4 py-3">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${STATUS_COLORS[b.status] || 'bg-surface-container text-on-surface-variant'}`}>
-                      {b.status.replace(/_/g, ' ')}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${b.payment_status === 'PAID' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                      {b.payment_status === 'PAID' ? 'Paid' : 'Pending'}
                     </span>
+                    {b.payment_method && <p className="text-[10px] text-on-surface-variant mt-0.5">{PAYMENT_METHOD_LABEL[b.payment_method] || b.payment_method}</p>}
                   </td>
                   <td className="px-4 py-3">
-                    <select value={b.status} onChange={(e) => updateStatus(b.id, e.target.value)} disabled={updating === b.id}
-                      className="text-xs border border-outline-variant rounded-lg px-2 py-1.5 bg-surface text-on-surface focus:outline-none focus:border-secondary transition disabled:opacity-60">
-                      {BOOKING_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
-                    </select>
+                    <div className="flex flex-col gap-1.5">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold w-fit ${STATUS_COLORS[b.status] || 'bg-surface-container text-on-surface-variant'}`}>
+                        {b.status.replace(/_/g, ' ')}
+                      </span>
+                      {ADMIN_EDITABLE_STATUSES.includes(b.status) && (
+                        <select value={b.status} onChange={(e) => updateStatus(b.id, e.target.value)} disabled={updating === b.id}
+                          title="Admin override — for genuine edge cases only"
+                          className="text-xs border border-outline-variant rounded-lg px-2 py-1.5 bg-surface text-on-surface focus:outline-none focus:border-secondary transition disabled:opacity-60">
+                          {ADMIN_EDITABLE_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+                        </select>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <ReportCell booking={b} uploading={uploadingId === b.id} onUpload={uploadReport} />
                   </td>
                 </tr>
               ))}

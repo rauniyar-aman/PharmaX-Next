@@ -12,6 +12,7 @@ const navItems = [
   { label: 'Brands',        href: '/admin/brands',        icon: 'storefront',   code: 'manage_inventory' },
   { label: 'Inventory',     href: '/admin/inventory',     icon: 'inventory_2',  code: 'manage_inventory' },
   { label: 'Lab Tests',     href: '/admin/lab-tests',     icon: 'biotech',      code: 'manage_lab_tests' },
+  { label: 'Lab Collectors', href: '/admin/lab-collectors', icon: 'medical_services', code: 'manage_lab_tests' },
   { label: 'Doctor Consult', href: '/admin/doctor-consult', icon: 'stethoscope', code: 'manage_doctors' },
   { label: 'Health Articles', href: '/admin/blog',        icon: 'article',      code: 'manage_blog' },
   { label: 'Subscriptions',  href: '/admin/subscriptions', icon: 'autorenew',   code: 'manage_subscriptions' },

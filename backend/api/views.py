@@ -62,6 +62,7 @@ from .serializers import (
     DeliveryFulfillmentSerializer, DeliveryActiveSerializer,
     AdminPharmacyPayoutSerializer, AdminDeliveryAgentEarningSerializer, AdminDeliveryAgentCodLiabilitySerializer,
     AdminCollectorEarningSerializer, AdminCollectorCodLiabilitySerializer,
+    AdminLabCollectorSerializer, AdminLabCollectorCreateSerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
@@ -2169,7 +2170,7 @@ class LabTestBookingListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        bookings = LabTestBooking.objects.filter(user=request.user).select_related('lab_test__category', 'address').order_by('-booked_at')
+        bookings = LabTestBooking.objects.filter(user=request.user).select_related('lab_test__category', 'address', 'collector__user').order_by('-booked_at')
         return Response({'success': True, 'data': {'bookings': LabTestBookingSerializer(bookings, many=True).data}})
 
     def post(self, request):
@@ -2246,7 +2247,7 @@ class LabTestBookingDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            booking = LabTestBooking.objects.select_related('lab_test__category', 'address').get(id=pk, user=request.user)
+            booking = LabTestBooking.objects.select_related('lab_test__category', 'address', 'collector__user').get(id=pk, user=request.user)
         except LabTestBooking.DoesNotExist:
             return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}})
@@ -3749,7 +3750,7 @@ class AdminLabTestBookingListView(APIView):
     permission_classes = [require_permission('manage_lab_tests')]
 
     def get(self, request):
-        qs = LabTestBooking.objects.select_related('user', 'lab_test', 'address').order_by('-booked_at')
+        qs = LabTestBooking.objects.select_related('user', 'lab_test', 'address', 'collector__user').order_by('-booked_at')
         status_filter = request.query_params.get('status', '').strip()
         if status_filter:
             qs = qs.filter(status=status_filter)
@@ -4932,6 +4933,60 @@ class AdminDeliveryAgentDetailView(APIView):
             agent.user.save(update_fields=['is_active'])
 
         return Response({'success': True, 'data': {'agent': AdminDeliveryAgentSerializer(agent).data}, 'message': 'Delivery agent updated.'})
+
+
+class AdminLabCollectorListView(APIView):
+    """Mirrors AdminDeliveryAgentListView exactly — same admin-created-only onboarding, same
+    starts-unverified default. Gated by manage_lab_tests (not a new permission code) since
+    collectors are lab-tests-domain workers, the same way AdminLabTestBookingDetailView etc.
+    already are."""
+    permission_classes = [require_permission('manage_lab_tests')]
+
+    def get(self, request):
+        collectors = LabCollector.objects.select_related('user').order_by('user__full_name')
+        return Response({'success': True, 'data': {'collectors': AdminLabCollectorSerializer(collectors, many=True).data}})
+
+    def post(self, request):
+        s = AdminLabCollectorCreateSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        d = s.validated_data
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=d['email'], full_name=d['full_name'], phone=d['phone'], password=d['password'],
+                role='LAB_COLLECTOR', is_active=True, is_email_verified=True,
+            )
+            collector = LabCollector.objects.create(user=user, phone=d['phone'])
+
+        return Response({'success': True, 'data': {'collector': AdminLabCollectorSerializer(collector).data}, 'message': 'Lab collector account created — remember to verify it before they can accept collections.'}, status=status.HTTP_201_CREATED)
+
+
+class AdminLabCollectorDetailView(APIView):
+    permission_classes = [require_permission('manage_lab_tests')]
+
+    def get(self, request, pk):
+        try:
+            collector = LabCollector.objects.select_related('user').get(id=pk)
+        except LabCollector.DoesNotExist:
+            return Response({'success': False, 'message': 'Lab collector not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'collector': AdminLabCollectorSerializer(collector).data}})
+
+    def patch(self, request, pk):
+        try:
+            collector = LabCollector.objects.select_related('user').get(id=pk)
+        except LabCollector.DoesNotExist:
+            return Response({'success': False, 'message': 'Lab collector not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'is_verified' in request.data:
+            collector.is_verified = bool(request.data['is_verified'])
+        collector.save()
+
+        if 'user_is_active' in request.data:
+            collector.user.is_active = bool(request.data['user_is_active'])
+            collector.user.save(update_fields=['is_active'])
+
+        return Response({'success': True, 'data': {'collector': AdminLabCollectorSerializer(collector).data}, 'message': 'Lab collector updated.'})
 
 
 # ─── Doctor Dashboard (Stage 2 of the doctor consult spec) ────────────────────
@@ -6280,7 +6335,7 @@ class LabCollectorActiveListView(APIView):
     def get(self, request):
         bookings = LabTestBooking.objects.filter(
             collector=request.user.lab_collector, status__in=('CONFIRMED', 'SAMPLE_COLLECTED'),
-        ).select_related('lab_test__category', 'address', 'user').order_by('scheduled_date')
+        ).select_related('lab_test__category', 'address', 'user', 'collector__user').order_by('scheduled_date')
         return Response({'success': True, 'data': {'collections': LabTestBookingSerializer(bookings, many=True).data}})
 
 
@@ -6543,6 +6598,103 @@ class AdminCodLiabilityConfirmRemittanceView(APIView):
         liability.confirmed_by = request.user
         liability.save(update_fields=['status', 'remittance_method', 'reference', 'remitted_at', 'confirmed_by'])
         return Response({'success': True, 'data': {'liability': AdminDeliveryAgentCodLiabilitySerializer(liability).data}, 'message': 'Remittance confirmed.'})
+
+
+# Collector-scoped mirror of the four delivery-agent finance views immediately above — same
+# manage_finance gate, same pagination/filter shape, just CollectorEarning/CollectorCodLiability
+# instead of DeliveryAgentEarning/DeliveryAgentCodLiability.
+
+class AdminCollectorEarningListView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def get(self, request):
+        qs = CollectorEarning.objects.select_related('collector__user', 'booking__lab_test', 'paid_by').order_by('-created_at')
+        collector_id = request.query_params.get('collector')
+        if collector_id:
+            qs = qs.filter(collector_id=collector_id)
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        page = max(1, int(request.query_params.get('page', 1)))
+        limit = min(50, int(request.query_params.get('limit', 20)))
+        total = qs.count()
+        earnings = qs[(page - 1) * limit: page * limit]
+        return Response({
+            'success': True,
+            'data': {
+                'earnings': AdminCollectorEarningSerializer(earnings, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+
+class AdminCollectorEarningMarkPaidView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def post(self, request, pk):
+        try:
+            earning = CollectorEarning.objects.get(pk=pk)
+        except CollectorEarning.DoesNotExist:
+            return Response({'success': False, 'message': 'Earning not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if earning.status == 'PAID':
+            return Response({'success': False, 'message': 'This earning is already marked paid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        earning.status = 'PAID'
+        earning.paid_at = timezone.now()
+        earning.paid_by = request.user
+        earning.save(update_fields=['status', 'paid_at', 'paid_by'])
+        return Response({'success': True, 'data': {'earning': AdminCollectorEarningSerializer(earning).data}, 'message': 'Marked as paid.'})
+
+
+class AdminCollectorCodLiabilityListView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def get(self, request):
+        qs = CollectorCodLiability.objects.select_related('collector__user', 'booking__lab_test', 'confirmed_by').order_by('-created_at')
+        collector_id = request.query_params.get('collector')
+        if collector_id:
+            qs = qs.filter(collector_id=collector_id)
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        page = max(1, int(request.query_params.get('page', 1)))
+        limit = min(50, int(request.query_params.get('limit', 20)))
+        total = qs.count()
+        liabilities = qs[(page - 1) * limit: page * limit]
+        return Response({
+            'success': True,
+            'data': {
+                'liabilities': AdminCollectorCodLiabilitySerializer(liabilities, many=True).data,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+
+class AdminCollectorCodLiabilityConfirmRemittanceView(APIView):
+    permission_classes = [require_permission('manage_finance')]
+
+    def post(self, request, pk):
+        try:
+            liability = CollectorCodLiability.objects.get(pk=pk)
+        except CollectorCodLiability.DoesNotExist:
+            return Response({'success': False, 'message': 'Liability not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if liability.status == 'REMITTED':
+            return Response({'success': False, 'message': 'This liability is already remitted.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        method = request.data.get('remittance_method')
+        valid_methods = dict(CollectorCodLiability.METHOD)
+        if method not in valid_methods:
+            return Response({'success': False, 'message': f'remittance_method must be one of: {", ".join(valid_methods)}.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        liability.status = 'REMITTED'
+        liability.remittance_method = method
+        liability.reference = (request.data.get('reference') or '').strip() or None
+        liability.remitted_at = timezone.now()
+        liability.confirmed_by = request.user
+        liability.save(update_fields=['status', 'remittance_method', 'reference', 'remitted_at', 'confirmed_by'])
+        return Response({'success': True, 'data': {'liability': AdminCollectorCodLiabilitySerializer(liability).data}, 'message': 'Remittance confirmed.'})
 
 
 class AdminAgentFinanceProfileView(APIView):

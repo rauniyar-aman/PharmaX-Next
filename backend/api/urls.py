@@ -189,6 +189,8 @@ urlpatterns = [
     path('admin/pharmacies/<uuid:pharmacy_id>/location-change-requests/<uuid:pk>/reject/',  views.AdminPharmacyLocationChangeRejectView.as_view(),  name='admin-pharmacy-location-change-reject'),
     path('admin/delivery-agents/',              views.AdminDeliveryAgentListView.as_view(), name='admin-delivery-agents'),
     path('admin/delivery-agents/<uuid:pk>/',    views.AdminDeliveryAgentDetailView.as_view(), name='admin-delivery-agent-detail'),
+    path('admin/lab-collectors/',               views.AdminLabCollectorListView.as_view(), name='admin-lab-collectors'),
+    path('admin/lab-collectors/<uuid:pk>/',     views.AdminLabCollectorDetailView.as_view(), name='admin-lab-collector-detail'),
 
     # Pharmacy dashboard
     path('pharmacy/profile/',                   views.PharmacyProfileView.as_view(),        name='pharmacy-profile'),
@@ -250,6 +252,10 @@ urlpatterns = [
     path('admin/finance/agent-earnings/<uuid:pk>/mark-paid/', views.AdminAgentEarningMarkPaidView.as_view(),       name='admin-finance-agent-earning-mark-paid'),
     path('admin/finance/cod-liabilities/',                    views.AdminCodLiabilityListView.as_view(),           name='admin-finance-cod-liabilities'),
     path('admin/finance/cod-liabilities/<uuid:pk>/confirm-remittance/', views.AdminCodLiabilityConfirmRemittanceView.as_view(), name='admin-finance-cod-liability-confirm-remittance'),
+    path('admin/finance/collector-earnings/',                     views.AdminCollectorEarningListView.as_view(),           name='admin-finance-collector-earnings'),
+    path('admin/finance/collector-earnings/<uuid:pk>/mark-paid/', views.AdminCollectorEarningMarkPaidView.as_view(),       name='admin-finance-collector-earning-mark-paid'),
+    path('admin/finance/collector-cod-liabilities/',                    views.AdminCollectorCodLiabilityListView.as_view(),           name='admin-finance-collector-cod-liabilities'),
+    path('admin/finance/collector-cod-liabilities/<uuid:pk>/confirm-remittance/', views.AdminCollectorCodLiabilityConfirmRemittanceView.as_view(), name='admin-finance-collector-cod-liability-confirm-remittance'),
     path('admin/finance/agents/<uuid:pk>/',                   views.AdminAgentFinanceProfileView.as_view(),        name='admin-finance-agent-profile'),
     path('admin/finance/summary/',                            views.AdminFinanceSummaryView.as_view(),             name='admin-finance-summary'),
 ]
