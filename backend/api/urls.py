@@ -220,6 +220,15 @@ urlpatterns = [
     path('delivery/agent/location/',            views.DeliveryLocationUpdateView.as_view(), name='delivery-location'),
     path('delivery/agent/online/',              views.DeliveryOnlineToggleView.as_view(), name='delivery-online'),
 
+    # Lab collector dashboard
+    path('lab-collector/finance/',              views.LabCollectorFinanceView.as_view(),        name='lab-collector-finance'),
+    path('lab-collector/requests/',             views.LabCollectorRequestListView.as_view(),    name='lab-collector-requests'),
+    path('lab-collector/requests/<uuid:pk>/accept/', views.LabCollectorAcceptView.as_view(),     name='lab-collector-request-accept'),
+    path('lab-collector/active/',               views.LabCollectorActiveListView.as_view(),     name='lab-collector-active'),
+    path('lab-collector/active/<uuid:pk>/confirm-collected/', views.LabCollectorConfirmCollectedView.as_view(), name='lab-collector-confirm-collected'),
+    path('lab-collector/location/',             views.LabCollectorLocationUpdateView.as_view(), name='lab-collector-location'),
+    path('lab-collector/online/',               views.LabCollectorOnlineToggleView.as_view(),   name='lab-collector-online'),
+
     # Doctor dashboard
     path('doctor/profile/',                     views.DoctorProfileView.as_view(), name='doctor-profile'),
     path('doctor/availability/',                views.DoctorAvailabilityListView.as_view(), name='doctor-availability'),

@@ -30,6 +30,7 @@ from .models import (
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
     Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, DeliveryDecline,
     PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours,
+    LabCollector, CollectorEarning, CollectorCodLiability,
     PharmacyDocument, PharmacyLocationChangeRequest,
 )
 from .serializers import (
@@ -60,9 +61,10 @@ from .serializers import (
     PharmacyLocationChangeRequestSerializer,
     DeliveryFulfillmentSerializer, DeliveryActiveSerializer,
     AdminPharmacyPayoutSerializer, AdminDeliveryAgentEarningSerializer, AdminDeliveryAgentCodLiabilitySerializer,
+    AdminCollectorEarningSerializer, AdminCollectorCodLiabilitySerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
-from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, require_permission
+from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
 from .throttles import AuthRateThrottle
 from .matching import (
     broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts,
@@ -71,6 +73,7 @@ from .matching import (
     _tracking_payload, widen_stale_priority_broadcasts, _fulfillment_prescription_ready, broadcast_delivery,
 )
 from .scheduling import get_available_slots
+from .lab_collection import broadcast_collector, collector_accept, collector_confirm_sample_collected, _collector_eligible_for
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
@@ -2277,14 +2280,14 @@ def _confirm_lab_test_booking(booking):
     and a Plus-free doctor appointment confirms immediately with no admin gate — admin review in
     this codebase is reserved for things that need human judgment (verifying a pharmacy, curating a
     prescription), not for "did payment settle," which is already a deterministic, machine-checkable
-    fact. Stage 3 extends this same function to also call broadcast_collector() right here, once
-    that exists — CONFIRMED is exactly the state a booking needs to reach before it's offered to
+    fact. CONFIRMED is exactly the state a booking needs to reach before it's broadcast to
     collectors, same as PLACED is what triggers broadcast_delivery() for orders.
     """
     if booking.status != 'PENDING':
         return
     booking.status = 'CONFIRMED'
     booking.save(update_fields=['status'])
+    broadcast_collector(booking)
 
 
 def _cancel_unpaid_lab_test_booking(booking):
@@ -6177,6 +6180,153 @@ class DeliveryOnlineToggleView(APIView):
             'success': True,
             'data': {'is_online': agent.is_online},
             'message': 'You are now online.' if is_online else 'You are now offline.',
+        })
+
+
+# ─── Lab Collector Dashboard (lab sample collection spec) ─────────────────────
+#
+# Same two patterns as the delivery dashboard throughout: IsCollector (role-only) gates access,
+# and every query is additionally scoped to request.user.lab_collector / collector=... — that
+# second filter is the actual ownership boundary, IsCollector alone only proves "some collector is
+# logged in."
+
+class LabCollectorRequestListView(APIView):
+    """Available-to-accept, unclaimed collections — every booking this specific collector
+    currently qualifies for, per the same live eligibility check collector_accept() uses."""
+    permission_classes = [IsCollector]
+
+    def get(self, request):
+        collector = request.user.lab_collector
+        candidates = LabTestBooking.objects.filter(
+            status='CONFIRMED', collector_broadcast_at__isnull=False, collector__isnull=True,
+        ).select_related('lab_test__category', 'address', 'user')
+        eligible = [b for b in candidates if _collector_eligible_for(collector, b)]
+        return Response({'success': True, 'data': {'requests': LabTestBookingSerializer(eligible, many=True).data}})
+
+
+class LabCollectorAcceptView(APIView):
+    permission_classes = [IsCollector]
+
+    def post(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.get(pk=pk, status='CONFIRMED')
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Collection not found or no longer available.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ok, err = collector_accept(request.user.lab_collector, booking)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'message': 'Accepted! Head to the patient\'s address for collection.'})
+
+
+class LabCollectorActiveListView(APIView):
+    """This collector's own active collections — accepted but not yet reported. Once REPORT_READY
+    there's nothing further for the collector to do, so that's excluded here (still visible via the
+    booking's own history)."""
+    permission_classes = [IsCollector]
+
+    def get(self, request):
+        bookings = LabTestBooking.objects.filter(
+            collector=request.user.lab_collector, status__in=('CONFIRMED', 'SAMPLE_COLLECTED'),
+        ).select_related('lab_test__category', 'address', 'user').order_by('scheduled_date')
+        return Response({'success': True, 'data': {'collections': LabTestBookingSerializer(bookings, many=True).data}})
+
+
+class LabCollectorConfirmCollectedView(APIView):
+    permission_classes = [IsCollector]
+
+    def post(self, request, pk):
+        # the collector=request.user.lab_collector filter on this lookup IS the ownership
+        # boundary — Collector B passing Collector A's booking id gets a 404, not someone else's job.
+        try:
+            booking = LabTestBooking.objects.get(pk=pk, collector=request.user.lab_collector)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ok, err = collector_confirm_sample_collected(request.user.lab_collector, booking, request.data.get('amount_confirmed'))
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'message': 'Sample collection confirmed.'})
+
+
+class LabCollectorLocationUpdateView(APIView):
+    """No pk in the URL at all — always operates on request.user.lab_collector, same pattern as
+    DeliveryLocationUpdateView."""
+    permission_classes = [IsCollector]
+
+    def patch(self, request):
+        lat, lng = request.data.get('lat'), request.data.get('lng')
+        if lat is None or lng is None:
+            return Response({'success': False, 'message': 'lat and lng are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            lat, lng = float(lat), float(lng)
+        except (TypeError, ValueError):
+            return Response({'success': False, 'message': 'lat and lng must be numbers.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        collector = request.user.lab_collector
+        collector.lat = lat
+        collector.lng = lng
+        collector.save(update_fields=['lat', 'lng'])
+        return Response({'success': True, 'message': 'Location updated.'})
+
+
+class LabCollectorOnlineToggleView(APIView):
+    permission_classes = [IsCollector]
+
+    def patch(self, request):
+        is_online = request.data.get('is_online')
+        if not isinstance(is_online, bool):
+            return Response({'success': False, 'message': 'is_online (boolean) is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        collector = request.user.lab_collector
+        collector.is_online = is_online
+        collector.save(update_fields=['is_online'])
+        return Response({
+            'success': True,
+            'data': {'is_online': collector.is_online},
+            'message': 'You are now online.' if is_online else 'You are now offline.',
+        })
+
+
+class LabCollectorFinanceView(APIView):
+    """The collector's own combined financial profile — same shape as DeliveryFinanceView, and
+    same reasoning: confirming a COD remittance stays admin-only (see
+    AdminCollectorCodLiabilityConfirmRemittanceView) since a collector self-marking cash they still
+    owe as 'remitted' would defeat the point of the ledger."""
+    permission_classes = [IsCollector]
+
+    def get(self, request):
+        collector = request.user.lab_collector
+
+        liabilities = CollectorCodLiability.objects.filter(collector=collector).select_related('booking__lab_test', 'confirmed_by').order_by('-created_at')
+        earnings = CollectorEarning.objects.filter(collector=collector).select_related('booking__lab_test', 'paid_by').order_by('-created_at')
+
+        pending_liabilities = liabilities.filter(status='PENDING')
+        total_collected = liabilities.aggregate(t=Sum('amount_collected'))['t'] or Decimal('0')
+        total_outstanding = pending_liabilities.aggregate(t=Sum('amount_collected'))['t'] or Decimal('0')
+        oldest_pending = pending_liabilities.order_by('created_at').first()
+        oldest_age_days = (timezone.now() - oldest_pending.created_at).days if oldest_pending else None
+
+        total_earned = earnings.aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        total_pending_earnings = earnings.filter(status='PENDING').aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        total_paid_earnings = earnings.filter(status='PAID').aggregate(t=Sum('amount'))['t'] or Decimal('0')
+
+        return Response({
+            'success': True,
+            'data': {
+                'cod_record': {
+                    'liabilities': AdminCollectorCodLiabilitySerializer(liabilities, many=True).data,
+                    'total_collected': str(total_collected),
+                    'total_outstanding': str(total_outstanding),
+                    'oldest_unremitted_age_days': oldest_age_days,
+                },
+                'earnings_record': {
+                    'earnings': AdminCollectorEarningSerializer(earnings, many=True).data,
+                    'total_earned': str(total_earned),
+                    'total_pending': str(total_pending_earnings),
+                    'total_paid': str(total_paid_earnings),
+                },
+            },
         })
 
 

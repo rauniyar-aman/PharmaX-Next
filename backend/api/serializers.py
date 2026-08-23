@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest
+from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -1321,6 +1321,39 @@ class AdminDeliveryAgentCodLiabilitySerializer(serializers.ModelSerializer):
         model = DeliveryAgentCodLiability
         fields = [
             'id', 'agent', 'agent_name', 'fulfillment', 'order_id', 'amount_collected', 'status',
+            'remittance_method', 'reference', 'remitted_at', 'confirmed_by_name', 'days_outstanding', 'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_days_outstanding(self, obj):
+        if obj.status != 'PENDING':
+            return None
+        return (timezone.now() - obj.created_at).days
+
+
+class AdminCollectorEarningSerializer(serializers.ModelSerializer):
+    collector_name = serializers.CharField(source='collector.user.full_name', read_only=True)
+    booking_id = serializers.UUIDField(read_only=True)
+    lab_test_name = serializers.CharField(source='booking.lab_test.name', read_only=True)
+    paid_by_name = serializers.CharField(source='paid_by.full_name', read_only=True)
+
+    class Meta:
+        model = CollectorEarning
+        fields = ['id', 'collector', 'collector_name', 'booking_id', 'lab_test_name', 'amount', 'status', 'paid_at', 'paid_by_name', 'created_at']
+        read_only_fields = fields
+
+
+class AdminCollectorCodLiabilitySerializer(serializers.ModelSerializer):
+    collector_name = serializers.CharField(source='collector.user.full_name', read_only=True)
+    booking_id = serializers.UUIDField(read_only=True)
+    lab_test_name = serializers.CharField(source='booking.lab_test.name', read_only=True)
+    confirmed_by_name = serializers.CharField(source='confirmed_by.full_name', read_only=True)
+    days_outstanding = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CollectorCodLiability
+        fields = [
+            'id', 'collector', 'collector_name', 'booking_id', 'lab_test_name', 'amount_collected', 'status',
             'remittance_method', 'reference', 'remitted_at', 'confirmed_by_name', 'days_outstanding', 'created_at',
         ]
         read_only_fields = fields
