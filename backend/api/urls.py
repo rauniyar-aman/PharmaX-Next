@@ -45,6 +45,7 @@ urlpatterns = [
     path('prescriptions/<uuid:pk>/', views.PrescriptionDetailView.as_view(), name='prescription-detail'),
     path('prescriptions/<uuid:pk>/medicine-items/',         views.PrescriptionMedicineItemListView.as_view(),    name='prescription-medicine-items'),
     path('prescriptions/<uuid:pk>/medicine-items/confirm/', views.PrescriptionMedicineItemConfirmView.as_view(), name='prescription-medicine-items-confirm'),
+    path('prescriptions/<uuid:pk>/lab-test-items/',         views.PrescriptionLabTestItemListView.as_view(),     name='prescription-lab-test-items'),
 
     # Orders
     path('orders/',          views.OrderListView.as_view(),   name='orders'),

@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest
+from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -372,20 +372,31 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
 class PrescriptionSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     medicine_item_count = serializers.SerializerMethodField()
+    lab_test_item_count = serializers.SerializerMethodField()
     all_files = serializers.SerializerMethodField()
     order = serializers.SerializerMethodField()
+    appointment_id = serializers.UUIDField(read_only=True)
+    appointment_date = serializers.SerializerMethodField()
 
     class Meta:
         model = Prescription
         fields = [
             'id', 'file_name', 'file_url', 'notes', 'doctor', 'hospital',
             'status', 'rejection_reason', 'admin_comment', 'expiry_date', 'uploaded_at', 'checkout_draft',
-            'medicines_reviewed_at', 'medicine_item_count', 'all_files', 'order',
+            'medicines_reviewed_at', 'medicine_item_count', 'lab_test_item_count', 'all_files', 'order',
+            'source', 'appointment_id', 'appointment_date',
         ]
         read_only_fields = [
             'id', 'status', 'rejection_reason', 'admin_comment', 'uploaded_at', 'file_url',
-            'medicines_reviewed_at', 'medicine_item_count', 'all_files', 'order',
+            'medicines_reviewed_at', 'medicine_item_count', 'lab_test_item_count', 'all_files', 'order',
+            'source', 'appointment_id', 'appointment_date',
         ]
+
+    def get_lab_test_item_count(self, obj):
+        return obj.lab_test_items.count()
+
+    def get_appointment_date(self, obj):
+        return obj.appointment.scheduled_date if obj.appointment_id else None
 
     def get_file_url(self, obj):
         if obj.file:
@@ -705,6 +716,16 @@ class LabTestBookingSerializer(serializers.ModelSerializer):
 
     def get_user(self, obj):
         return {'id': str(obj.user_id), 'full_name': obj.user.full_name, 'email': obj.user.email, 'phone': obj.user.phone}
+
+
+class PrescriptionLabTestItemSerializer(serializers.ModelSerializer):
+    lab_test = LabTestListSerializer(read_only=True)
+    booking_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = PrescriptionLabTestItem
+        fields = ['id', 'lab_test', 'booking_id', 'created_at']
+        read_only_fields = ['id', 'created_at']
 
 
 class PlusPlanSerializer(serializers.ModelSerializer):
