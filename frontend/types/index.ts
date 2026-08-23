@@ -443,6 +443,8 @@ export interface FulfillmentSummary {
   all_resolved: boolean
 }
 
+export type PrescriptionSource = 'UPLOAD' | 'CONSULTATION'
+
 export interface Prescription {
   id: string
   file_name?: string
@@ -456,14 +458,26 @@ export interface Prescription {
   uploaded_at: string
   medicines_reviewed_at?: string | null
   medicine_item_count?: number
+  lab_test_item_count?: number
+  lab_test_pending_count?: number
   all_files?: { id: string | null; file_name: string; file_url: string }[]
   order?: { id: string; status: string; placed_at: string } | null
+  source?: PrescriptionSource
+  appointment_id?: string | null
+  appointment_date?: string | null
 }
 
 export interface PrescriptionMedicineItem {
   id: string
   medicine: Medicine
   quantity: number
+  created_at: string
+}
+
+export interface PrescriptionLabTestItem {
+  id: string
+  lab_test: LabTest
+  booking_id: string | null
   created_at: string
 }
 
@@ -643,6 +657,7 @@ export interface DoctorAppointment {
   payment_status?: AppointmentPaymentStatus
   payment_method?: 'KHALTI' | 'ESEWA' | 'WALLET' | null
   payout_status?: PayoutStatus | null   // admin views only (AdminAppointmentListView/Detail)
+  prescription?: { id: string; notes: string | null; medicine_item_count: number; lab_test_item_count: number } | null
   booked_at: string
   updated_at: string
 }

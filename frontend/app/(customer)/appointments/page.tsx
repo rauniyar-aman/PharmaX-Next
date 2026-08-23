@@ -125,6 +125,26 @@ export default function AppointmentsPage() {
                 <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>open_in_new</span>
               </a>
             )}
+
+            {/* Consultation notes are always shown here, even for a notes-only prescription with
+                nothing to add to cart or book — otherwise it would have no visible entry point. */}
+            {a.status === 'COMPLETED' && a.prescription && (
+              <div className="bg-surface-container-low rounded-xl p-3 space-y-2">
+                <p className="text-xs font-semibold text-on-surface flex items-center gap-1.5">
+                  <span className="material-symbols-outlined ms-filled" style={{ fontSize: '15px' }}>description</span>
+                  Consultation Notes
+                </p>
+                {a.prescription.notes && <p className="text-sm text-on-surface">{a.prescription.notes}</p>}
+                {(a.prescription.medicine_item_count > 0 || a.prescription.lab_test_item_count > 0) && (
+                  <Link href={`/prescriptions/${a.prescription.id}/review`}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+                    {[a.prescription.medicine_item_count > 0 && `${a.prescription.medicine_item_count} medicine(s)`, a.prescription.lab_test_item_count > 0 && `${a.prescription.lab_test_item_count} test(s)`].filter(Boolean).join(' + ')} suggested — Review
+                    <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>arrow_forward</span>
+                  </Link>
+                )}
+              </div>
+            )}
+
             {(a.status === 'PENDING' || a.status === 'CONFIRMED') && (
               <button onClick={() => handleCancel(a.id)} disabled={cancelling === a.id}
                 className="text-xs font-semibold text-error hover:underline disabled:opacity-50">
