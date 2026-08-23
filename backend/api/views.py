@@ -22,7 +22,7 @@ from django.conf import settings
 from decimal import Decimal
 
 from .models import (
-    User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionFile,
+    User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, PrescriptionFile,
     Cart, CartItem, Order, OrderItem, Review, WishlistItem,
     Notification, SystemSetting, StockLog,
     LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout,
@@ -37,7 +37,7 @@ from .serializers import (
     LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
     ChangePasswordSerializer, UserProfileSerializer,
     CategorySerializer, BrandSerializer, MedicineListSerializer, MedicineDetailSerializer,
-    AddressSerializer, PrescriptionSerializer, PrescriptionMedicineItemSerializer, CartSerializer,
+    AddressSerializer, PrescriptionSerializer, PrescriptionMedicineItemSerializer, PrescriptionLabTestItemSerializer, CartSerializer,
     CartItemSerializer, OrderSerializer, ReviewSerializer, MyReviewSerializer,
     NotificationSerializer, StockLogSerializer, SystemSettingSerializer,
     LabTestCategorySerializer, LabTestListSerializer, LabTestDetailSerializer, LabTestBookingSerializer,
@@ -966,6 +966,23 @@ class PrescriptionMedicineItemConfirmView(APIView):
         prescription.save(update_fields=['medicines_reviewed_at'])
 
         return Response({'success': True, 'data': {'cart': CartSerializer(cart).data, 'skipped': skipped}})
+
+
+class PrescriptionLabTestItemListView(APIView):
+    """Mirrors PrescriptionMedicineItemListView — patient-scoped, only meaningful once VERIFIED.
+    Unlike medicines there's no bulk confirm endpoint here: each suggested test the patient wants
+    gets booked individually through the existing POST /lab-tests/bookings/ flow."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            prescription = Prescription.objects.get(id=pk, user=request.user)
+        except Prescription.DoesNotExist:
+            return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if prescription.status != 'VERIFIED':
+            return Response({'success': False, 'message': 'This prescription has not been verified yet.'}, status=status.HTTP_400_BAD_REQUEST)
+        items = prescription.lab_test_items.select_related('lab_test__category', 'booking').order_by('created_at')
+        return Response({'success': True, 'data': {'lab_test_items': PrescriptionLabTestItemSerializer(items, many=True).data}})
 
 
 # ─── Orders ───────────────────────────────────────────────────────────────────
@@ -2181,6 +2198,16 @@ class LabTestBookingListCreateView(APIView):
         )
         lab_test.total_bookings = F('total_bookings') + 1
         lab_test.save(update_fields=['total_bookings'])
+
+        # Optional: link this booking back to the doctor-suggested item it fulfills, so both the
+        # patient and the doctor can see which suggestions were actually followed through on.
+        # Silently ignored if it doesn't resolve to a matching, not-yet-booked suggestion of this
+        # patient's own — this is a courtesy link, not something worth failing the booking over.
+        prescription_item_id = request.data.get('prescription_lab_test_item_id')
+        if prescription_item_id:
+            PrescriptionLabTestItem.objects.filter(
+                id=prescription_item_id, prescription__user=request.user, lab_test=lab_test, booking__isnull=True,
+            ).update(booking=booking)
 
         _notify_admins(
             'manage_lab_tests', 'NEW_LAB_BOOKING', 'New Lab Test Booking',
@@ -4050,6 +4077,39 @@ class AdminPrescriptionDetailView(APIView):
         return Response({'success': True, 'data': {'prescription': PrescriptionSerializer(prescription).data}})
 
 
+def _validate_prescription_medicine_item_input(medicine_id, quantity):
+    """Pure validation, no mutation — returns (medicine, quantity, None) or (None, None, error
+    Response). Split out from _create_prescription_medicine_item() so a bulk caller (the doctor
+    consultation-complete flow) can validate every item in a batch before creating any of them,
+    rather than risking a partially-created set if a later item turns out invalid."""
+    if not medicine_id:
+        return None, None, Response({'success': False, 'message': 'medicine_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        quantity = int(quantity)
+    except (TypeError, ValueError):
+        return None, None, Response({'success': False, 'message': 'quantity must be a number.'}, status=status.HTTP_400_BAD_REQUEST)
+    if quantity < 1:
+        return None, None, Response({'success': False, 'message': 'Quantity must be at least 1.'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        medicine = Medicine.objects.get(id=medicine_id)
+    except Medicine.DoesNotExist:
+        return None, None, Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
+    return medicine, quantity, None
+
+
+def _create_prescription_medicine_item(prescription, medicine_id, quantity, added_by):
+    """Shared validate+create logic for one PrescriptionMedicineItem — used by both the admin
+    curation flow (AdminPrescriptionMedicineItemListView) and doctor-issued prescriptions
+    (DoctorAppointmentCompleteView). Returns (item, None) or (None, error Response)."""
+    medicine, quantity, error = _validate_prescription_medicine_item_input(medicine_id, quantity)
+    if error:
+        return None, error
+    item = PrescriptionMedicineItem.objects.create(
+        prescription=prescription, medicine=medicine, quantity=quantity, added_by=added_by,
+    )
+    return item, None
+
+
 class AdminPrescriptionMedicineItemListView(APIView):
     permission_classes = [require_permission('manage_prescriptions')]
 
@@ -4061,23 +4121,11 @@ class AdminPrescriptionMedicineItemListView(APIView):
         if prescription.status != 'PENDING':
             return Response({'success': False, 'message': 'Medicines can only be added while the prescription is pending.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        medicine_id = request.data.get('medicine_id')
-        if not medicine_id:
-            return Response({'success': False, 'message': 'medicine_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            quantity = int(request.data.get('quantity', 1))
-        except (TypeError, ValueError):
-            return Response({'success': False, 'message': 'quantity must be a number.'}, status=status.HTTP_400_BAD_REQUEST)
-        if quantity < 1:
-            return Response({'success': False, 'message': 'Quantity must be at least 1.'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            medicine = Medicine.objects.get(id=medicine_id)
-        except Medicine.DoesNotExist:
-            return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        item = PrescriptionMedicineItem.objects.create(
-            prescription=prescription, medicine=medicine, quantity=quantity, added_by=request.user,
+        item, error = _create_prescription_medicine_item(
+            prescription, request.data.get('medicine_id'), request.data.get('quantity', 1), request.user,
         )
+        if error:
+            return error
         return Response({'success': True, 'data': {'item': PrescriptionMedicineItemSerializer(item).data}}, status=status.HTTP_201_CREATED)
 
 
@@ -4751,6 +4799,37 @@ class DoctorAppointmentCompleteView(APIView):
         if appt.status != 'CONFIRMED':
             return Response({'success': False, 'message': f'Can only complete a confirmed appointment (current status: {appt.status}).'}, status=status.HTTP_400_BAD_REQUEST)
 
+        notes = (request.data.get('notes') or '').strip()
+        if not notes:
+            return Response({'success': False, 'message': 'Consultation notes are required to complete this appointment.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        medicine_entries = request.data.get('medicine_items') or []
+        if not isinstance(medicine_entries, list):
+            return Response({'success': False, 'message': "'medicine_items' must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+        lab_test_ids = request.data.get('lab_test_items') or []
+        if not isinstance(lab_test_ids, list):
+            return Response({'success': False, 'message': "'lab_test_items' must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate every attached item BEFORE mutating anything — a bad medicine/lab-test id
+        # partway through must not leave the appointment COMPLETED with a half-built prescription
+        # that the existing admin curation UI can't even fix (it only allows edits while a
+        # prescription is PENDING, and this one is created VERIFIED).
+        resolved_medicines = []
+        for entry in medicine_entries:
+            if not isinstance(entry, dict):
+                return Response({'success': False, 'message': 'Each medicine_items entry must be an object with medicine_id and quantity.'}, status=status.HTTP_400_BAD_REQUEST)
+            medicine, quantity, error = _validate_prescription_medicine_item_input(entry.get('medicine_id'), entry.get('quantity', 1))
+            if error:
+                return error
+            resolved_medicines.append((medicine, quantity))
+
+        resolved_lab_tests = []
+        for lab_test_id in lab_test_ids:
+            try:
+                resolved_lab_tests.append(LabTest.objects.get(id=lab_test_id, is_active=True))
+            except LabTest.DoesNotExist:
+                return Response({'success': False, 'message': f'Lab test not found: {lab_test_id}'}, status=status.HTTP_404_NOT_FOUND)
+
         appt.status = 'COMPLETED'
         appt.save(update_fields=['status'])
 
@@ -4776,6 +4855,39 @@ class DoctorAppointmentCompleteView(APIView):
             # related-object caching happened to hand back.
             doctor.refresh_from_db(fields=['total_consultations'])
             appt.doctor = doctor
+
+        # Notes are required, so every completed consultation gets a real Prescription — some
+        # just end up with zero medicine_items/lab_test_items attached. status='VERIFIED' since a
+        # live consultation IS the verification, unlike an uploaded photo an admin has to assess.
+        if not hasattr(appt, 'prescription'):
+            presc = Prescription.objects.create(
+                user=appt.user, source='CONSULTATION', appointment=appt,
+                doctor=doctor.name, notes=notes, status='VERIFIED',
+            )
+            for medicine, quantity in resolved_medicines:
+                _create_prescription_medicine_item(presc, medicine.id, quantity, request.user)
+            for lab_test in resolved_lab_tests:
+                PrescriptionLabTestItem.objects.create(prescription=presc, lab_test=lab_test, added_by=request.user)
+
+            # Reuses AdminPrescriptionDetailView.put()'s verify-notification shape (count-based
+            # message, link to the review screen), extended to mention lab tests too when present.
+            medicine_count = len(resolved_medicines)
+            lab_test_count = len(resolved_lab_tests)
+            if medicine_count or lab_test_count:
+                parts = []
+                if medicine_count:
+                    parts.append(f'{medicine_count} medicine(s)')
+                if lab_test_count:
+                    parts.append(f'{lab_test_count} test(s)')
+                message = f'Dr. {doctor.name} has completed your consultation — we found {" and ".join(parts)}. Review and act on them.'
+                link = f'/prescriptions/{presc.id}/review'
+            else:
+                message = f'Dr. {doctor.name} has completed your consultation — your notes are ready.'
+                link = '/appointments'
+            Notification.objects.create(
+                user=appt.user, type='PRESCRIPTION', title='Consultation Notes Ready',
+                message=message, link=link,
+            )
 
         return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment marked complete.'})
 
