@@ -103,6 +103,20 @@ export interface AdminDeliveryAgent {
   created_at: string
 }
 
+export interface AdminLabCollector {
+  id: string
+  full_name: string
+  email: string
+  phone: string
+  lat: number | null
+  lng: number | null
+  is_verified: boolean
+  is_online: boolean
+  user_is_active: boolean
+  outstanding_cod_balance: string
+  created_at: string
+}
+
 export interface PharmacyListing {
   id: string
   medicine_id: string

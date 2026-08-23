@@ -117,6 +117,14 @@ export default function AdminFinancePage() {
           <span className="material-symbols-outlined text-error" style={{ fontSize: '20px' }}>account_balance_wallet</span>
           <span className="text-sm font-semibold text-on-surface">COD Liabilities</span>
         </Link>
+        <Link href="/admin/finance/collector-earnings" className="flex items-center gap-3 px-4 py-3 bg-surface rounded-xl border border-outline-variant hover:border-primary/40 transition-colors">
+          <span className="material-symbols-outlined text-primary" style={{ fontSize: '20px' }}>medical_services</span>
+          <span className="text-sm font-semibold text-on-surface">Collector Earnings</span>
+        </Link>
+        <Link href="/admin/finance/collector-cod-liabilities" className="flex items-center gap-3 px-4 py-3 bg-surface rounded-xl border border-outline-variant hover:border-primary/40 transition-colors">
+          <span className="material-symbols-outlined text-error" style={{ fontSize: '20px' }}>account_balance_wallet</span>
+          <span className="text-sm font-semibold text-on-surface">Collector COD Liabilities</span>
+        </Link>
       </div>
     </div>
   )
