@@ -8,6 +8,7 @@ import random
 import uuid as uuid_lib
 import requests
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from datetime import timedelta
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -24,7 +25,7 @@ from .models import (
     User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionFile,
     Cart, CartItem, Order, OrderItem, Review, WishlistItem,
     Notification, SystemSetting, StockLog,
-    LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAppointment,
+    LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout,
     PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
     Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, DeliveryDecline,
@@ -41,7 +42,10 @@ from .serializers import (
     NotificationSerializer, StockLogSerializer, SystemSettingSerializer,
     LabTestCategorySerializer, LabTestListSerializer, LabTestDetailSerializer, LabTestBookingSerializer,
     BlogPostListSerializer, BlogPostDetailSerializer, MedicineSubscriptionSerializer,
-    DoctorSerializer, DoctorAppointmentSerializer, PlusPlanSerializer, PlusMembershipSerializer,
+    DoctorSerializer, DoctorAvailabilitySerializer, DoctorAppointmentSerializer,
+    DoctorPayoutSerializer, AdminDoctorPayoutSerializer,
+    AdminDoctorSerializer, AdminDoctorCreateSerializer, AdminDoctorLinkAccountSerializer,
+    PlusPlanSerializer, PlusMembershipSerializer,
     DoctorReviewSerializer, MyDoctorReviewSerializer, HealthRecordSerializer,
     MedicineReminderSerializer, ReminderLogSerializer,
     CouponSerializer, WalletSerializer, WalletTransactionSerializer, ReferralSerializer,
@@ -58,7 +62,7 @@ from .serializers import (
     AdminPharmacyPayoutSerializer, AdminDeliveryAgentEarningSerializer, AdminDeliveryAgentCodLiabilitySerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
-from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, require_permission
+from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, require_permission
 from .throttles import AuthRateThrottle
 from .matching import (
     broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts,
@@ -66,6 +70,7 @@ from .matching import (
     delivery_agent_accept, update_agent_location, collect_cash, mark_delivered, _agent_eligible_for,
     _tracking_payload, widen_stale_priority_broadcasts, _fulfillment_prescription_ready, broadcast_delivery,
 )
+from .scheduling import get_available_slots
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
@@ -1954,6 +1959,119 @@ class KhaltiVerifyView(APIView):
         return HttpResponseRedirect(f'{FRONTEND_URL}/checkout/confirmation?orderId={order.id}')
 
 
+# ─── Doctor Consult: Appointment Payment ───────────────────────────────────────
+#
+# Mirrors PaymentKhaltiInitiateView/KhaltiVerifyView's structure exactly, scoped to
+# DoctorAppointment instead of Order. _khalti_post() is already a generic, order-agnostic HTTP
+# helper (just a signed POST to Khalti's API) so it's reused directly rather than duplicated.
+# Everything order-specific in the original flow — _prepare_awaiting_payment_order() (cart/coupon/
+# wallet resolution), _release_order_holds() (stock holds), sync_order_status() (fulfillment/
+# delivery state machine) — has no equivalent here: a consultation has no cart, no delivery
+# charge, and no inventory to hold, so a fresh CONFIRMED/PENDING appointment.status transition
+# does the whole job instead.
+
+class AppointmentKhaltiInitiateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        appointment_id = request.data.get('appointment_id')
+        if not appointment_id:
+            return Response({'success': False, 'message': 'appointment_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            appt = DoctorAppointment.objects.select_related('doctor').get(id=appointment_id, user=request.user)
+        except DoctorAppointment.DoesNotExist:
+            return Response({'success': False, 'message': 'Appointment not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if appt.payment_status != 'PENDING':
+            return Response({'success': False, 'message': f'This appointment does not need payment (status: {appt.payment_status}).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount_paisa = int(round(float(appt.fee_charged) * 100))
+        if amount_paisa < 1000:
+            return Response({'success': False, 'message': 'Khalti requires a minimum payable amount of NPR 10. Please choose another payment method.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            khalti_res = _khalti_post('/epayment/initiate/', {
+                'return_url': f'{BACKEND_URL}/api/payment/khalti/verify-appointment/',
+                'website_url': FRONTEND_URL,
+                'amount': amount_paisa,
+                'purchase_order_id': str(appt.id),
+                'purchase_order_name': f'PharmaX Consultation with Dr. {appt.doctor.name}',
+                'customer_info': {
+                    'name': request.user.full_name,
+                    'email': request.user.email,
+                    'phone': request.user.phone or '9800000000',
+                },
+            })
+        except Exception:
+            return Response({'success': False, 'message': 'Failed to reach Khalti.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if not khalti_res.get('pidx'):
+            return Response({'success': False, 'message': khalti_res.get('detail') or khalti_res.get('message') or 'Khalti initiation failed.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        appt.payment_method = 'KHALTI'
+        appt.khalti_pidx = khalti_res['pidx']
+        appt.save(update_fields=['payment_method', 'khalti_pidx'])
+        return Response({'success': True, 'data': {'payment_url': khalti_res['payment_url']}})
+
+
+def _cancel_unpaid_appointment(appt):
+    # payment_status has no FAILED state (Stage 1: PENDING/PAID/NOT_REQUIRED only) — cancelling the
+    # appointment itself is what frees the slot back up via get_available_slots(); payment_status
+    # stays PENDING since a payment simply never completed, there's nothing further to record.
+    if appt.payment_status == 'PENDING' and appt.status == 'PENDING':
+        appt.status = 'CANCELLED'
+        appt.save(update_fields=['status'])
+
+
+class AppointmentKhaltiVerifyView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        pidx = request.query_params.get('pidx')
+        gateway_status = request.query_params.get('status')
+
+        if not pidx or gateway_status != 'Completed':
+            if pidx:
+                try:
+                    _cancel_unpaid_appointment(DoctorAppointment.objects.get(khalti_pidx=pidx))
+                except DoctorAppointment.DoesNotExist:
+                    pass
+            return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=khalti_cancelled')
+
+        try:
+            verification = _khalti_post('/epayment/lookup/', {'pidx': pidx})
+        except Exception:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=verify_error')
+
+        if verification.get('status') != 'Completed':
+            try:
+                _cancel_unpaid_appointment(DoctorAppointment.objects.get(khalti_pidx=pidx))
+            except DoctorAppointment.DoesNotExist:
+                pass
+            return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=not_verified')
+
+        try:
+            appt = DoctorAppointment.objects.get(khalti_pidx=pidx)
+        except DoctorAppointment.DoesNotExist:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=appointment_not_found')
+
+        if appt.payment_status != 'PAID':
+            appt.payment_status = 'PAID'
+            appt.status = 'CONFIRMED'
+            appt.save(update_fields=['payment_status', 'status'])
+            Notification.objects.create(
+                user=appt.user, type='PAYMENT_UPDATE', title='Payment Received',
+                message=f'Payment for your consultation with Dr. {appt.doctor.name} was received — your appointment is confirmed.',
+                link=f'/doctor-consult/appointments/{appt.id}',
+            )
+            _notify_admins(
+                'manage_doctors', 'PAYMENT_UPDATE', 'Appointment Payment Received',
+                f'Payment received for {appt.user.full_name}\'s appointment with Dr. {appt.doctor.name} (NPR {appt.fee_charged}).',
+                link='/admin/doctor-consult',
+            )
+        return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-confirmation?appointmentId={appt.id}')
+
+
 # ─── Lab Tests ────────────────────────────────────────────────────────────────
 
 class LabTestCategoryListView(APIView):
@@ -2269,7 +2387,23 @@ class DoctorDetailView(APIView):
         return Response({'success': True, 'data': {'doctor': DoctorSerializer(doctor).data}})
 
 
-APPOINTMENT_TIME_SLOTS = ['9:00 AM - 10:00 AM', '11:00 AM - 12:00 PM', '2:00 PM - 3:00 PM', '4:00 PM - 5:00 PM', '6:00 PM - 7:00 PM']
+class DoctorSlotsView(APIView):
+    """Real available slots for a given date, computed fresh from the doctor's
+    DoctorAvailability weekly pattern — see scheduling.get_available_slots()."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        try:
+            doctor = Doctor.objects.get(id=pk, is_active=True)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        date_str = request.query_params.get('date')
+        requested_date = parse_date(date_str) if date_str else None
+        if not requested_date:
+            return Response({'success': False, 'message': 'A valid date query param (YYYY-MM-DD) is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'success': True, 'data': {'slots': get_available_slots(doctor, requested_date)}})
 
 
 class AppointmentListCreateView(APIView):
@@ -2284,20 +2418,37 @@ class AppointmentListCreateView(APIView):
         if not s.is_valid():
             return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
 
-        if request.data.get('time_slot') not in APPOINTMENT_TIME_SLOTS:
-            return Response({'success': False, 'message': 'Invalid time slot.'}, status=status.HTTP_400_BAD_REQUEST)
-
         try:
             doctor = Doctor.objects.get(id=s.validated_data['doctor_id'], is_active=True)
         except Doctor.DoesNotExist:
             return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        scheduled_date = s.validated_data['scheduled_date']
+        time_slot = s.validated_data['time_slot']
+        # Re-checked here rather than trusted from the slots endpoint response — someone else may
+        # have booked this exact slot between the patient viewing it and submitting the booking.
+        if time_slot not in get_available_slots(doctor, scheduled_date):
+            return Response({'success': False, 'message': 'That time slot is no longer available — someone may have just booked it. Please choose another.'}, status=status.HTTP_409_CONFLICT)
+
+        # PharmaX Plus members get every consultation free; the doctor is still paid their normal
+        # share (see DoctorPayout) — PharmaX absorbs the discount as a Plus perk. Non-Plus bookings
+        # stay PENDING (not yet confirmed) until payment clears.
+        is_plus_free = _has_active_plus(request.user)
+        if is_plus_free:
+            fee_charged, payment_status_value, initial_status = Decimal('0'), 'NOT_REQUIRED', 'CONFIRMED'
+        else:
+            fee_charged, payment_status_value, initial_status = doctor.consultation_fee, 'PENDING', 'PENDING'
+
         appt = DoctorAppointment.objects.create(
             user=request.user,
             doctor=doctor,
-            scheduled_date=s.validated_data['scheduled_date'],
-            time_slot=s.validated_data['time_slot'],
+            scheduled_date=scheduled_date,
+            time_slot=time_slot,
+            status=initial_status,
             fee_amount=doctor.consultation_fee,
+            fee_charged=fee_charged,
+            is_plus_free=is_plus_free,
+            payment_status=payment_status_value,
             reason=s.validated_data.get('reason'),
         )
         doctor.total_consultations = F('total_consultations') + 1
@@ -3470,15 +3621,28 @@ class AdminDoctorListView(APIView):
     permission_classes = [require_permission('manage_doctors')]
 
     def get(self, request):
-        doctors = Doctor.objects.order_by('name')
-        return Response({'success': True, 'data': {'doctors': DoctorSerializer(doctors, many=True).data}})
+        doctors = Doctor.objects.select_related('user').order_by('name')
+        return Response({'success': True, 'data': {'doctors': AdminDoctorSerializer(doctors, many=True).data}})
 
     def post(self, request):
-        s = DoctorSerializer(data=request.data)
+        s = AdminDoctorCreateSerializer(data=request.data)
         if not s.is_valid():
             return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
-        doctor = s.save()
-        return Response({'success': True, 'data': {'doctor': DoctorSerializer(doctor).data}}, status=status.HTTP_201_CREATED)
+        d = s.validated_data
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=d['email'], full_name=d['name'], phone=d['phone'], password=d['password'],
+                role='DOCTOR', is_active=True, is_email_verified=True,
+            )
+            doctor = Doctor.objects.create(
+                user=user, name=d['name'], specialty=d['specialty'], qualification=d.get('qualification', ''),
+                experience_years=d.get('experience_years', 0), consultation_fee=d['consultation_fee'],
+                photo_url=d.get('photo_url', ''), bio=d.get('bio', ''), languages=d.get('languages', ''),
+                license_number=d['license_number'], onboarding_fee_amount=d.get('onboarding_fee_amount', Decimal('0')),
+            )
+
+        return Response({'success': True, 'data': {'doctor': AdminDoctorSerializer(doctor).data}, 'message': 'Doctor account created — remember to verify it before it can accept appointments.'}, status=status.HTTP_201_CREATED)
 
 
 class AdminDoctorDetailView(APIView):
@@ -3486,12 +3650,14 @@ class AdminDoctorDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            doctor = Doctor.objects.get(id=pk)
+            doctor = Doctor.objects.select_related('user').get(id=pk)
         except Doctor.DoesNotExist:
             return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return Response({'success': True, 'data': {'doctor': DoctorSerializer(doctor).data}})
+        return Response({'success': True, 'data': {'doctor': AdminDoctorSerializer(doctor).data}})
 
     def put(self, request, pk):
+        # Kept for the existing Edit Doctor admin page (plain field edits only, no verify/suspend).
+        # patch() below is the fuller admin-management surface added in Stage 2.
         try:
             doctor = Doctor.objects.get(id=pk)
         except Doctor.DoesNotExist:
@@ -3501,6 +3667,29 @@ class AdminDoctorDetailView(APIView):
             return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
         s.save()
         return Response({'success': True, 'data': {'doctor': s.data}})
+
+    def patch(self, request, pk):
+        try:
+            doctor = Doctor.objects.select_related('user').get(id=pk)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        for field in ('name', 'specialty', 'qualification', 'experience_years', 'consultation_fee', 'photo_url', 'bio', 'languages', 'is_active'):
+            if field in request.data:
+                setattr(doctor, field, request.data[field])
+        if 'is_verified' in request.data:
+            doctor.is_verified = bool(request.data['is_verified'])
+        doctor.save()
+
+        # Admin's suspension switch — separate from is_active (bookability). Only meaningful once
+        # the doctor has a linked login account; the 8 legacy rows don't yet (see link-account/).
+        if 'user_is_active' in request.data:
+            if not doctor.user_id:
+                return Response({'success': False, 'message': 'This doctor has no login account yet — link one first.'}, status=status.HTTP_400_BAD_REQUEST)
+            doctor.user.is_active = bool(request.data['user_is_active'])
+            doctor.user.save(update_fields=['is_active'])
+
+        return Response({'success': True, 'data': {'doctor': AdminDoctorSerializer(doctor).data}, 'message': 'Doctor updated.'})
 
     def delete(self, request, pk):
         try:
@@ -3513,15 +3702,64 @@ class AdminDoctorDetailView(APIView):
         return Response({'success': True, 'message': 'Doctor removed.'})
 
 
+class AdminDoctorMarkOnboardingPaidView(APIView):
+    permission_classes = [require_permission('manage_doctors')]
+
+    def post(self, request, pk):
+        try:
+            doctor = Doctor.objects.get(id=pk)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if doctor.onboarding_fee_paid:
+            return Response({'success': False, 'message': 'Onboarding fee is already marked paid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        doctor.onboarding_fee_paid = True
+        doctor.onboarding_fee_paid_at = timezone.now()
+        doctor.save(update_fields=['onboarding_fee_paid', 'onboarding_fee_paid_at'])
+        return Response({'success': True, 'data': {'doctor': AdminDoctorSerializer(doctor).data}, 'message': 'Onboarding fee marked as paid.'})
+
+
+class AdminDoctorLinkAccountView(APIView):
+    """For the 8 legacy Doctor rows with no User — a one-time action, not reassignment; rejects
+    outright if a login is already linked rather than allowing it to be overwritten."""
+    permission_classes = [require_permission('manage_doctors')]
+
+    def post(self, request, pk):
+        try:
+            doctor = Doctor.objects.get(id=pk)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if doctor.user_id:
+            return Response({'success': False, 'message': 'This doctor already has a linked login account.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        s = AdminDoctorLinkAccountSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        d = s.validated_data
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=d['email'], full_name=d['full_name'], phone=d['phone'], password=d['password'],
+                role='DOCTOR', is_active=True, is_email_verified=True,
+            )
+            doctor.user = user
+            doctor.save(update_fields=['user'])
+
+        return Response({'success': True, 'data': {'doctor': AdminDoctorSerializer(doctor).data}, 'message': 'Login account linked.'}, status=status.HTTP_201_CREATED)
+
+
 class AdminAppointmentListView(APIView):
     permission_classes = [require_permission('manage_doctors')]
 
     def get(self, request):
-        qs = DoctorAppointment.objects.select_related('user', 'doctor').order_by('-booked_at')
+        qs = DoctorAppointment.objects.select_related('user', 'doctor', 'payout').order_by('-booked_at')
         status_filter = request.query_params.get('status', '').strip()
         if status_filter:
             qs = qs.filter(status=status_filter)
-        return Response({'success': True, 'data': {'appointments': DoctorAppointmentSerializer(qs, many=True).data}})
+        data = DoctorAppointmentSerializer(qs, many=True).data
+        for row, appt in zip(data, qs):
+            row['payout_status'] = appt.payout.status if hasattr(appt, 'payout') else None
+        return Response({'success': True, 'data': {'appointments': data}})
 
 
 class AdminAppointmentDetailView(APIView):
@@ -3529,7 +3767,7 @@ class AdminAppointmentDetailView(APIView):
 
     def put(self, request, pk):
         try:
-            appt = DoctorAppointment.objects.get(id=pk)
+            appt = DoctorAppointment.objects.select_related('doctor', 'payout').get(id=pk)
         except DoctorAppointment.DoesNotExist:
             return Response({'success': False, 'message': 'Appointment not found.'}, status=status.HTTP_404_NOT_FOUND)
         new_status = request.data.get('status')
@@ -3540,7 +3778,39 @@ class AdminAppointmentDetailView(APIView):
         if 'meeting_link' in request.data:
             appt.meeting_link = request.data.get('meeting_link') or None
         appt.save()
-        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment updated.'})
+        data = DoctorAppointmentSerializer(appt).data
+        data['payout_status'] = appt.payout.status if hasattr(appt, 'payout') else None
+        return Response({'success': True, 'data': {'appointment': data}, 'message': 'Appointment updated.'})
+
+
+class AdminDoctorPayoutListView(APIView):
+    permission_classes = [require_permission('manage_doctors')]
+
+    def get(self, request, pk):
+        try:
+            doctor = Doctor.objects.get(id=pk)
+        except Doctor.DoesNotExist:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+        payouts = doctor.payouts.select_related('appointment__user', 'paid_by').order_by('-created_at')
+        return Response({'success': True, 'data': {'payouts': AdminDoctorPayoutSerializer(payouts, many=True).data}})
+
+
+class AdminDoctorPayoutMarkPaidView(APIView):
+    permission_classes = [require_permission('manage_doctors')]
+
+    def post(self, request, pk, payout_id):
+        try:
+            payout = DoctorPayout.objects.get(pk=payout_id, doctor_id=pk)
+        except DoctorPayout.DoesNotExist:
+            return Response({'success': False, 'message': 'Payout not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if payout.status == 'PAID':
+            return Response({'success': False, 'message': 'This payout is already marked paid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        payout.status = 'PAID'
+        payout.paid_at = timezone.now()
+        payout.paid_by = request.user
+        payout.save(update_fields=['status', 'paid_at', 'paid_by'])
+        return Response({'success': True, 'data': {'payout': AdminDoctorPayoutSerializer(payout).data}, 'message': 'Marked as paid.'})
 
 
 class AdminOrderListView(APIView):
@@ -4305,6 +4575,165 @@ class AdminDeliveryAgentDetailView(APIView):
             agent.user.save(update_fields=['is_active'])
 
         return Response({'success': True, 'data': {'agent': AdminDeliveryAgentSerializer(agent).data}, 'message': 'Delivery agent updated.'})
+
+
+# ─── Doctor Dashboard (Stage 2 of the doctor consult spec) ────────────────────
+#
+# Every view below is gated by IsDoctor (role-only) AND additionally scoped to request.user.doctor
+# — same two-layer pattern as the pharmacy/delivery dashboards (get_managed_pharmacy() there,
+# request.user.doctor here, since a doctor has no team-member concept to resolve).
+
+def _doctor_not_found_response():
+    return Response({'success': False, 'message': 'No doctor is associated with this account.'}, status=status.HTTP_403_FORBIDDEN)
+
+
+class DoctorAvailabilityListView(APIView):
+    permission_classes = [IsDoctor]
+
+    def get(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        avail = doctor.availability.order_by('day_of_week')
+        return Response({'success': True, 'data': {'availability': DoctorAvailabilitySerializer(avail, many=True).data}})
+
+    def post(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+
+        day_of_week = request.data.get('day_of_week')
+        if day_of_week is None or int(day_of_week) not in dict(DoctorAvailability.WEEKDAYS):
+            return Response({'success': False, 'message': 'A valid day_of_week (0=Monday..6=Sunday) is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if doctor.availability.filter(day_of_week=day_of_week).exists():
+            return Response({'success': False, 'message': 'A pattern for this day already exists — update it instead.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        s = DoctorAvailabilitySerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        row = DoctorAvailability.objects.create(doctor=doctor, **s.validated_data)
+        return Response({'success': True, 'data': {'availability': DoctorAvailabilitySerializer(row).data}}, status=status.HTTP_201_CREATED)
+
+
+class DoctorAvailabilityDetailView(APIView):
+    permission_classes = [IsDoctor]
+
+    def patch(self, request, pk):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        try:
+            row = doctor.availability.get(id=pk)
+        except DoctorAvailability.DoesNotExist:
+            return Response({'success': False, 'message': 'Availability pattern not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        s = DoctorAvailabilitySerializer(row, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'availability': s.data}})
+
+    def delete(self, request, pk):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        try:
+            row = doctor.availability.get(id=pk)
+        except DoctorAvailability.DoesNotExist:
+            return Response({'success': False, 'message': 'Availability pattern not found.'}, status=status.HTTP_404_NOT_FOUND)
+        row.delete()
+        return Response({'success': True, 'message': 'Availability pattern removed.'})
+
+
+class DoctorOwnAppointmentListView(APIView):
+    permission_classes = [IsDoctor]
+
+    def get(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        qs = doctor.appointments.select_related('user').order_by('-booked_at')
+        status_filter = request.query_params.get('status', '').strip()
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return Response({'success': True, 'data': {'appointments': DoctorAppointmentSerializer(qs, many=True).data}})
+
+
+class DoctorAppointmentSetMeetingLinkView(APIView):
+    permission_classes = [IsDoctor]
+
+    def post(self, request, pk):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        try:
+            appt = doctor.appointments.get(id=pk)
+        except DoctorAppointment.DoesNotExist:
+            return Response({'success': False, 'message': 'Appointment not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if appt.status != 'CONFIRMED':
+            return Response({'success': False, 'message': f'Can only set a meeting link once the appointment is confirmed (current status: {appt.status}).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        meeting_link = (request.data.get('meeting_link') or '').strip()
+        if not meeting_link:
+            return Response({'success': False, 'message': 'meeting_link is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        appt.meeting_link = meeting_link
+        appt.save(update_fields=['meeting_link'])
+
+        Notification.objects.create(
+            user=appt.user, type='APPOINTMENT_UPDATE', title='Meeting Link Ready',
+            message=f'Dr. {doctor.name} has shared the meeting link for your appointment on {appt.scheduled_date}.',
+            link=f'/doctor-consult/appointments/{appt.id}',
+        )
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Meeting link set.'})
+
+
+class DoctorAppointmentCompleteView(APIView):
+    permission_classes = [IsDoctor]
+
+    def post(self, request, pk):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        try:
+            appt = doctor.appointments.get(id=pk)
+        except DoctorAppointment.DoesNotExist:
+            return Response({'success': False, 'message': 'Appointment not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if appt.status != 'CONFIRMED':
+            return Response({'success': False, 'message': f'Can only complete a confirmed appointment (current status: {appt.status}).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        appt.status = 'COMPLETED'
+        appt.save(update_fields=['status'])
+
+        # Idempotency guard — same hasattr() pattern as matching._create_settlement_records(), in
+        # case this is somehow called twice for the same appointment.
+        if not hasattr(appt, 'payout'):
+            commission_rate = Decimal(_get_setting('doctor_commission_rate', '15'))
+            # fee_amount is always the doctor's real consultation_fee at booking time, unlike
+            # fee_charged (what the PATIENT paid, 0 for a Plus-free booking) — the doctor is paid
+            # their normal share either way, PharmaX absorbs the Plus discount itself.
+            gross = appt.fee_amount
+            commission = (gross * commission_rate / Decimal('100')).quantize(Decimal('0.01'))
+            DoctorPayout.objects.create(
+                doctor=doctor, appointment=appt,
+                gross_amount=gross, commission_rate=commission_rate, commission_amount=commission,
+                net_payable=gross - commission,
+            )
+
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment marked complete.'})
+
+
+class DoctorPayoutListView(APIView):
+    permission_classes = [IsDoctor]
+
+    def get(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        payouts = doctor.payouts.select_related('appointment__user').order_by('-created_at')
+        return Response({'success': True, 'data': {'payouts': DoctorPayoutSerializer(payouts, many=True).data}})
 
 
 # ─── Pharmacy Dashboard (Stage 5 of the marketplace spec) ─────────────────────
