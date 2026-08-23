@@ -9,6 +9,14 @@ import type { LabTest, Address } from '@/types'
 
 const TIME_SLOTS = ['6:00 AM - 8:00 AM', '8:00 AM - 10:00 AM', '10:00 AM - 12:00 PM', '4:00 PM - 6:00 PM', '6:00 PM - 8:00 PM']
 
+// Mirrors (customer)/checkout/payment/page.tsx's METHODS list — same three gateways, same
+// pay-now-vs-pay-on-collection choice, just worded for a sample collection instead of a delivery.
+const PAYMENT_METHODS = [
+  { id: 'CASH_ON_DELIVERY', label: 'Pay on Collection', icon: 'payments', desc: 'Pay the collector in cash when they arrive' },
+  { id: 'ESEWA', label: 'eSewa', icon: 'account_balance_wallet', desc: 'Pay now via eSewa digital wallet' },
+  { id: 'KHALTI', label: 'Khalti', icon: 'account_balance_wallet', desc: 'Pay now via Khalti digital wallet' },
+]
+
 function tomorrowDateStr() {
   const d = new Date()
   d.setDate(d.getDate() + 1)
@@ -32,6 +40,7 @@ function LabTestDetailContent() {
   const [date, setDate] = useState(tomorrowDateStr())
   const [timeSlot, setTimeSlot] = useState('')
   const [notes, setNotes] = useState('')
+  const [method, setMethod] = useState('CASH_ON_DELIVERY')
   const [booking, setBooking] = useState(false)
 
   useEffect(() => {
@@ -49,16 +58,49 @@ function LabTestDetailContent() {
     }).catch(() => {})
   }, [user])
 
+  const submitEsewaForm = (formUrl: string, params: Record<string, string>) => {
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = formUrl
+    Object.entries(params).forEach(([key, value]) => {
+      const input = document.createElement('input')
+      input.type = 'hidden'
+      input.name = key
+      input.value = value
+      form.appendChild(input)
+    })
+    document.body.appendChild(form)
+    form.submit()
+  }
+
   const handleBook = async () => {
     if (!user) { router.push('/signin'); return }
-    if (!addressId) { toast.error('Please select a delivery address.'); return }
+    if (!addressId) { toast.error('Please select a sample collection address.'); return }
     if (!timeSlot) { toast.error('Please select a time slot.'); return }
     setBooking(true)
     try {
-      await api.post('/lab-tests/bookings/', {
+      const res = await api.post('/lab-tests/bookings/', {
         lab_test_id: id, address_id: addressId, scheduled_date: date, time_slot: timeSlot, notes: notes || undefined,
         prescription_lab_test_item_id: prescriptionLabTestItemId || undefined,
+        payment_method: method,
       })
+      const bookingId = res.data.data.booking.id
+
+      // Booking creation itself never depends on the payment path (mirrors checkout) — COD is
+      // already confirmed by the time this response comes back. KHALTI/ESEWA leave the booking
+      // PENDING until the gateway round trip actually confirms payment, so immediately kick that
+      // off using the booking id we just got back.
+      if (method === 'ESEWA') {
+        const payRes = await api.post('/payment/esewa/initiate-lab-test/', { booking_id: bookingId })
+        submitEsewaForm(payRes.data.data.formUrl, payRes.data.data.params)
+        return
+      }
+      if (method === 'KHALTI') {
+        const payRes = await api.post('/payment/khalti/initiate-lab-test/', { booking_id: bookingId })
+        window.location.href = payRes.data.data.payment_url
+        return
+      }
+
       toast.success('Lab test booked!')
       router.push('/lab-test-bookings')
     } catch (err: any) {
@@ -172,11 +214,27 @@ function LabTestDetailContent() {
                   <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
                     className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface resize-none focus:outline-none focus:border-secondary transition" />
                 </div>
+                <div>
+                  <label className="text-xs font-medium text-on-surface-variant">Payment Method</label>
+                  <div className="mt-1.5 space-y-1.5">
+                    {PAYMENT_METHODS.map((m) => (
+                      <label key={m.id} className={`flex items-center gap-2.5 p-3 rounded-xl border cursor-pointer transition-colors ${method === m.id ? 'border-primary bg-primary/5' : 'border-outline-variant hover:border-primary/40'}`}>
+                        <input type="radio" name="payment" value={m.id} checked={method === m.id} onChange={() => setMethod(m.id)} className="accent-primary" />
+                        <span className="material-symbols-outlined ms-filled text-on-surface-variant" style={{ fontSize: '18px' }}>{m.icon}</span>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-on-surface">{m.label}</p>
+                          <p className="text-[11px] text-on-surface-variant">{m.desc}</p>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
                 <button onClick={handleBook} disabled={booking || addresses.length === 0}
                   className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
-                  {booking ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />Booking...</> : 'Book This Test'}
+                  {booking
+                    ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />{method === 'ESEWA' ? 'Redirecting to eSewa...' : method === 'KHALTI' ? 'Redirecting to Khalti...' : 'Booking...'}</>
+                    : method === 'ESEWA' ? 'Book & Pay with eSewa' : method === 'KHALTI' ? 'Book & Pay with Khalti' : 'Book This Test'}
                 </button>
-                <p className="text-[11px] text-on-surface-variant text-center">Pay at the time of sample collection.</p>
               </>
             ) : (
               <button onClick={() => router.push('/signin')}
