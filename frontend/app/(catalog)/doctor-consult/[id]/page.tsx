@@ -8,8 +8,6 @@ import { resolveImg } from '@/lib/resolveImg'
 import { useAuthStore } from '@/store/auth'
 import type { Doctor, DoctorReview } from '@/types'
 
-const APPOINTMENT_TIME_SLOTS = ['9:00 AM - 10:00 AM', '11:00 AM - 12:00 PM', '2:00 PM - 3:00 PM', '4:00 PM - 5:00 PM', '6:00 PM - 7:00 PM']
-
 function tomorrowDateStr() {
   const d = new Date()
   d.setDate(d.getDate() + 1)
@@ -24,6 +22,8 @@ export default function DoctorDetailPage() {
   const [doctor, setDoctor] = useState<Doctor | null>(null)
   const [loading, setLoading] = useState(true)
   const [date, setDate] = useState(tomorrowDateStr())
+  const [slots, setSlots] = useState<string[]>([])
+  const [slotsLoading, setSlotsLoading] = useState(false)
   const [timeSlot, setTimeSlot] = useState('')
   const [reason, setReason] = useState('')
   const [booking, setBooking] = useState(false)
@@ -51,6 +51,18 @@ export default function DoctorDetailPage() {
       if (mine) { setMyRating(mine.rating); setMyReview(mine.comment || '') }
     }).catch(() => toast.error('Doctor not found.')).finally(() => setLoading(false))
   }, [id])
+
+  // Real available slots, computed server-side from the doctor's weekly availability pattern —
+  // refetched every time the date changes so the list never goes stale mid-booking.
+  useEffect(() => {
+    if (!id || !date) return
+    setSlotsLoading(true)
+    setTimeSlot('')
+    api.get(`/doctors/${id}/slots/`, { params: { date } })
+      .then((r) => setSlots(r.data.data.slots || []))
+      .catch(() => setSlots([]))
+      .finally(() => setSlotsLoading(false))
+  }, [id, date])
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -94,11 +106,20 @@ export default function DoctorDetailPage() {
     if (!timeSlot) { toast.error('Please select a time slot.'); return }
     setBooking(true)
     try {
-      await api.post('/doctors/appointments/', {
+      const res = await api.post('/doctors/appointments/', {
         doctor_id: id, scheduled_date: date, time_slot: timeSlot, reason: reason || undefined,
       })
-      toast.success('Appointment booked!')
-      router.push('/appointments')
+      const appt = res.data.data.appointment
+      // Two genuinely distinct outcomes: a Plus member's booking is already CONFIRMED with
+      // nothing left to pay, while everyone else still owes the consultation fee and has to go
+      // through the Khalti step before their appointment is confirmed.
+      if (appt.is_plus_free) {
+        toast.success('Appointment confirmed — it\'s free with your PharmaX Plus membership!')
+        router.push('/appointments')
+      } else {
+        toast.success('Appointment booked — complete payment to confirm it.')
+        router.push(`/appointments/${appt.id}/payment`)
+      }
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Could not book this appointment.')
     } finally {
@@ -250,12 +271,23 @@ export default function DoctorDetailPage() {
                     className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-on-surface-variant">Time Slot</label>
-                  <select value={timeSlot} onChange={(e) => setTimeSlot(e.target.value)}
-                    className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
-                    <option value="">Select a time slot</option>
-                    {APPOINTMENT_TIME_SLOTS.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                  <label className="text-xs font-medium text-on-surface-variant">Available Time Slots</label>
+                  {slotsLoading ? (
+                    <div className="mt-1 grid grid-cols-3 gap-2">{[...Array(6)].map((_, i) => <div key={i} className="h-9 bg-surface-container-low rounded-lg animate-pulse" />)}</div>
+                  ) : slots.length === 0 ? (
+                    <p className="mt-1 text-xs text-on-surface-variant bg-surface-container-low rounded-xl px-3 py-2.5">
+                      No slots available on this date — try another day.
+                    </p>
+                  ) : (
+                    <div className="mt-1 grid grid-cols-3 gap-2">
+                      {slots.map((s) => (
+                        <button key={s} type="button" onClick={() => setTimeSlot(s)}
+                          className={`px-2 py-2 rounded-lg text-xs font-semibold transition-colors ${timeSlot === s ? 'bg-primary text-on-primary' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container'}`}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-on-surface-variant">Reason for visit (optional)</label>
