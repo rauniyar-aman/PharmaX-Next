@@ -2296,6 +2296,30 @@ def _cancel_unpaid_lab_test_booking(booking):
         booking.save(update_fields=['status'])
 
 
+def _upload_lab_report(booking, file):
+    """The one gated place a report actually attaches and a booking moves to REPORT_READY — shared
+    by the admin and collector-facing upload endpoints so neither can bypass the other's rules.
+    Requires SAMPLE_COLLECTED (a real person actually collected the sample) AND payment_status ==
+    PAID (settled online, or the COD amount was confirmed and recorded as a CollectorCodLiability
+    by collector_confirm_sample_collected()) — both must already be true, not fixed up here."""
+    if booking.status != 'SAMPLE_COLLECTED':
+        return False, f'Cannot upload a report for a booking that is {booking.status.replace("_", " ").lower()} — the sample must be collected first.'
+    if booking.payment_status != 'PAID':
+        return False, 'Cannot upload a report until payment is settled.'
+
+    booking.report_file = file
+    booking.report_uploaded_at = timezone.now()
+    booking.status = 'REPORT_READY'
+    booking.save(update_fields=['report_file', 'report_uploaded_at', 'status'])
+
+    Notification.objects.create(
+        user=booking.user, type='LAB_BOOKING_UPDATE', title='Report Ready',
+        message=f'Your {booking.lab_test.name} report is ready to view.',
+        link='/lab-test-bookings',
+    )
+    return True, None
+
+
 class PaymentKhaltiInitiateLabTestView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -3746,6 +3770,13 @@ class AdminLabTestBookingListView(APIView):
 
 
 class AdminLabTestBookingDetailView(APIView):
+    """Free-form admin override — kept for genuine edge cases (e.g. manually cancelling a stuck
+    booking), but SAMPLE_COLLECTED and REPORT_READY are deliberately excluded from what this can
+    set directly: both have dedicated gated actions (collector_confirm_sample_collected() and
+    _upload_lab_report(), reached via AdminLabTestReportUploadView) that enforce real prerequisites
+    — an assigned collector confirming a COD amount, an actual file being attached — this endpoint
+    has no business faking. The normal path for those two transitions is the dedicated actions, not
+    this one."""
     permission_classes = [require_permission('manage_lab_tests')]
 
     def put(self, request, pk):
@@ -3756,12 +3787,33 @@ class AdminLabTestBookingDetailView(APIView):
         new_status = request.data.get('status')
         if new_status and new_status not in dict(LabTestBooking.STATUS):
             return Response({'success': False, 'message': 'Invalid status.'}, status=status.HTTP_400_BAD_REQUEST)
+        if new_status in ('SAMPLE_COLLECTED', 'REPORT_READY'):
+            return Response({'success': False, 'message': f'{new_status.replace("_", " ").title()} can only be set through its dedicated action, not this general update.'}, status=status.HTTP_400_BAD_REQUEST)
         if new_status:
             booking.status = new_status
         if 'report_url' in request.data:
             booking.report_url = request.data.get('report_url') or None
         booking.save()
         return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Booking updated.'})
+
+
+class AdminLabTestReportUploadView(APIView):
+    permission_classes = [require_permission('manage_lab_tests')]
+
+    def post(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.get(id=pk)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'success': False, 'message': 'A report file is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, err = _upload_lab_report(booking, file)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Report uploaded.'})
 
 
 class AdminBlogPostListView(APIView):
@@ -6247,6 +6299,25 @@ class LabCollectorConfirmCollectedView(APIView):
         if not ok:
             return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'success': True, 'message': 'Sample collection confirmed.'})
+
+
+class LabCollectorReportUploadView(APIView):
+    permission_classes = [IsCollector]
+
+    def post(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.get(pk=pk, collector=request.user.lab_collector)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'success': False, 'message': 'A report file is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, err = _upload_lab_report(booking, file)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Report uploaded.'})
 
 
 class LabCollectorLocationUpdateView(APIView):
