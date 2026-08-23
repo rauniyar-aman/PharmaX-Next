@@ -4662,9 +4662,10 @@ class DoctorOwnAppointmentListView(APIView):
 
 class DoctorAppointmentConfirmView(APIView):
     """The doctor's own path to PENDING -> CONFIRMED — previously only AdminAppointmentDetailView
-    could do this. Mirrors it exactly: an unconditional status flip once PENDING, not gated on
-    payment_status, same as admin's existing capability (e.g. a manually-arranged/offline payment
-    admin or the doctor themselves has already confirmed outside the app)."""
+    could do this. Gated on payment_status already being resolved (PAID or NOT_REQUIRED) —
+    unlike AdminAppointmentDetailView's unconditional status flip, this endpoint must not let a
+    doctor confirm (and later complete()) a session that was never actually paid for, since
+    complete() creates a real DoctorPayout obligation off of it."""
     permission_classes = [IsDoctor]
 
     def post(self, request, pk):
@@ -4678,6 +4679,8 @@ class DoctorAppointmentConfirmView(APIView):
 
         if appt.status != 'PENDING':
             return Response({'success': False, 'message': f'Can only confirm a pending appointment (current status: {appt.status}).'}, status=status.HTTP_400_BAD_REQUEST)
+        if appt.payment_status not in ('PAID', 'NOT_REQUIRED'):
+            return Response({'success': False, 'message': 'Payment must be completed before this appointment can be confirmed.'}, status=status.HTTP_400_BAD_REQUEST)
 
         appt.status = 'CONFIRMED'
         appt.save(update_fields=['status'])
