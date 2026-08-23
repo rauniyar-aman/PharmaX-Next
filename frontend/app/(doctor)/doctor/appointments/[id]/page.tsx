@@ -16,6 +16,8 @@ export default function DoctorAppointmentDetailPage() {
   const [loading, setLoading] = useState(true)
 
   const [notes, setNotes] = useState('')
+  const [followUpDate, setFollowUpDate] = useState('')
+  const [followUpNotes, setFollowUpNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   // Medicine search-and-add — mirrors the admin prescription detail page's widget exactly,
@@ -86,6 +88,8 @@ export default function DoctorAppointmentDetailPage() {
         notes: notes.trim(),
         medicine_items: pickedMedicines.map((p) => ({ medicine_id: p.medicine_id, quantity: p.quantity })),
         lab_test_items: pickedLabTests.map((p) => p.lab_test_id),
+        follow_up_date: followUpDate || undefined,
+        follow_up_notes: followUpNotes.trim() || undefined,
       })
       toast.success(res.data.message || 'Appointment marked complete.')
       router.push('/doctor/appointments')
@@ -251,6 +255,25 @@ export default function DoctorAppointmentDetailPage() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Follow-up */}
+          <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
+            <p className="text-sm font-bold text-on-surface">Schedule a Follow-Up (optional)</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-on-surface-variant" htmlFor="follow-up-date">Follow-up Date</label>
+                <input id="follow-up-date" type="date" value={followUpDate} onChange={(e) => setFollowUpDate(e.target.value)}
+                  className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-on-surface-variant" htmlFor="follow-up-notes">Follow-up Notes</label>
+                <input id="follow-up-notes" type="text" value={followUpNotes} onChange={(e) => setFollowUpNotes(e.target.value)}
+                  placeholder="e.g., recheck blood pressure"
+                  className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+              </div>
+            </div>
+            <p className="text-xs text-on-surface-variant">The patient will get a reminder around this date. Leave blank if no follow-up is needed.</p>
           </div>
 
           <button onClick={handleComplete} disabled={submitting}

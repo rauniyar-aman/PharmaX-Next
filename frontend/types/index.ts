@@ -658,8 +658,27 @@ export interface DoctorAppointment {
   payment_method?: 'KHALTI' | 'ESEWA' | 'WALLET' | null
   payout_status?: PayoutStatus | null   // admin views only (AdminAppointmentListView/Detail)
   prescription?: { id: string; notes: string | null; medicine_item_count: number; lab_test_item_count: number } | null
+  follow_up_date?: string | null
+  follow_up_notes?: string | null
   booked_at: string
   updated_at: string
+}
+
+export interface DoctorPatientSummary {
+  user_id: string
+  full_name: string
+  email: string
+  phone: string | null
+  appointment_count: number
+  last_visit: string
+  follow_up_date: string | null
+  days_until_follow_up: number | null
+}
+
+export interface DoctorPatientDetail {
+  patient: { id: string; full_name: string; email: string; phone: string | null }
+  appointments: DoctorAppointment[]
+  prescriptions: (Prescription & { medicine_items: PrescriptionMedicineItem[]; lab_test_items: PrescriptionLabTestItem[] })[]
 }
 
 export interface DoctorAvailability {
