@@ -373,6 +373,7 @@ class PrescriptionSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     medicine_item_count = serializers.SerializerMethodField()
     lab_test_item_count = serializers.SerializerMethodField()
+    lab_test_pending_count = serializers.SerializerMethodField()
     all_files = serializers.SerializerMethodField()
     order = serializers.SerializerMethodField()
     appointment_id = serializers.UUIDField(read_only=True)
@@ -383,17 +384,22 @@ class PrescriptionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'file_name', 'file_url', 'notes', 'doctor', 'hospital',
             'status', 'rejection_reason', 'admin_comment', 'expiry_date', 'uploaded_at', 'checkout_draft',
-            'medicines_reviewed_at', 'medicine_item_count', 'lab_test_item_count', 'all_files', 'order',
-            'source', 'appointment_id', 'appointment_date',
+            'medicines_reviewed_at', 'medicine_item_count', 'lab_test_item_count', 'lab_test_pending_count',
+            'all_files', 'order', 'source', 'appointment_id', 'appointment_date',
         ]
         read_only_fields = [
             'id', 'status', 'rejection_reason', 'admin_comment', 'uploaded_at', 'file_url',
-            'medicines_reviewed_at', 'medicine_item_count', 'lab_test_item_count', 'all_files', 'order',
-            'source', 'appointment_id', 'appointment_date',
+            'medicines_reviewed_at', 'medicine_item_count', 'lab_test_item_count', 'lab_test_pending_count',
+            'all_files', 'order', 'source', 'appointment_id', 'appointment_date',
         ]
 
     def get_lab_test_item_count(self, obj):
         return obj.lab_test_items.count()
+
+    def get_lab_test_pending_count(self, obj):
+        # Distinct from lab_test_item_count (the total ever suggested) — this is what should
+        # actually drive whether a "still something to act on" CTA keeps showing.
+        return obj.lab_test_items.filter(booking__isnull=True).count()
 
     def get_appointment_date(self, obj):
         return obj.appointment.scheduled_date if obj.appointment_id else None
@@ -885,6 +891,7 @@ class DoctorAppointmentSerializer(serializers.ModelSerializer):
     doctor = DoctorSerializer(read_only=True)
     doctor_id = serializers.UUIDField(write_only=True)
     user = serializers.SerializerMethodField()
+    prescription = serializers.SerializerMethodField()
 
     class Meta:
         model = DoctorAppointment
@@ -892,16 +899,29 @@ class DoctorAppointmentSerializer(serializers.ModelSerializer):
             'id', 'user', 'doctor', 'doctor_id', 'scheduled_date', 'time_slot',
             'status', 'fee_amount', 'reason', 'meeting_link',
             'fee_charged', 'is_plus_free', 'payment_status', 'payment_method',
-            'booked_at', 'updated_at',
+            'prescription', 'booked_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'status', 'fee_amount', 'meeting_link',
             'fee_charged', 'is_plus_free', 'payment_status', 'payment_method',
-            'booked_at', 'updated_at',
+            'prescription', 'booked_at', 'updated_at',
         ]
 
     def get_user(self, obj):
         return {'id': str(obj.user_id), 'full_name': obj.user.full_name, 'email': obj.user.email, 'phone': obj.user.phone}
+
+    def get_prescription(self, obj):
+        # Lets the patient's appointment view surface consultation notes directly — including for
+        # a notes-only consultation, which has no other visible entry point (no cart/booking CTA).
+        presc = getattr(obj, 'prescription', None)
+        if not presc:
+            return None
+        return {
+            'id': str(presc.id),
+            'notes': presc.notes,
+            'medicine_item_count': presc.medicine_items.count(),
+            'lab_test_item_count': presc.lab_test_items.count(),
+        }
 
 
 # ─── Pharmacy dashboard (Stage 5) ──────────────────────────────────────────────

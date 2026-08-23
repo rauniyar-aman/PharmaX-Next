@@ -125,13 +125,32 @@ export default function PrescriptionsPage() {
             const files = rx.all_files && rx.all_files.length > 0
               ? rx.all_files
               : rx.file_url ? [{ id: null, file_name: rx.file_name || 'Prescription', file_url: rx.file_url }] : []
+            const isConsultation = rx.source === 'CONSULTATION'
+            const labCount = rx.lab_test_item_count || 0
+            const labPendingCount = rx.lab_test_pending_count || 0
+            const medCount = rx.medicine_item_count || 0
             return (
               <div key={rx.id} className="bg-surface rounded-2xl border border-outline-variant p-4 flex items-center gap-4">
-                <div className="w-12 h-12 bg-surface-container-low rounded-xl flex items-center justify-center flex-shrink-0">
-                  <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '24px' }}>description</span>
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${isConsultation ? 'bg-primary/10' : 'bg-surface-container-low'}`}>
+                  <span className={`material-symbols-outlined ${isConsultation ? 'text-primary' : 'text-on-surface-variant'}`} style={{ fontSize: '24px' }}>
+                    {isConsultation ? 'stethoscope' : 'description'}
+                  </span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-on-surface">{rx.file_name || 'Prescription'}{files.length > 1 && ` · ${files.length} pages`}</p>
+                  {isConsultation ? (
+                    <>
+                      <p className="text-sm font-semibold text-on-surface">
+                        From your consultation with Dr. {rx.doctor || 'your doctor'}
+                        {rx.appointment_date && ` on ${new Date(rx.appointment_date).toLocaleDateString('en-NP', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                      </p>
+                      <Link href="/appointments" className="inline-flex items-center gap-1 text-xs text-primary font-medium hover:underline mt-0.5">
+                        <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>calendar_month</span>
+                        View appointment
+                      </Link>
+                    </>
+                  ) : (
+                    <p className="text-sm font-semibold text-on-surface">{rx.file_name || 'Prescription'}{files.length > 1 && ` · ${files.length} pages`}</p>
+                  )}
                   {rx.notes && <p className="text-xs text-on-surface-variant mt-0.5 truncate">{rx.notes}</p>}
                   <p className="text-xs text-on-surface-variant mt-0.5">{new Date(rx.uploaded_at).toLocaleDateString('en-NP', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
                   {rx.status === 'REJECTED' && rx.rejection_reason && (
@@ -148,11 +167,16 @@ export default function PrescriptionsPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  {rx.status === 'VERIFIED' && (rx.medicine_item_count || 0) > 0 && !rx.medicines_reviewed_at ? (
+                  {/* Medicines and lab tests are reviewed/booked independently — reviewing one
+                      must not hide the CTA for the other, so this isn't gated as a single unit on
+                      medicines_reviewed_at alone. */}
+                  {rx.status === 'VERIFIED' && ((medCount > 0 && !rx.medicines_reviewed_at) || labPendingCount > 0) ? (
                     <Link href={`/prescriptions/${rx.id}/review`}
                       className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-full hover:opacity-90 transition-opacity">
-                      {rx.medicine_item_count} medicine{rx.medicine_item_count !== 1 ? 's' : ''} ready — Review &amp; Add to Cart
+                      {[medCount > 0 && !rx.medicines_reviewed_at && `${medCount} medicine${medCount !== 1 ? 's' : ''}`, labPendingCount > 0 && `${labPendingCount} test${labPendingCount !== 1 ? 's' : ''}`].filter(Boolean).join(' + ')} ready — Review
                     </Link>
+                  ) : isConsultation && medCount === 0 && labCount === 0 ? (
+                    <span className="px-3 py-1.5 rounded-full text-xs font-semibold bg-surface-container text-on-surface-variant">Notes only</span>
                   ) : (
                     <span className={`px-3 py-1.5 rounded-full text-xs font-semibold ${STATUS_COLORS[rx.status] || 'bg-surface-container text-on-surface-variant'}`}>
                       {rx.status}

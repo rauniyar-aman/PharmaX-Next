@@ -1,6 +1,6 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useState, useEffect, Suspense } from 'react'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
@@ -15,9 +15,14 @@ function tomorrowDateStr() {
   return d.toISOString().slice(0, 10)
 }
 
-export default function LabTestDetailPage() {
+function LabTestDetailContent() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // Set when arriving from a doctor's suggested-test review screen — pre-selects nothing visually
+  // (the test itself IS the page), just carries through so the resulting booking links back to
+  // the suggestion it fulfills. Never fails the booking if it doesn't resolve to anything.
+  const prescriptionLabTestItemId = searchParams.get('prescription_lab_test_item_id')
   const user = useAuthStore((s) => s.user)
 
   const [test, setTest] = useState<LabTest | null>(null)
@@ -52,6 +57,7 @@ export default function LabTestDetailPage() {
     try {
       await api.post('/lab-tests/bookings/', {
         lab_test_id: id, address_id: addressId, scheduled_date: date, time_slot: timeSlot, notes: notes || undefined,
+        prescription_lab_test_item_id: prescriptionLabTestItemId || undefined,
       })
       toast.success('Lab test booked!')
       router.push('/lab-test-bookings')
@@ -82,6 +88,13 @@ export default function LabTestDetailPage() {
         <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
         <span className="text-on-surface font-medium">{test.name}</span>
       </div>
+
+      {prescriptionLabTestItemId && (
+        <div className="flex items-center gap-2.5 bg-primary/5 border border-primary/20 rounded-2xl px-4 py-2.5">
+          <span className="material-symbols-outlined text-primary" style={{ fontSize: '18px' }}>stethoscope</span>
+          <p className="text-sm text-on-surface">Suggested by your doctor — booking it here will mark that suggestion as actioned.</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-5">
@@ -175,5 +188,13 @@ export default function LabTestDetailPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function LabTestDetailPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center py-24"><div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>}>
+      <LabTestDetailContent />
+    </Suspense>
   )
 }

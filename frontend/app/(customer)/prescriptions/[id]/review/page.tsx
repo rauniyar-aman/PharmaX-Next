@@ -5,23 +5,33 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
-import type { PrescriptionMedicineItem } from '@/types'
+import type { PrescriptionMedicineItem, PrescriptionLabTestItem } from '@/types'
 
 export default function PrescriptionReviewPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const [items, setItems] = useState<PrescriptionMedicineItem[]>([])
-  const [hadItems, setHadItems] = useState(false)
+  const [labItems, setLabItems] = useState<PrescriptionLabTestItem[]>([])
+  const [hadAnything, setHadAnything] = useState(false)
+  // Frozen at load time, unlike items.length which changes as the patient removes medicines —
+  // this is what decides whether the medicines section renders at all, not whatever's left.
+  const [hadMedicineItems, setHadMedicineItems] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    api.get(`/prescriptions/${id}/medicine-items/`)
-      .then((r) => {
-        const loaded = r.data.data.medicine_items || []
-        setItems(loaded)
-        setHadItems(loaded.length > 0)
+    Promise.all([
+      api.get(`/prescriptions/${id}/medicine-items/`),
+      api.get(`/prescriptions/${id}/lab-test-items/`),
+    ])
+      .then(([medRes, labRes]) => {
+        const loadedMed = medRes.data.data.medicine_items || []
+        const loadedLab = labRes.data.data.lab_test_items || []
+        setItems(loadedMed)
+        setLabItems(loadedLab)
+        setHadMedicineItems(loadedMed.length > 0)
+        setHadAnything(loadedMed.length > 0 || loadedLab.length > 0)
       })
       .catch((err) => setLoadError(err.response?.data?.message || 'Failed to load this prescription for review.'))
       .finally(() => setLoading(false))
@@ -78,24 +88,30 @@ export default function PrescriptionReviewPage() {
   )
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-on-surface">Review Your Medicines</h1>
+        <h1 className="text-2xl font-bold text-on-surface">Review Your Consultation</h1>
         <p className="text-sm text-on-surface-variant mt-1">
-          Our pharmacist matched these medicines to your prescription. Adjust quantities or remove anything you don't need, then add them to your cart.
+          {hadMedicineItems && labItems.length > 0
+            ? 'Medicines matched to your prescription and lab tests suggested for you — review both below.'
+            : hadMedicineItems
+            ? 'Medicines matched to your prescription. Adjust quantities or remove anything you don\'t need, then add them to your cart.'
+            : 'Lab tests suggested for you — book each one whenever suits you.'}
         </p>
       </div>
 
-      {!hadItems ? (
+      {!hadAnything ? (
         <div className="text-center py-24 space-y-4">
           <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '64px' }}>remove_shopping_cart</span>
           <h2 className="text-xl font-bold text-on-surface">Nothing to review</h2>
-          <p className="text-sm text-on-surface-variant">No medicines were attached to this prescription.</p>
+          <p className="text-sm text-on-surface-variant">No medicines or lab tests were attached to this prescription.</p>
           <Link href="/prescriptions" className="inline-block mt-2 px-6 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-2xl hover:opacity-90 transition-opacity">
             Back to Prescriptions
           </Link>
         </div>
       ) : (
+        <>
+        {hadMedicineItems && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-3">
             {items.length === 0 && (
@@ -160,6 +176,38 @@ export default function PrescriptionReviewPage() {
             </div>
           </div>
         </div>
+        )}
+
+        {/* Separate section from the medicine list — each suggested test routes into the real,
+            existing lab test booking flow rather than a bulk confirm like medicines get, since a
+            lab test needs its own address/date/time chosen at booking time. */}
+        {labItems.length > 0 && (
+          <div className="space-y-3">
+            <h2 className="text-lg font-bold text-on-surface">Suggested Lab Tests</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {labItems.map((item) => (
+                <div key={item.id} className="bg-surface rounded-2xl border border-outline-variant p-4 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-on-surface truncate">{item.lab_test.name}</p>
+                    <p className="text-xs text-on-surface-variant">{item.lab_test.category_name} · NPR {Number(item.lab_test.price).toFixed(0)}</p>
+                  </div>
+                  {item.booking_id ? (
+                    <span className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-600 whitespace-nowrap flex-shrink-0">
+                      <span className="material-symbols-outlined ms-filled" style={{ fontSize: '14px' }}>check_circle</span>
+                      Booked
+                    </span>
+                  ) : (
+                    <Link href={`/lab-tests/${item.lab_test.id}?prescription_lab_test_item_id=${item.id}`}
+                      className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-full hover:opacity-90 transition-opacity whitespace-nowrap flex-shrink-0">
+                      Book This Test
+                    </Link>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        </>
       )}
     </div>
   )
