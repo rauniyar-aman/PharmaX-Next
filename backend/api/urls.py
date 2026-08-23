@@ -215,6 +215,7 @@ urlpatterns = [
     path('delivery/agent/online/',              views.DeliveryOnlineToggleView.as_view(), name='delivery-online'),
 
     # Doctor dashboard
+    path('doctor/profile/',                     views.DoctorProfileView.as_view(), name='doctor-profile'),
     path('doctor/availability/',                views.DoctorAvailabilityListView.as_view(), name='doctor-availability'),
     path('doctor/availability/<uuid:pk>/',      views.DoctorAvailabilityDetailView.as_view(), name='doctor-availability-detail'),
     path('doctor/appointments/',                views.DoctorOwnAppointmentListView.as_view(), name='doctor-own-appointments'),

@@ -3,7 +3,7 @@ export interface User {
   full_name: string
   email: string
   phone?: string | null
-  role: 'CUSTOMER' | 'ADMIN' | 'PHARMACY' | 'DELIVERY_AGENT'
+  role: 'CUSTOMER' | 'ADMIN' | 'PHARMACY' | 'DELIVERY_AGENT' | 'DOCTOR'
   is_email_verified: boolean
   avatar_url?: string | null
   referral_code?: string | null
@@ -11,6 +11,7 @@ export interface User {
   permission_codes?: string[]   // only present when role === 'ADMIN'
   delivery_agent_verified?: boolean | null   // only present when role === 'DELIVERY_AGENT'
   delivery_agent_online?: boolean | null     // only present when role === 'DELIVERY_AGENT'
+  doctor_verified?: boolean | null           // only present when role === 'DOCTOR'
   created_at: string
   updated_at: string
 }
@@ -611,11 +612,21 @@ export interface Doctor {
   rating: string
   total_reviews: number
   total_consultations: number
+  // Present on AdminDoctorSerializer / DoctorProfileView responses (admin + doctor-self views),
+  // absent from the public DoctorSerializer used by the patient-facing catalog.
+  email?: string | null
+  user_is_active?: boolean | null
+  license_number?: string | null
+  is_verified?: boolean
+  onboarding_fee_amount?: string
+  onboarding_fee_paid?: boolean
+  onboarding_fee_paid_at?: string | null
   created_at: string
   updated_at: string
 }
 
 export type AppointmentStatus = 'PENDING' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED'
+export type AppointmentPaymentStatus = 'PENDING' | 'PAID' | 'NOT_REQUIRED'
 
 export interface DoctorAppointment {
   id: string
@@ -627,8 +638,39 @@ export interface DoctorAppointment {
   fee_amount: string
   reason?: string | null
   meeting_link?: string | null
+  fee_charged?: string
+  is_plus_free?: boolean
+  payment_status?: AppointmentPaymentStatus
+  payment_method?: 'KHALTI' | 'ESEWA' | 'WALLET' | null
+  payout_status?: PayoutStatus | null   // admin views only (AdminAppointmentListView/Detail)
   booked_at: string
   updated_at: string
+}
+
+export interface DoctorAvailability {
+  id: string
+  day_of_week: number   // 0=Monday..6=Sunday
+  start_time: string
+  end_time: string
+  slot_duration_minutes: number
+  is_active: boolean
+}
+
+export interface DoctorPayout {
+  id: string
+  appointment: string
+  patient_name?: string       // DoctorPayoutSerializer (self-service)
+  doctor?: string              // AdminDoctorPayoutSerializer
+  doctor_name?: string         // AdminDoctorPayoutSerializer
+  appointment_date: string
+  gross_amount: string
+  commission_rate: string
+  commission_amount: string
+  net_payable: string
+  status: PayoutStatus
+  paid_at: string | null
+  paid_by_name?: string | null
+  created_at: string
 }
 
 export interface PlusPlan {
