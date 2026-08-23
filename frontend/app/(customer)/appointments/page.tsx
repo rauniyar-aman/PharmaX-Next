@@ -91,7 +91,9 @@ export default function AppointmentsPage() {
               </div>
               <div>
                 <p className="text-on-surface-variant">Fee</p>
-                <p className="font-medium text-on-surface mt-0.5">NPR {Number(a.fee_amount).toFixed(0)}</p>
+                <p className="font-medium text-on-surface mt-0.5">
+                  {a.is_plus_free ? 'Free (Plus)' : `NPR ${Number(a.fee_amount).toFixed(0)}`}
+                </p>
               </div>
             </div>
             {a.reason && (
@@ -100,6 +102,22 @@ export default function AppointmentsPage() {
                 <p className="font-medium text-on-surface mt-0.5">{a.reason}</p>
               </div>
             )}
+
+            {/* Payment status only matters for a non-Plus booking still waiting on it — a Plus
+                booking never has anything to pay, and a paid one has nothing left to show here. */}
+            {!a.is_plus_free && a.payment_status === 'PENDING' && (
+              <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 flex-wrap">
+                <p className="text-xs text-amber-800 flex items-center gap-1.5">
+                  <span className="material-symbols-outlined ms-filled" style={{ fontSize: '15px' }}>hourglass_top</span>
+                  Payment pending — this appointment won't be confirmed until it's paid.
+                </p>
+                <Link href={`/appointments/${a.id}/payment`}
+                  className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity whitespace-nowrap">
+                  Pay Now
+                </Link>
+              </div>
+            )}
+
             {a.status === 'CONFIRMED' && a.meeting_link && (
               <a href={a.meeting_link} target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
