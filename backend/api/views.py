@@ -4588,6 +4588,19 @@ def _doctor_not_found_response():
     return Response({'success': False, 'message': 'No doctor is associated with this account.'}, status=status.HTTP_403_FORBIDDEN)
 
 
+class DoctorProfileView(APIView):
+    """Self-service 'who am I' for the doctor dashboard — mirrors PharmacyProfileView.get(). Not
+    part of the Stage 2 endpoint list, added because Stage 3's dashboard needs the doctor's own
+    name/specialty/consultation_fee/is_verified and there was nowhere to fetch it from."""
+    permission_classes = [IsDoctor]
+
+    def get(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        return Response({'success': True, 'data': {'doctor': AdminDoctorSerializer(doctor).data}})
+
+
 class DoctorAvailabilityListView(APIView):
     permission_classes = [IsDoctor]
 
