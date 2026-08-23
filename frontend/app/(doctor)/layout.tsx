@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard',     href: '/doctor/dashboard',     icon: 'space_dashboard' },
   { label: 'Availability',  href: '/doctor/availability',  icon: 'event_available' },
   { label: 'Appointments',  href: '/doctor/appointments',  icon: 'calendar_month' },
+  { label: 'Patients',      href: '/doctor/patients',      icon: 'groups' },
   { label: 'Earnings',      href: '/doctor/earnings',      icon: 'account_balance_wallet' },
 ]
 
