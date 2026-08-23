@@ -37,6 +37,14 @@ class IsDoctor(BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.role == 'DOCTOR')
 
 
+class IsCollector(BasePermission):
+    """Lab-collector-dashboard endpoints. Same shape as IsDeliveryAgent — role-only. Every view
+    still has to scope to request.user.lab_collector itself (via the OneToOneField on
+    LabCollector.user)."""
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role == 'LAB_COLLECTOR')
+
+
 def require_permission(code: str):
     """Factory: returns a permission class checking for a specific granted permission code.
     Super admins pass automatically regardless of code."""

@@ -21,7 +21,7 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    ROLES = [('CUSTOMER', 'Customer'), ('ADMIN', 'Admin'), ('PHARMACY', 'Pharmacy'), ('DELIVERY_AGENT', 'Delivery Agent'), ('DOCTOR', 'Doctor')]
+    ROLES = [('CUSTOMER', 'Customer'), ('ADMIN', 'Admin'), ('PHARMACY', 'Pharmacy'), ('DELIVERY_AGENT', 'Delivery Agent'), ('DOCTOR', 'Doctor'), ('LAB_COLLECTOR', 'Lab Collector')]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     full_name = models.CharField(max_length=255)
@@ -461,7 +461,15 @@ class LabTestBooking(models.Model):
     status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     notes = models.TextField(null=True, blank=True)
-    report_url = models.CharField(max_length=500, null=True, blank=True)
+    report_url = models.CharField(max_length=500, null=True, blank=True)  # kept for any pre-existing
+    # bookings that already have a value here; new reports go through report_file below instead.
+    payment_status = models.CharField(max_length=20, choices=[('PENDING', 'Pending'), ('PAID', 'Paid')], default='PENDING')
+    payment_method = models.CharField(max_length=20, choices=[('KHALTI', 'Khalti'), ('ESEWA', 'eSewa'), ('CASH_ON_DELIVERY', 'Cash on Collection')], null=True, blank=True)
+    collector = models.ForeignKey('LabCollector', on_delete=models.SET_NULL, null=True, blank=True, related_name='bookings')
+    collector_broadcast_at = models.DateTimeField(null=True, blank=True)  # mirrors delivery_broadcast_at
+    report_file = models.FileField(upload_to='lab_reports/', null=True, blank=True)
+    report_uploaded_at = models.DateTimeField(null=True, blank=True)
+    khalti_pidx = models.CharField(max_length=100, null=True, blank=True)  # mirrors Order/DoctorAppointment
     booked_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1229,3 +1237,61 @@ class DeliveryAgentCodLiability(models.Model):
 
     class Meta:
         db_table = 'delivery_agent_cod_liabilities'
+
+
+class LabCollector(models.Model):
+    """Mirrors DeliveryAgent exactly — same verification, same online/offline toggle, same
+    admin-created-only onboarding pattern. A dedicated role rather than reusing DeliveryAgent
+    since a phlebotomist and a delivery rider are different people doing different physical work,
+    even though the matching mechanics (broadcast/accept) are identical."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='lab_collector')
+    phone = models.CharField(max_length=20)
+    lat = models.FloatField(null=True, blank=True)
+    lng = models.FloatField(null=True, blank=True)
+    is_verified = models.BooleanField(default=False)
+    is_online = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'lab_collectors'
+
+    def __str__(self):
+        return self.user.full_name
+
+
+class CollectorEarning(models.Model):
+    """Mirrors DeliveryAgentEarning exactly — a real payable the platform owes the collector for
+    a completed collection, regardless of how the customer paid."""
+    STATUS = [('PENDING', 'Pending'), ('PAID', 'Paid')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    collector = models.ForeignKey(LabCollector, on_delete=models.PROTECT, related_name='earnings')
+    booking = models.OneToOneField('LabTestBooking', on_delete=models.PROTECT, related_name='collector_earning')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'collector_earnings'
+
+
+class CollectorCodLiability(models.Model):
+    """Mirrors DeliveryAgentCodLiability exactly — cash the collector is holding after a COD
+    collection, owed back to the platform, tracked separately from what the platform owes them."""
+    STATUS = [('PENDING', 'Pending'), ('REMITTED', 'Remitted')]
+    METHOD = [('CASH_DEPOSIT', 'Cash Deposit at Office'), ('GATEWAY_TOPUP', 'Gateway Top-up')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    collector = models.ForeignKey(LabCollector, on_delete=models.PROTECT, related_name='cod_liabilities')
+    booking = models.OneToOneField('LabTestBooking', on_delete=models.PROTECT, related_name='cod_liability')
+    amount_collected = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
+    remittance_method = models.CharField(max_length=20, choices=METHOD, null=True, blank=True)
+    reference = models.CharField(max_length=255, null=True, blank=True)
+    remitted_at = models.DateTimeField(null=True, blank=True)
+    confirmed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'collector_cod_liabilities'
