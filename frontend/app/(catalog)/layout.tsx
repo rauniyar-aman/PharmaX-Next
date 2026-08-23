@@ -10,6 +10,7 @@ const NON_CUSTOMER_DASHBOARDS: Record<string, string> = {
   ADMIN: '/admin/dashboard',
   PHARMACY: '/pharmacy/dashboard',
   DELIVERY_AGENT: '/delivery/requests',
+  LAB_COLLECTOR: '/lab-collector/requests',
 }
 
 export default function CatalogLayout({ children }: { children: React.ReactNode }) {

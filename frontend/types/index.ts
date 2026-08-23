@@ -3,7 +3,7 @@ export interface User {
   full_name: string
   email: string
   phone?: string | null
-  role: 'CUSTOMER' | 'ADMIN' | 'PHARMACY' | 'DELIVERY_AGENT' | 'DOCTOR'
+  role: 'CUSTOMER' | 'ADMIN' | 'PHARMACY' | 'DELIVERY_AGENT' | 'DOCTOR' | 'LAB_COLLECTOR'
   is_email_verified: boolean
   avatar_url?: string | null
   referral_code?: string | null
@@ -12,6 +12,8 @@ export interface User {
   delivery_agent_verified?: boolean | null   // only present when role === 'DELIVERY_AGENT'
   delivery_agent_online?: boolean | null     // only present when role === 'DELIVERY_AGENT'
   doctor_verified?: boolean | null           // only present when role === 'DOCTOR'
+  lab_collector_verified?: boolean | null    // only present when role === 'LAB_COLLECTOR'
+  lab_collector_online?: boolean | null      // only present when role === 'LAB_COLLECTOR'
   created_at: string
   updated_at: string
 }
@@ -583,6 +585,9 @@ export interface LabTest {
 
 export type LabTestBookingStatus = 'PENDING' | 'CONFIRMED' | 'SAMPLE_COLLECTED' | 'REPORT_READY' | 'CANCELLED'
 
+export type LabTestPaymentStatus = 'PENDING' | 'PAID'
+export type LabTestPaymentMethod = 'KHALTI' | 'ESEWA' | 'CASH_ON_DELIVERY'
+
 export interface LabTestBooking {
   id: string
   user?: { id: string; full_name: string; email: string; phone?: string | null }
@@ -593,9 +598,56 @@ export interface LabTestBooking {
   status: LabTestBookingStatus
   total_amount: string
   notes?: string | null
+  payment_status?: LabTestPaymentStatus
+  payment_method?: LabTestPaymentMethod | null
+  collector?: { id: string; full_name: string; phone?: string | null } | null
   report_url?: string | null
+  report_file_url?: string | null
+  report_uploaded_at?: string | null
   booked_at: string
   updated_at: string
+}
+
+export interface CollectorEarning {
+  id: string
+  collector: string
+  collector_name: string
+  booking_id: string
+  lab_test_name: string
+  amount: string
+  status: 'PENDING' | 'PAID'
+  paid_at: string | null
+  created_at: string
+}
+
+export interface CollectorCodLiability {
+  id: string
+  collector: string
+  collector_name: string
+  booking_id: string
+  lab_test_name: string
+  amount_collected: string
+  status: 'PENDING' | 'REMITTED'
+  remittance_method?: 'CASH_DEPOSIT' | 'GATEWAY_TOPUP' | null
+  reference?: string | null
+  remitted_at: string | null
+  days_outstanding: number | null
+  created_at: string
+}
+
+export interface CollectorFinanceProfile {
+  cod_record: {
+    liabilities: CollectorCodLiability[]
+    total_collected: string
+    total_outstanding: string
+    oldest_unremitted_age_days: number | null
+  }
+  earnings_record: {
+    earnings: CollectorEarning[]
+    total_earned: string
+    total_pending: string
+    total_paid: string
+  }
 }
 
 export interface MedicineSubscription {
