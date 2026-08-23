@@ -15,7 +15,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.db.models import Q, Avg, Count, Sum, F, ProtectedError
+from django.db.models import Q, Avg, Count, Sum, F, Max, Min, ProtectedError
 from django.db import transaction
 from django.http import HttpResponseRedirect
 from django.conf import settings
@@ -4837,8 +4837,19 @@ class DoctorAppointmentCompleteView(APIView):
             except LabTest.DoesNotExist:
                 return Response({'success': False, 'message': f'Lab test not found: {lab_test_id}'}, status=status.HTTP_404_NOT_FOUND)
 
+        # Both optional — set only if the doctor recommends a follow-up.
+        follow_up_date = None
+        raw_follow_up_date = request.data.get('follow_up_date')
+        if raw_follow_up_date:
+            follow_up_date = parse_date(raw_follow_up_date)
+            if not follow_up_date:
+                return Response({'success': False, 'message': 'follow_up_date must be a valid date (YYYY-MM-DD).'}, status=status.HTTP_400_BAD_REQUEST)
+        follow_up_notes = (request.data.get('follow_up_notes') or '').strip() or None
+
         appt.status = 'COMPLETED'
-        appt.save(update_fields=['status'])
+        appt.follow_up_date = follow_up_date
+        appt.follow_up_notes = follow_up_notes
+        appt.save(update_fields=['status', 'follow_up_date', 'follow_up_notes'])
 
         # Idempotency guard — same hasattr() pattern as matching._create_settlement_records(), in
         # case this is somehow called twice for the same appointment.
@@ -4908,6 +4919,88 @@ class DoctorPayoutListView(APIView):
             return _doctor_not_found_response()
         payouts = doctor.payouts.select_related('appointment__user').order_by('-created_at')
         return Response({'success': True, 'data': {'payouts': DoctorPayoutSerializer(payouts, many=True).data}})
+
+
+class DoctorPatientListView(APIView):
+    """Distinct patients this doctor has ever had an appointment with — one aggregation query
+    (via .values().annotate()), not one query per patient. nearest_follow_up is the single
+    earliest follow_up_date across all of this patient's appointments with this doctor, whichever
+    direction it points: already overdue (in the past) or still upcoming (in the future) — the
+    signed days_until_follow_up below is what actually distinguishes the two for the UI."""
+    permission_classes = [IsDoctor]
+
+    def get(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+
+        rows = (
+            DoctorAppointment.objects.filter(doctor=doctor)
+            .values('user_id', 'user__full_name', 'user__email', 'user__phone')
+            .annotate(
+                appointment_count=Count('id'),
+                last_visit=Max('scheduled_date'),
+                nearest_follow_up_date=Min('follow_up_date'),
+            )
+            .order_by('-last_visit')
+        )
+
+        today = timezone.now().date()
+        patients = [{
+            'user_id': str(row['user_id']),
+            'full_name': row['user__full_name'],
+            'email': row['user__email'],
+            'phone': row['user__phone'],
+            'appointment_count': row['appointment_count'],
+            'last_visit': row['last_visit'],
+            'follow_up_date': row['nearest_follow_up_date'],
+            'days_until_follow_up': (row['nearest_follow_up_date'] - today).days if row['nearest_follow_up_date'] else None,
+        } for row in rows]
+
+        return Response({'success': True, 'data': {'patients': patients}})
+
+
+class DoctorPatientDetailView(APIView):
+    """This doctor's full history with one patient — never anything from the patient's account
+    beyond what happened with THIS doctor specifically (other doctors' consultations, other
+    orders, unrelated prescriptions are all out of reach here, enforced by scoping every query to
+    doctor=doctor in addition to user_id). Returns 404 — not an empty-but-200 response — if this
+    doctor has never actually had an appointment with this user, so a doctor can't distinguish
+    "this user doesn't exist" from "this user exists but I've never seen them" by probing ids."""
+    permission_classes = [IsDoctor]
+
+    def get(self, request, user_id):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+
+        appointments = DoctorAppointment.objects.filter(doctor=doctor, user_id=user_id).select_related('user').order_by('-scheduled_date')
+        if not appointments.exists():
+            return Response({'success': False, 'message': 'Patient not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        patient_user = appointments.first().user
+        prescriptions = Prescription.objects.filter(
+            user_id=user_id, appointment__doctor=doctor,
+        ).prefetch_related('medicine_items__medicine', 'lab_test_items__lab_test', 'lab_test_items__booking').order_by('-uploaded_at')
+
+        prescriptions_data = []
+        for presc in prescriptions:
+            data = PrescriptionSerializer(presc).data
+            data['medicine_items'] = PrescriptionMedicineItemSerializer(presc.medicine_items.all(), many=True).data
+            data['lab_test_items'] = PrescriptionLabTestItemSerializer(presc.lab_test_items.all(), many=True).data
+            prescriptions_data.append(data)
+
+        return Response({
+            'success': True,
+            'data': {
+                'patient': {
+                    'id': str(patient_user.id), 'full_name': patient_user.full_name,
+                    'email': patient_user.email, 'phone': patient_user.phone,
+                },
+                'appointments': DoctorAppointmentSerializer(appointments, many=True).data,
+                'prescriptions': prescriptions_data,
+            },
+        })
 
 
 # ─── Pharmacy Dashboard (Stage 5 of the marketplace spec) ─────────────────────
