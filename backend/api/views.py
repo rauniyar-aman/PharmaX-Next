@@ -2451,8 +2451,9 @@ class AppointmentListCreateView(APIView):
             payment_status=payment_status_value,
             reason=s.validated_data.get('reason'),
         )
-        doctor.total_consultations = F('total_consultations') + 1
-        doctor.save(update_fields=['total_consultations'])
+        # total_consultations counts actual completed consultations (incremented in
+        # DoctorAppointmentCompleteView, alongside DoctorPayout) — not booking attempts, which
+        # would inflate it with cancellations/no-shows/unpaid appointments that never happened.
 
         _notify_admins(
             'manage_doctors', 'NEW_APPOINTMENT', 'New Doctor Appointment',
@@ -4721,6 +4722,14 @@ class DoctorAppointmentCompleteView(APIView):
                 gross_amount=gross, commission_rate=commission_rate, commission_amount=commission,
                 net_payable=gross - commission,
             )
+            doctor.total_consultations = F('total_consultations') + 1
+            doctor.save(update_fields=['total_consultations'])
+            # F() leaves doctor.total_consultations holding an unresolved expression in memory —
+            # serializing it as-is below would crash. Refresh it, and repoint appt.doctor at this
+            # same refreshed instance so the response doesn't serialize whichever object DRF's
+            # related-object caching happened to hand back.
+            doctor.refresh_from_db(fields=['total_consultations'])
+            appt.doctor = doctor
 
         return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment marked complete.'})
 
