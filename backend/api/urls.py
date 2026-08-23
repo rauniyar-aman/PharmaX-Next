@@ -142,6 +142,7 @@ urlpatterns = [
     path('admin/lab-tests/<uuid:pk>/',          views.AdminLabTestDetailView.as_view(),     name='admin-lab-test-detail'),
     path('admin/lab-test-bookings/',            views.AdminLabTestBookingListView.as_view(), name='admin-lab-test-bookings'),
     path('admin/lab-test-bookings/<uuid:pk>/',  views.AdminLabTestBookingDetailView.as_view(), name='admin-lab-test-booking-detail'),
+    path('admin/lab-test-bookings/<uuid:pk>/upload-report/', views.AdminLabTestReportUploadView.as_view(), name='admin-lab-test-booking-upload-report'),
     path('admin/blog/',                         views.AdminBlogPostListView.as_view(),      name='admin-blog-posts'),
     path('admin/blog/<uuid:pk>/',               views.AdminBlogPostDetailView.as_view(),    name='admin-blog-post-detail'),
     path('admin/subscriptions/',                views.AdminSubscriptionListView.as_view(),  name='admin-subscriptions'),
@@ -226,6 +227,7 @@ urlpatterns = [
     path('lab-collector/requests/<uuid:pk>/accept/', views.LabCollectorAcceptView.as_view(),     name='lab-collector-request-accept'),
     path('lab-collector/active/',               views.LabCollectorActiveListView.as_view(),     name='lab-collector-active'),
     path('lab-collector/active/<uuid:pk>/confirm-collected/', views.LabCollectorConfirmCollectedView.as_view(), name='lab-collector-confirm-collected'),
+    path('lab-collector/active/<uuid:pk>/upload-report/', views.LabCollectorReportUploadView.as_view(), name='lab-collector-upload-report'),
     path('lab-collector/location/',             views.LabCollectorLocationUpdateView.as_view(), name='lab-collector-location'),
     path('lab-collector/online/',               views.LabCollectorOnlineToggleView.as_view(),   name='lab-collector-online'),
 
