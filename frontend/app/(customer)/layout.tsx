@@ -176,7 +176,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   }
 
   if (user.role !== 'CUSTOMER') {
-    const dashboard = user.role === 'ADMIN' ? '/admin/dashboard' : user.role === 'PHARMACY' ? '/pharmacy/dashboard' : '/delivery/requests'
+    const dashboard = user.role === 'ADMIN' ? '/admin/dashboard' : user.role === 'PHARMACY' ? '/pharmacy/dashboard' : user.role === 'LAB_COLLECTOR' ? '/lab-collector/requests' : '/delivery/requests'
     router.replace(dashboard)
     return null
   }
