@@ -145,6 +145,25 @@ export default function AppointmentsPage() {
               </div>
             )}
 
+            {/* Shown plainly on the appointment itself, not just as a toast that's easy to miss. */}
+            {a.follow_up_date && (() => {
+              const todayStr = new Date().toISOString().slice(0, 10)
+              const overdue = a.follow_up_date < todayStr
+              return (
+                <div className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 flex-wrap border ${overdue ? 'bg-amber-50 border-amber-200' : 'bg-secondary/5 border-secondary/20'}`}>
+                  <p className={`text-xs flex items-center gap-1.5 ${overdue ? 'text-amber-800' : 'text-on-surface'}`}>
+                    <span className="material-symbols-outlined ms-filled" style={{ fontSize: '15px' }}>event_repeat</span>
+                    {overdue ? 'Follow-up overdue' : 'Upcoming follow-up'} — {new Date(a.follow_up_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    {a.follow_up_notes ? `: ${a.follow_up_notes}` : ''}
+                  </p>
+                  <Link href={`/doctor-consult/${a.doctor.id}`}
+                    className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity whitespace-nowrap">
+                    Book Follow-up
+                  </Link>
+                </div>
+              )
+            })()}
+
             {(a.status === 'PENDING' || a.status === 'CONFIRMED') && (
               <button onClick={() => handleCancel(a.id)} disabled={cancelling === a.id}
                 className="text-xs font-semibold text-error hover:underline disabled:opacity-50">
