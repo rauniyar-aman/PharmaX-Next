@@ -637,6 +637,9 @@ class DoctorAppointment(models.Model):
     payment_status = models.CharField(max_length=20, choices=[('PENDING', 'Pending'), ('PAID', 'Paid'), ('NOT_REQUIRED', 'Not Required')], default='PENDING')
     payment_method = models.CharField(max_length=20, choices=[('KHALTI', 'Khalti'), ('ESEWA', 'eSewa'), ('WALLET', 'Wallet')], null=True, blank=True)
     khalti_pidx = models.CharField(max_length=100, null=True, blank=True, unique=True)  # needed to resolve the appointment on Khalti's redirect callback, same role as Order.khalti_pidx
+    # Both optional — set only if the doctor recommends a follow-up when completing this consultation.
+    follow_up_date = models.DateField(null=True, blank=True)
+    follow_up_notes = models.CharField(max_length=255, null=True, blank=True)
     booked_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
