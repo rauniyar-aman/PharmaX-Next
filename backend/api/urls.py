@@ -67,6 +67,11 @@ urlpatterns = [
     path('payment/khalti/verify/',    views.KhaltiVerifyView.as_view(),        name='payment-khalti-verify'),
     path('payment/khalti/initiate-appointment/', views.AppointmentKhaltiInitiateView.as_view(), name='payment-khalti-initiate-appointment'),
     path('payment/khalti/verify-appointment/',   views.AppointmentKhaltiVerifyView.as_view(),   name='payment-khalti-verify-appointment'),
+    path('payment/khalti/initiate-lab-test/',    views.PaymentKhaltiInitiateLabTestView.as_view(), name='payment-khalti-initiate-lab-test'),
+    path('payment/khalti/verify-lab-test/',      views.LabTestKhaltiVerifyView.as_view(),        name='payment-khalti-verify-lab-test'),
+    path('payment/esewa/initiate-lab-test/',     views.PaymentEsewaInitiateLabTestView.as_view(), name='payment-esewa-initiate-lab-test'),
+    path('payment/esewa/success-lab-test/',      views.LabTestEsewaSuccessView.as_view(),        name='payment-esewa-success-lab-test'),
+    path('payment/esewa/failure-lab-test/',      views.LabTestEsewaFailureView.as_view(),        name='payment-esewa-failure-lab-test'),
 
     # Notifications
     path('notifications/',            views.NotificationListView.as_view(),   name='notifications'),
