@@ -470,6 +470,10 @@ class LabTestBooking(models.Model):
     report_file = models.FileField(upload_to='lab_reports/', null=True, blank=True)
     report_uploaded_at = models.DateTimeField(null=True, blank=True)
     khalti_pidx = models.CharField(max_length=100, null=True, blank=True)  # mirrors Order/DoctorAppointment
+    # Not in the original Stage 1 field list — needed to actually support eSewa (Stage 2 asks for
+    # both gateways), mirroring Order.esewa_transaction_uuid exactly: the callback has to look the
+    # booking up by the exact value this system generated, not by parsing an id back out of it.
+    esewa_transaction_uuid = models.CharField(max_length=100, null=True, blank=True, unique=True)
     booked_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

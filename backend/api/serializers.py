@@ -710,18 +710,35 @@ class LabTestBookingSerializer(serializers.ModelSerializer):
     address = AddressSerializer(read_only=True)
     address_id = serializers.UUIDField(write_only=True)
     user = serializers.SerializerMethodField()
+    collector = serializers.SerializerMethodField()
+    report_file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = LabTestBooking
         fields = [
             'id', 'user', 'lab_test', 'lab_test_id', 'address', 'address_id',
             'scheduled_date', 'time_slot', 'status', 'total_amount', 'notes',
-            'report_url', 'booked_at', 'updated_at',
+            'payment_status', 'payment_method', 'collector',
+            'report_url', 'report_file_url', 'report_uploaded_at', 'booked_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'status', 'total_amount', 'report_url', 'booked_at', 'updated_at']
+        read_only_fields = [
+            'id', 'status', 'total_amount', 'payment_status', 'payment_method', 'collector',
+            'report_url', 'report_file_url', 'report_uploaded_at', 'booked_at', 'updated_at',
+        ]
 
     def get_user(self, obj):
         return {'id': str(obj.user_id), 'full_name': obj.user.full_name, 'email': obj.user.email, 'phone': obj.user.phone}
+
+    def get_collector(self, obj):
+        if not obj.collector_id:
+            return None
+        return {'id': str(obj.collector_id), 'full_name': obj.collector.user.full_name, 'phone': obj.collector.phone}
+
+    def get_report_file_url(self, obj):
+        if not obj.report_file:
+            return None
+        request = self.context.get('request')
+        return request.build_absolute_uri(obj.report_file.url) if request else obj.report_file.url
 
 
 class PrescriptionLabTestItemSerializer(serializers.ModelSerializer):

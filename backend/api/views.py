@@ -2187,6 +2187,15 @@ class LabTestBookingListCreateView(APIView):
         except Address.DoesNotExist:
             return Response({'success': False, 'message': 'Address not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        payment_method = request.data.get('payment_method')
+        if payment_method not in ('KHALTI', 'ESEWA', 'CASH_ON_DELIVERY'):
+            return Response({'success': False, 'message': "payment_method must be one of: KHALTI, ESEWA, CASH_ON_DELIVERY."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Booking creation is never blocked by the payment path — mirrors how order checkout
+        # already separates "order exists" from "order paid". CASH_ON_DELIVERY has no gateway
+        # callback to wait for, so it's confirmed (and, from Stage 3 onward, broadcast to
+        # collectors) immediately, same as PaymentCodPlaceView does for orders. KHALTI/ESEWA stay
+        # PENDING until their respective initiate+verify round trip actually confirms payment.
         booking = LabTestBooking.objects.create(
             user=request.user,
             lab_test=lab_test,
@@ -2195,7 +2204,11 @@ class LabTestBookingListCreateView(APIView):
             time_slot=s.validated_data['time_slot'],
             total_amount=lab_test.price,
             notes=s.validated_data.get('notes'),
+            payment_method=payment_method,
         )
+        if payment_method == 'CASH_ON_DELIVERY':
+            _confirm_lab_test_booking(booking)
+
         lab_test.total_bookings = F('total_bookings') + 1
         lab_test.save(update_fields=['total_bookings'])
         # F() leaves lab_test.total_bookings holding an unresolved expression in memory —
@@ -2247,6 +2260,239 @@ class LabTestBookingDetailView(APIView):
         booking.status = 'CANCELLED'
         booking.save(update_fields=['status'])
         return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Booking cancelled.'})
+
+
+# ─── Lab Test Sample Collection: Payment ───────────────────────────────────────
+#
+# Mirrors PaymentKhaltiInitiateView/KhaltiVerifyView and PaymentEsewaInitiateView/EsewaSuccessView/
+# EsewaFailureView's exact structure, scoped to LabTestBooking instead of Order — no cart/coupon/
+# wallet/delivery-charge here, same reasoning as the appointment payment views: a lab test booking
+# is a single already-priced item, not a multi-item checkout.
+
+def _confirm_lab_test_booking(booking):
+    """The one place a booking moves PENDING -> CONFIRMED — called either the moment
+    CASH_ON_DELIVERY is selected at booking time, or the moment a Khalti/eSewa payment is verified.
+    Decision: auto-confirm, no admin review step. This matches every other marketplace flow already
+    built here — PaymentCodPlaceView confirms a COD order straight to PLACED via sync_order_status(),
+    and a Plus-free doctor appointment confirms immediately with no admin gate — admin review in
+    this codebase is reserved for things that need human judgment (verifying a pharmacy, curating a
+    prescription), not for "did payment settle," which is already a deterministic, machine-checkable
+    fact. Stage 3 extends this same function to also call broadcast_collector() right here, once
+    that exists — CONFIRMED is exactly the state a booking needs to reach before it's offered to
+    collectors, same as PLACED is what triggers broadcast_delivery() for orders.
+    """
+    if booking.status != 'PENDING':
+        return
+    booking.status = 'CONFIRMED'
+    booking.save(update_fields=['status'])
+
+
+def _cancel_unpaid_lab_test_booking(booking):
+    if booking.payment_status == 'PENDING' and booking.status == 'PENDING':
+        booking.status = 'CANCELLED'
+        booking.save(update_fields=['status'])
+
+
+class PaymentKhaltiInitiateLabTestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        booking_id = request.data.get('booking_id')
+        if not booking_id:
+            return Response({'success': False, 'message': 'booking_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            booking = LabTestBooking.objects.select_related('lab_test').get(id=booking_id, user=request.user)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if booking.payment_status != 'PENDING':
+            return Response({'success': False, 'message': f'This booking does not need payment (status: {booking.payment_status}).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount_paisa = int(round(float(booking.total_amount) * 100))
+        if amount_paisa < 1000:
+            return Response({'success': False, 'message': 'Khalti requires a minimum payable amount of NPR 10. Please choose another payment method.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            khalti_res = _khalti_post('/epayment/initiate/', {
+                'return_url': f'{BACKEND_URL}/api/payment/khalti/verify-lab-test/',
+                'website_url': FRONTEND_URL,
+                'amount': amount_paisa,
+                'purchase_order_id': str(booking.id),
+                'purchase_order_name': f'PharmaX Lab Test: {booking.lab_test.name}',
+                'customer_info': {
+                    'name': request.user.full_name,
+                    'email': request.user.email,
+                    'phone': request.user.phone or '9800000000',
+                },
+            })
+        except Exception:
+            return Response({'success': False, 'message': 'Failed to reach Khalti.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if not khalti_res.get('pidx'):
+            return Response({'success': False, 'message': khalti_res.get('detail') or khalti_res.get('message') or 'Khalti initiation failed.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        booking.payment_method = 'KHALTI'
+        booking.khalti_pidx = khalti_res['pidx']
+        booking.save(update_fields=['payment_method', 'khalti_pidx'])
+        return Response({'success': True, 'data': {'payment_url': khalti_res['payment_url']}})
+
+
+class LabTestKhaltiVerifyView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        pidx = request.query_params.get('pidx')
+        gateway_status = request.query_params.get('status')
+
+        if not pidx or gateway_status != 'Completed':
+            if pidx:
+                try:
+                    _cancel_unpaid_lab_test_booking(LabTestBooking.objects.get(khalti_pidx=pidx))
+                except LabTestBooking.DoesNotExist:
+                    pass
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=khalti_cancelled')
+
+        try:
+            verification = _khalti_post('/epayment/lookup/', {'pidx': pidx})
+        except Exception:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=verify_error')
+
+        if verification.get('status') != 'Completed':
+            try:
+                _cancel_unpaid_lab_test_booking(LabTestBooking.objects.get(khalti_pidx=pidx))
+            except LabTestBooking.DoesNotExist:
+                pass
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=not_verified')
+
+        try:
+            booking = LabTestBooking.objects.get(khalti_pidx=pidx)
+        except LabTestBooking.DoesNotExist:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=booking_not_found')
+
+        if booking.payment_status != 'PAID':
+            booking.payment_status = 'PAID'
+            booking.save(update_fields=['payment_status'])
+            _confirm_lab_test_booking(booking)
+            Notification.objects.create(
+                user=booking.user, type='PAYMENT_UPDATE', title='Payment Received',
+                message=f'Payment for your {booking.lab_test.name} booking was received — it\'s confirmed.',
+                link='/lab-test-bookings',
+            )
+            _notify_admins(
+                'manage_lab_tests', 'PAYMENT_UPDATE', 'Lab Test Payment Received',
+                f'Payment received for {booking.user.full_name}\'s {booking.lab_test.name} booking (NPR {booking.total_amount}).',
+                link='/admin/lab-tests',
+            )
+        return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-confirmation?bookingId={booking.id}')
+
+
+class PaymentEsewaInitiateLabTestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        booking_id = request.data.get('booking_id')
+        if not booking_id:
+            return Response({'success': False, 'message': 'booking_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            booking = LabTestBooking.objects.get(id=booking_id, user=request.user)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if booking.payment_status != 'PENDING':
+            return Response({'success': False, 'message': f'This booking does not need payment (status: {booking.payment_status}).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        booking.payment_method = 'ESEWA'
+        transaction_uuid = f'{booking.id}-{int(timezone.now().timestamp())}'
+        booking.esewa_transaction_uuid = transaction_uuid
+        booking.save(update_fields=['payment_method', 'esewa_transaction_uuid'])
+
+        total_str = str(booking.total_amount)
+        signature = _esewa_signature(total_str, transaction_uuid)
+
+        return Response({
+            'success': True,
+            'data': {
+                'formUrl': ESEWA_FORM_URL,
+                'params': {
+                    'amount': total_str,
+                    'tax_amount': '0',
+                    'total_amount': total_str,
+                    'transaction_uuid': transaction_uuid,
+                    'product_code': ESEWA_PRODUCT_CODE,
+                    'product_service_charge': '0',
+                    'product_delivery_charge': '0',
+                    'success_url': f'{BACKEND_URL}/api/payment/esewa/success-lab-test/',
+                    'failure_url': f'{BACKEND_URL}/api/payment/esewa/failure-lab-test/',
+                    'signed_field_names': 'total_amount,transaction_uuid,product_code',
+                    'signature': signature,
+                },
+            },
+        })
+
+
+class LabTestEsewaSuccessView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        data = request.query_params.get('data')
+        if not data:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=missing_data')
+        try:
+            decoded = json.loads(base64.b64decode(data).decode('utf-8'))
+        except Exception:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=bad_data')
+
+        if decoded.get('status') != 'COMPLETE':
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=incomplete')
+
+        try:
+            resp = requests.get(ESEWA_VERIFY_URL, params={
+                'product_code': ESEWA_PRODUCT_CODE,
+                'total_amount': decoded.get('total_amount'),
+                'transaction_uuid': decoded.get('transaction_uuid'),
+            }, timeout=10)
+            verification = resp.json()
+        except Exception:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=verify_error')
+
+        if verification.get('status') != 'COMPLETE':
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=not_verified')
+
+        try:
+            booking = LabTestBooking.objects.get(esewa_transaction_uuid=decoded.get('transaction_uuid'))
+        except LabTestBooking.DoesNotExist:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=booking_not_found')
+
+        if booking.payment_status != 'PAID':
+            booking.payment_status = 'PAID'
+            booking.save(update_fields=['payment_status'])
+            _confirm_lab_test_booking(booking)
+            Notification.objects.create(
+                user=booking.user, type='PAYMENT_UPDATE', title='Payment Received',
+                message=f'Payment for your {booking.lab_test.name} booking was received — it\'s confirmed.',
+                link='/lab-test-bookings',
+            )
+            _notify_admins(
+                'manage_lab_tests', 'PAYMENT_UPDATE', 'Lab Test Payment Received',
+                f'Payment received for {booking.user.full_name}\'s {booking.lab_test.name} booking (NPR {booking.total_amount}).',
+                link='/admin/lab-tests',
+            )
+        return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-confirmation?bookingId={booking.id}')
+
+
+class LabTestEsewaFailureView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        data = request.query_params.get('data')
+        if data:
+            try:
+                decoded = json.loads(base64.b64decode(data).decode('utf-8'))
+                booking = LabTestBooking.objects.get(esewa_transaction_uuid=decoded.get('transaction_uuid'))
+                _cancel_unpaid_lab_test_booking(booking)
+            except Exception:
+                pass
+        return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=esewa_cancelled')
 
 
 # ─── Blog ─────────────────────────────────────────────────────────────────────
