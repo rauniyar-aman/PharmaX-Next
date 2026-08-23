@@ -2198,6 +2198,13 @@ class LabTestBookingListCreateView(APIView):
         )
         lab_test.total_bookings = F('total_bookings') + 1
         lab_test.save(update_fields=['total_bookings'])
+        # F() leaves lab_test.total_bookings holding an unresolved expression in memory —
+        # serializing it as-is below (via booking.lab_test) would crash. Refresh it, and repoint
+        # booking.lab_test at this same refreshed instance so the response doesn't serialize
+        # whichever object DRF's related-object caching happened to hand back — same fix as
+        # DoctorAppointmentCompleteView's doctor.total_consultations.
+        lab_test.refresh_from_db(fields=['total_bookings'])
+        booking.lab_test = lab_test
 
         # Optional: link this booking back to the doctor-suggested item it fulfills, so both the
         # patient and the doctor can see which suggestions were actually followed through on.
