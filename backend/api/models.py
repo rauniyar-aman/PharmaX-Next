@@ -21,7 +21,7 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    ROLES = [('CUSTOMER', 'Customer'), ('ADMIN', 'Admin'), ('PHARMACY', 'Pharmacy'), ('DELIVERY_AGENT', 'Delivery Agent')]
+    ROLES = [('CUSTOMER', 'Customer'), ('ADMIN', 'Admin'), ('PHARMACY', 'Pharmacy'), ('DELIVERY_AGENT', 'Delivery Agent'), ('DOCTOR', 'Doctor')]
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     full_name = models.CharField(max_length=255)
@@ -535,6 +535,10 @@ class MedicineSubscription(models.Model):
 
 class Doctor(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    # Nullable because 8 pre-existing Doctor rows predate login accounts and have no way to be
+    # backfilled with one — every NEW doctor going forward must have one, set at creation time,
+    # same as Pharmacy.user.
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='doctor', null=True, blank=True)
     name = models.CharField(max_length=255)
     specialty = models.CharField(max_length=100)
     qualification = models.CharField(max_length=255, null=True, blank=True)
@@ -547,6 +551,11 @@ class Doctor(models.Model):
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=Decimal('0'))
     total_reviews = models.IntegerField(default=0)
     total_consultations = models.IntegerField(default=0)
+    license_number = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    is_verified = models.BooleanField(default=False)
+    onboarding_fee_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    onboarding_fee_paid = models.BooleanField(default=False)
+    onboarding_fee_paid_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -555,6 +564,28 @@ class Doctor(models.Model):
 
     def __str__(self):
         return f'Dr. {self.name} ({self.specialty})'
+
+
+class DoctorAvailability(models.Model):
+    """Weekly recurring availability pattern for a doctor — mirrors PharmacyBusinessHours. Slots
+    are never pre-generated into rows; get_available_slots() in scheduling.py computes them fresh
+    from this pattern on every read, excluding whatever's already booked."""
+    WEEKDAYS = [(0, 'Monday'), (1, 'Tuesday'), (2, 'Wednesday'), (3, 'Thursday'), (4, 'Friday'), (5, 'Saturday'), (6, 'Sunday')]
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name='availability')
+    day_of_week = models.IntegerField(choices=WEEKDAYS)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    slot_duration_minutes = models.PositiveIntegerField(default=20)
+    is_active = models.BooleanField(default=True)  # lets a doctor toggle a day off without deleting the pattern
+
+    class Meta:
+        db_table = 'doctor_availability'
+        unique_together = ('doctor', 'day_of_week')
+
+    def __str__(self):
+        return f'Dr. {self.doctor.name} — {self.get_day_of_week_display()}'
 
 
 class DoctorAppointment(models.Model):
@@ -574,6 +605,10 @@ class DoctorAppointment(models.Model):
     fee_amount = models.DecimalField(max_digits=10, decimal_places=2)
     reason = models.TextField(null=True, blank=True)
     meeting_link = models.CharField(max_length=500, null=True, blank=True)
+    fee_charged = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))  # snapshot — 0 if Plus-free
+    is_plus_free = models.BooleanField(default=False)  # explicit, not just inferred from fee_charged==0
+    payment_status = models.CharField(max_length=20, choices=[('PENDING', 'Pending'), ('PAID', 'Paid'), ('NOT_REQUIRED', 'Not Required')], default='PENDING')
+    payment_method = models.CharField(max_length=20, choices=[('KHALTI', 'Khalti'), ('ESEWA', 'eSewa'), ('WALLET', 'Wallet')], null=True, blank=True)
     booked_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -583,6 +618,30 @@ class DoctorAppointment(models.Model):
 
     def __str__(self):
         return f'Dr. {self.doctor.name} — {self.user.email} ({self.status})'
+
+
+class DoctorPayout(models.Model):
+    """One payout obligation per completed appointment — mirrors PharmacyPayout. gross_amount is
+    the doctor's real consultation_fee even when the patient paid nothing (Plus-free): PharmaX
+    absorbs the Plus discount as a perk, the doctor still gets paid their normal share."""
+    STATUS = [('PENDING', 'Pending'), ('PAID', 'Paid')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    doctor = models.ForeignKey(Doctor, on_delete=models.PROTECT, related_name='payouts')
+    appointment = models.OneToOneField(DoctorAppointment, on_delete=models.PROTECT, related_name='payout')
+    gross_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=2)  # snapshotted at creation
+    commission_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    net_payable = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'doctor_payouts'
+
+    def __str__(self):
+        return f'Dr. {self.doctor.name} — NPR {self.net_payable} ({self.status})'
 
 
 class DoctorReview(models.Model):
