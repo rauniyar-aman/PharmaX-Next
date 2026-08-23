@@ -224,6 +224,8 @@ urlpatterns = [
     path('doctor/appointments/<uuid:pk>/set-meeting-link/', views.DoctorAppointmentSetMeetingLinkView.as_view(), name='doctor-appointment-set-meeting-link'),
     path('doctor/appointments/<uuid:pk>/complete/', views.DoctorAppointmentCompleteView.as_view(), name='doctor-appointment-complete'),
     path('doctor/payouts/',                     views.DoctorPayoutListView.as_view(), name='doctor-payouts'),
+    path('doctor/patients/',                    views.DoctorPatientListView.as_view(), name='doctor-patients'),
+    path('doctor/patients/<uuid:user_id>/',     views.DoctorPatientDetailView.as_view(), name='doctor-patient-detail'),
 
     # Admin finance / settlement ledgers
     path('admin/finance/pharmacy-payouts/',                  views.AdminPharmacyPayoutListView.as_view(),         name='admin-finance-pharmacy-payouts'),

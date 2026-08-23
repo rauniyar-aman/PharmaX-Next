@@ -899,12 +899,12 @@ class DoctorAppointmentSerializer(serializers.ModelSerializer):
             'id', 'user', 'doctor', 'doctor_id', 'scheduled_date', 'time_slot',
             'status', 'fee_amount', 'reason', 'meeting_link',
             'fee_charged', 'is_plus_free', 'payment_status', 'payment_method',
-            'prescription', 'booked_at', 'updated_at',
+            'prescription', 'follow_up_date', 'follow_up_notes', 'booked_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'status', 'fee_amount', 'meeting_link',
             'fee_charged', 'is_plus_free', 'payment_status', 'payment_method',
-            'prescription', 'booked_at', 'updated_at',
+            'prescription', 'follow_up_date', 'follow_up_notes', 'booked_at', 'updated_at',
         ]
 
     def get_user(self, obj):
