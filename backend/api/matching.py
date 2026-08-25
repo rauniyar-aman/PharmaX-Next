@@ -14,9 +14,11 @@ sync_order_status() is the single source of truth for Order.status transitions a
 reactively at the end of every function above that can change whether an order's items/deliveries
 are resolved — see its own docstring for the transition table.
 
-calculate_agent_payout() and _create_settlement_records() import _get_setting from .views inside
-the function body rather than at module level — views.py already imports from this module at
-import time, so a top-level `from .views import _get_setting` here would be a circular import.
+calculate_agent_payout(), _create_settlement_records(), and the _broadcast_radius_km()/
+_broadcast_window_minutes()/_priority_window_seconds()/_eta_assumed_speed_kmh() setting readers
+below import _get_setting from .views inside the function body rather than at module level —
+views.py already imports from this module at import time, so a top-level
+`from .views import _get_setting` here would be a circular import.
 """
 import math
 import secrets
@@ -33,16 +35,39 @@ from .models import (
     DeliveryAgent, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability,
 )
 
-BROADCAST_RADIUS_KM = 3
-BROADCAST_WINDOW_MINUTES = 10
-# How long a pharmacy that can fulfill EVERY item in an order gets first dibs before the order
-# falls back to broadcast_order()'s old per-item behavior (broadcasting to every eligible pharmacy
-# regardless of whether they cover the whole order) — see widen_stale_priority_broadcasts().
-# Deliberately much shorter than BROADCAST_WINDOW_MINUTES: this is a head start, not the whole
-# window an item can sit unanswered before it's unfulfillable. An explicit decline widens
-# immediately regardless of this window — see pharmacy_decline_item().
-PRIORITY_WINDOW_SECONDS = 30
 EARTH_RADIUS_KM = 6371.0
+
+
+# Admin-configurable via SystemSetting (see admin/settings) — read fresh at every call site rather
+# than cached at import time, so a change takes effect on the very next broadcast/sweep with no
+# restart needed. Each of these used to be a plain module-level constant; the docstrings elsewhere
+# in this file that mention them by their old ALL_CAPS names are describing the same concept, now
+# backed by live settings instead of a fixed value.
+def _broadcast_radius_km():
+    from .views import _get_setting
+    return float(_get_setting('broadcast_radius_km', '3'))
+
+
+def _broadcast_window_minutes():
+    from .views import _get_setting
+    return int(_get_setting('broadcast_window_minutes', '10'))
+
+
+def _priority_window_seconds():
+    """How long a pharmacy that can fulfill EVERY item in an order gets first dibs before the
+    order falls back to broadcast_order()'s old per-item behavior (broadcasting to every eligible
+    pharmacy regardless of whether they cover the whole order) — see
+    widen_stale_priority_broadcasts(). Deliberately much shorter than _broadcast_window_minutes():
+    this is a head start, not the whole window an item can sit unanswered before it's
+    unfulfillable. An explicit decline widens immediately regardless of this window — see
+    pharmacy_decline_item()."""
+    from .views import _get_setting
+    return int(_get_setting('priority_window_seconds', '30'))
+
+
+def _eta_assumed_speed_kmh():
+    from .views import _get_setting
+    return float(_get_setting('eta_assumed_speed_kmh', '20'))
 
 
 def _annotate_distance_km(queryset, lat, lng, lat_field='lat', lng_field='lng'):
@@ -80,7 +105,7 @@ def _eligible_pharmacies_for_item(item, address):
     nearby_pharmacies = _annotate_distance_km(
         Pharmacy.objects.filter(is_verified=True, is_active=True),
         address.lat, address.lng,
-    ).filter(distance_km__lte=BROADCAST_RADIUS_KM)
+    ).filter(distance_km__lte=_broadcast_radius_km())
 
     return PharmacyMedicineListing.objects.filter(
         pharmacy__in=nearby_pharmacies,
@@ -192,7 +217,7 @@ def widen_stale_priority_broadcasts():
     explicit decline (see pharmacy_decline_item()) doesn't wait for this sweep at all — this is
     purely for the passive "nobody responded" case.
     """
-    cutoff = timezone.now() - timedelta(seconds=PRIORITY_WINDOW_SECONDS)
+    cutoff = timezone.now() - timedelta(seconds=_priority_window_seconds())
     stale_item_ids = FulfillmentRequest.objects.filter(
         status='PENDING', created_at__lt=cutoff,
     ).values_list('order_item_id', flat=True).distinct()
@@ -413,7 +438,7 @@ def expire_stale_fulfillment_requests():
     """Expires every still-PENDING FulfillmentRequest older than BROADCAST_WINDOW_MINUTES.
     Returns (expired_count, unfulfillable_item_ids) — an item is unfulfillable if none of its
     requests were accepted before they expired (i.e. `fulfillment` is still unset)."""
-    cutoff = timezone.now() - timedelta(minutes=BROADCAST_WINDOW_MINUTES)
+    cutoff = timezone.now() - timedelta(minutes=_broadcast_window_minutes())
     stale = FulfillmentRequest.objects.filter(status='PENDING', created_at__lt=cutoff)
     stale_item_ids = list(stale.values_list('order_item_id', flat=True).distinct())
     expired_count = stale.update(status='EXPIRED', responded_at=timezone.now())
@@ -550,7 +575,7 @@ def _agent_eligible_for(agent, fulfillment):
         if pharmacy.lat is None or pharmacy.lng is None:
             return False
         qs = _annotate_distance_km(DeliveryAgent.objects.filter(pk=agent.pk), pharmacy.lat, pharmacy.lng)
-        if not qs.filter(distance_km__lte=BROADCAST_RADIUS_KM).exists():
+        if not qs.filter(distance_km__lte=_broadcast_radius_km()).exists():
             return False
     return True
 
@@ -753,7 +778,7 @@ def _tracking_payload(fulfillment):
             if agent.lat is not None and agent.lng is not None and address is not None and address.lat is not None and address.lng is not None:
                 distance_km = _haversine_km(agent.lat, agent.lng, address.lat, address.lng)
                 data['distance_km'] = round(distance_km, 1)
-                data['eta_minutes'] = round((distance_km / 20) * 60)  # rough estimate, 20km/h assumed
+                data['eta_minutes'] = round((distance_km / _eta_assumed_speed_kmh()) * 60)
     else:
         data['agent'] = None
     return data
@@ -839,7 +864,8 @@ def expire_stale_delivery_broadcasts():
     per fulfillment, not on every poll: without it, a broadcast that's been stale for an hour would
     re-notify every few seconds for as long as nobody accepts it.
     """
-    cutoff = timezone.now() - timedelta(minutes=BROADCAST_WINDOW_MINUTES)
+    window_minutes = _broadcast_window_minutes()
+    cutoff = timezone.now() - timedelta(minutes=window_minutes)
     stale = list(OrderFulfillment.objects.exclude(status__in=['CANCELLED', 'DELIVERED']).filter(
         delivery_agent__isnull=True, delivery_broadcast_at__lt=cutoff,
     ).select_related('pharmacy'))
@@ -853,7 +879,7 @@ def expire_stale_delivery_broadcasts():
             _notify_admins(
                 'manage_orders', 'FULFILLMENT_UPDATE', 'No Rider Accepted Pickup',
                 f'Order #{str(f.order_id)[:8]} at {pharmacy_name} has not been accepted by any '
-                f'rider for over {BROADCAST_WINDOW_MINUTES} minutes since being offered.',
+                f'rider for over {window_minutes} minutes since being offered.',
                 link=f'/admin/orders/{f.order_id}',
             )
         OrderFulfillment.objects.filter(id__in=[f.id for f in unnotified]).update(delivery_stale_notified_at=now)
