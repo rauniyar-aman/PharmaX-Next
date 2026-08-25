@@ -89,7 +89,18 @@ export default function PlusMembershipPage() {
                 <p className="text-sm font-bold text-on-surface">{p.name}</p>
                 <p className="text-3xl font-bold text-on-surface">NPR {Number(p.price).toFixed(0)}</p>
                 <p className="text-xs text-on-surface-variant">{p.duration_days} days</p>
-                {p.description && <p className="text-xs text-on-surface-variant flex-1">{p.description}</p>}
+                {p.description && <p className="text-xs text-on-surface-variant">{p.description}</p>}
+                {p.benefits && p.benefits.length > 0 && (
+                  <ul className="flex-1 text-left space-y-1.5 pt-1">
+                    {p.benefits.map((b) => (
+                      <li key={b.id} className="flex items-start gap-1.5 text-xs text-on-surface-variant">
+                        <span className="material-symbols-outlined ms-filled text-emerald-600 flex-shrink-0" style={{ fontSize: '15px' }}>check_circle</span>
+                        {b.description}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {(!p.benefits || p.benefits.length === 0) && <div className="flex-1" />}
                 <button onClick={() => handleSubscribe(p.id)} disabled={subscribing === p.id}
                   className="w-full py-2.5 bg-amber-500 text-white text-sm font-bold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
                   {subscribing === p.id ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Activating...</> : isActiveMember ? 'Extend Plan' : 'Get Plus'}
