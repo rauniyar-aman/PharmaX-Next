@@ -202,6 +202,10 @@ urlpatterns = [
     path('admin/delivery-agents/<uuid:pk>/',    views.AdminDeliveryAgentDetailView.as_view(), name='admin-delivery-agent-detail'),
     path('admin/lab-collectors/',               views.AdminLabCollectorListView.as_view(), name='admin-lab-collectors'),
     path('admin/lab-collectors/<uuid:pk>/',     views.AdminLabCollectorDetailView.as_view(), name='admin-lab-collector-detail'),
+    path('admin/campaigns/',                    views.AdminCampaignListView.as_view(),      name='admin-campaigns'),
+    path('admin/campaigns/<uuid:pk>/',          views.AdminCampaignDetailView.as_view(),    name='admin-campaign-detail'),
+    path('admin/campaigns/<uuid:pk>/enroll/',   views.AdminCampaignEnrollView.as_view(),    name='admin-campaign-enroll'),
+    path('admin/campaigns/enrollments/<uuid:pk>/mark-bonus-paid/', views.AdminCampaignMarkBonusPaidView.as_view(), name='admin-campaign-enrollment-mark-bonus-paid'),
 
     # Pharmacy dashboard
     path('pharmacy/profile/',                   views.PharmacyProfileView.as_view(),        name='pharmacy-profile'),
@@ -222,6 +226,7 @@ urlpatterns = [
     path('pharmacy/orders/<uuid:pk>/tracking/', views.PharmacyOrderTrackingView.as_view(), name='pharmacy-order-tracking'),
     path('pharmacy/team/',                      views.PharmacyTeamListView.as_view(),       name='pharmacy-team'),
     path('pharmacy/team/<uuid:pk>/',            views.PharmacyTeamMemberDetailView.as_view(), name='pharmacy-team-member-detail'),
+    path('pharmacy/campaigns/',                 views.PharmacyCampaignListView.as_view(),   name='pharmacy-campaigns'),
 
     # Delivery dashboard
     path('delivery/finance/',                   views.DeliveryFinanceView.as_view(),        name='delivery-finance'),

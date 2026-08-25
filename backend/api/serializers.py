@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner
+from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner, PharmacyIncentiveCampaign, PharmacyCampaignEnrollment
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -1389,6 +1389,47 @@ class AdminPharmacyPayoutSerializer(serializers.ModelSerializer):
             'id', 'pharmacy', 'pharmacy_name', 'fulfillment', 'order_id',
             'gross_amount', 'commission_rate', 'commission_amount', 'net_payable',
             'funding_source', 'status', 'paid_at', 'paid_by_name', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class PharmacyIncentiveCampaignSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
+
+    class Meta:
+        model = PharmacyIncentiveCampaign
+        fields = [
+            'id', 'name', 'description', 'campaign_type', 'discounted_commission_rate', 'bonus_amount',
+            'starts_at', 'ends_at', 'is_active', 'created_by_name', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_by_name', 'created_at']
+
+    def validate(self, data):
+        campaign_type = data.get('campaign_type') or getattr(self.instance, 'campaign_type', None)
+        if campaign_type == 'DISCOUNT':
+            rate = data['discounted_commission_rate'] if 'discounted_commission_rate' in data else (
+                getattr(self.instance, 'discounted_commission_rate', None) if self.instance else None
+            )
+            if rate is None:
+                raise serializers.ValidationError({'discounted_commission_rate': 'Required for a DISCOUNT campaign.'})
+        elif campaign_type == 'BONUS':
+            amount = data['bonus_amount'] if 'bonus_amount' in data else (
+                getattr(self.instance, 'bonus_amount', None) if self.instance else None
+            )
+            if amount is None:
+                raise serializers.ValidationError({'bonus_amount': 'Required for a BONUS campaign.'})
+        return data
+
+
+class PharmacyCampaignEnrollmentSerializer(serializers.ModelSerializer):
+    campaign = PharmacyIncentiveCampaignSerializer(read_only=True)
+    pharmacy_name = serializers.CharField(source='pharmacy.name', read_only=True)
+
+    class Meta:
+        model = PharmacyCampaignEnrollment
+        fields = [
+            'id', 'campaign', 'pharmacy', 'pharmacy_name', 'status',
+            'bonus_paid', 'bonus_paid_at', 'enrolled_at',
         ]
         read_only_fields = fields
 

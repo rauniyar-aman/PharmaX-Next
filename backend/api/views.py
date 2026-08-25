@@ -16,7 +16,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db.models import Q, Avg, Count, Sum, F, Max, Min, ProtectedError
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.http import HttpResponseRedirect
 from django.conf import settings
 from decimal import Decimal
@@ -33,6 +33,7 @@ from .models import (
     LabCollector, CollectorEarning, CollectorCodLiability,
     PharmacyDocument, PharmacyLocationChangeRequest,
     FeaturedDeal, PromoBanner,
+    PharmacyIncentiveCampaign, PharmacyCampaignEnrollment,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
@@ -65,6 +66,7 @@ from .serializers import (
     AdminPharmacyPayoutSerializer, AdminDeliveryAgentEarningSerializer, AdminDeliveryAgentCodLiabilitySerializer,
     AdminCollectorEarningSerializer, AdminCollectorCodLiabilitySerializer,
     AdminLabCollectorSerializer, AdminLabCollectorCreateSerializer,
+    PharmacyIncentiveCampaignSerializer, PharmacyCampaignEnrollmentSerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
@@ -6704,6 +6706,104 @@ class AdminPharmacyPayoutMarkPaidView(APIView):
         payout.paid_by = request.user
         payout.save(update_fields=['status', 'paid_at', 'paid_by'])
         return Response({'success': True, 'data': {'payout': AdminPharmacyPayoutSerializer(payout).data}, 'message': 'Marked as paid.'})
+
+
+# ─── Pharmacy Incentive Campaigns ───────────────────────────────────────────────
+#
+# Gated by manage_pharmacies (not a new permission code) since this is pharmacy-domain admin work,
+# the same reasoning AdminLabCollectorListView etc. already use for their own domain.
+
+class AdminCampaignListView(APIView):
+    permission_classes = [require_permission('manage_pharmacies')]
+
+    def get(self, request):
+        campaigns = PharmacyIncentiveCampaign.objects.select_related('created_by').order_by('-created_at')
+        return Response({'success': True, 'data': {'campaigns': PharmacyIncentiveCampaignSerializer(campaigns, many=True).data}})
+
+    def post(self, request):
+        s = PharmacyIncentiveCampaignSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        campaign = s.save(created_by=request.user)
+        return Response({'success': True, 'data': {'campaign': PharmacyIncentiveCampaignSerializer(campaign).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminCampaignDetailView(APIView):
+    permission_classes = [require_permission('manage_pharmacies')]
+
+    def put(self, request, pk):
+        try:
+            campaign = PharmacyIncentiveCampaign.objects.get(id=pk)
+        except PharmacyIncentiveCampaign.DoesNotExist:
+            return Response({'success': False, 'message': 'Campaign not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = PharmacyIncentiveCampaignSerializer(campaign, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'campaign': s.data}})
+
+    def delete(self, request, pk):
+        try:
+            campaign = PharmacyIncentiveCampaign.objects.get(id=pk)
+        except PharmacyIncentiveCampaign.DoesNotExist:
+            return Response({'success': False, 'message': 'Campaign not found.'}, status=status.HTTP_404_NOT_FOUND)
+        campaign.delete()
+        return Response({'success': True, 'message': 'Campaign deleted.'})
+
+
+class AdminCampaignEnrollView(APIView):
+    permission_classes = [require_permission('manage_pharmacies')]
+
+    def post(self, request, pk):
+        try:
+            campaign = PharmacyIncentiveCampaign.objects.get(id=pk)
+        except PharmacyIncentiveCampaign.DoesNotExist:
+            return Response({'success': False, 'message': 'Campaign not found.'}, status=status.HTTP_404_NOT_FOUND)
+        pharmacy_id = request.data.get('pharmacy_id')
+        if not pharmacy_id:
+            return Response({'success': False, 'message': 'pharmacy_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            pharmacy = Pharmacy.objects.get(id=pharmacy_id)
+        except Pharmacy.DoesNotExist:
+            return Response({'success': False, 'message': 'Pharmacy not found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            enrollment = PharmacyCampaignEnrollment.objects.create(campaign=campaign, pharmacy=pharmacy, enrolled_by=request.user)
+        except IntegrityError:
+            return Response({'success': False, 'message': f'{pharmacy.name} is already enrolled in this campaign.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'data': {'enrollment': PharmacyCampaignEnrollmentSerializer(enrollment).data}, 'message': f'{pharmacy.name} enrolled.'}, status=status.HTTP_201_CREATED)
+
+
+class AdminCampaignMarkBonusPaidView(APIView):
+    permission_classes = [require_permission('manage_pharmacies')]
+
+    def post(self, request, pk):
+        try:
+            enrollment = PharmacyCampaignEnrollment.objects.select_related('campaign', 'pharmacy').get(id=pk)
+        except PharmacyCampaignEnrollment.DoesNotExist:
+            return Response({'success': False, 'message': 'Enrollment not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if enrollment.campaign.campaign_type != 'BONUS':
+            return Response({'success': False, 'message': 'Only a BONUS campaign enrollment can be marked paid — this one is a DISCOUNT campaign, which has nothing to pay out.'}, status=status.HTTP_400_BAD_REQUEST)
+        if enrollment.bonus_paid:
+            return Response({'success': False, 'message': 'This bonus was already marked paid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        enrollment.bonus_paid = True
+        enrollment.bonus_paid_at = timezone.now()
+        enrollment.save(update_fields=['bonus_paid', 'bonus_paid_at'])
+        return Response({'success': True, 'data': {'enrollment': PharmacyCampaignEnrollmentSerializer(enrollment).data}, 'message': 'Bonus marked as paid.'})
+
+
+class PharmacyCampaignListView(APIView):
+    """This pharmacy's own enrollments — active and past — so they can actually see what they've
+    been enrolled in rather than just experiencing an unexplained commission-rate change."""
+    permission_classes = [IsPharmacy]
+
+    def get(self, request):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+        enrollments = PharmacyCampaignEnrollment.objects.filter(pharmacy=pharmacy).select_related('campaign').order_by('-enrolled_at')
+        return Response({'success': True, 'data': {'enrollments': PharmacyCampaignEnrollmentSerializer(enrollments, many=True).data}})
 
 
 class AdminAgentEarningListView(APIView):
