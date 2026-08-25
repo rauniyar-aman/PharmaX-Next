@@ -4,7 +4,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
-import type { LabTest, LabTestCategory, LabTestBooking, LabTestBookingStatus } from '@/types'
+import type { LabTest, LabTestCategory, LabTestBooking, LabTestBookingStatus, AdminLabCollector } from '@/types'
 
 const TABS = ['Tests', 'Categories', 'Bookings'] as const
 type Tab = typeof TABS[number]
@@ -263,12 +263,89 @@ function ReportCell({ booking, uploading, onUpload }: {
   )
 }
 
+function AssignCollectorModal({ booking, onClose, onAssigned }: {
+  booking: LabTestBooking
+  onClose: () => void
+  onAssigned: (booking: LabTestBooking) => void
+}) {
+  const [collectors, setCollectors] = useState<AdminLabCollector[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [assigningId, setAssigningId] = useState<string | null>(null)
+
+  useEffect(() => {
+    api.get('/admin/lab-collectors/').then((r) => setCollectors(r.data.data.collectors || [])).catch(() => toast.error('Failed to load collectors.')).finally(() => setLoading(false))
+  }, [])
+
+  const verified = collectors.filter((c) => c.is_verified)
+  const filtered = verified.filter((c) => {
+    const q = search.trim().toLowerCase()
+    if (!q) return true
+    return c.full_name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)
+  })
+
+  const assign = async (collectorId: string) => {
+    setAssigningId(collectorId)
+    try {
+      const res = await api.post(`/admin/lab-test-bookings/${booking.id}/assign-collector/`, { collector_id: collectorId })
+      toast.success(res.data.message)
+      onAssigned(res.data.data.booking)
+      onClose()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to assign collector.')
+    } finally {
+      setAssigningId(null)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-md max-h-[80vh] flex flex-col bg-surface border border-outline-variant rounded-3xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 pb-3 border-b border-outline-variant">
+          <div>
+            <p className="text-lg font-bold text-on-surface">{booking.collector ? 'Reassign Collector' : 'Assign Collector'}</p>
+            <p className="text-xs text-on-surface-variant mt-0.5">{booking.lab_test?.name} — {booking.user?.full_name}</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors">
+            <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>close</span>
+          </button>
+        </div>
+        <div className="px-5 pt-3">
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search verified collectors..."
+            className="w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 pt-3 space-y-2">
+          {loading ? (
+            [...Array(3)].map((_, i) => <div key={i} className="h-14 bg-surface-container-low rounded-xl animate-pulse" />)
+          ) : filtered.length === 0 ? (
+            <p className="text-sm text-on-surface-variant text-center py-8">No verified collectors found.</p>
+          ) : filtered.map((c) => (
+            <button key={c.id} onClick={() => assign(c.id)} disabled={assigningId === c.id || (booking.collector?.id === c.id)}
+              className="w-full flex items-center justify-between gap-3 p-3 rounded-xl border border-outline-variant hover:bg-surface-container-low transition-colors disabled:opacity-60 text-left">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-on-surface truncate">{c.full_name}</p>
+                <p className="text-xs text-on-surface-variant truncate">{c.email}</p>
+              </div>
+              {booking.collector?.id === c.id ? (
+                <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-primary/10 text-primary whitespace-nowrap">Current</span>
+              ) : (
+                <span className="text-xs font-semibold text-primary whitespace-nowrap">{assigningId === c.id ? 'Assigning...' : 'Assign'}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function BookingsTab() {
   const [bookings, setBookings] = useState<LabTestBooking[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [updating, setUpdating] = useState<string | null>(null)
   const [uploadingId, setUploadingId] = useState<string | null>(null)
+  const [assigningBooking, setAssigningBooking] = useState<LabTestBooking | null>(null)
 
   const fetchBookings = useCallback(() => {
     setLoading(true)
@@ -338,7 +415,22 @@ function BookingsTab() {
                     <p className="text-sm text-on-surface">{b.user?.full_name}</p>
                     <p className="text-xs text-on-surface-variant">{b.user?.email}</p>
                   </td>
-                  <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap">{b.collector?.full_name || 'Unassigned'}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {b.collector ? (
+                      <div className="flex flex-col gap-1 items-start">
+                        <p className="text-sm text-on-surface">{b.collector.full_name}</p>
+                        <button onClick={() => setAssigningBooking(b)}
+                          className="text-[11px] font-semibold text-primary hover:underline">
+                          Reassign
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setAssigningBooking(b)}
+                        className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity">
+                        Assign Collector
+                      </button>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap">{new Date(b.scheduled_date).toLocaleDateString()}</td>
                   <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap">{b.time_slot}</td>
                   <td className="px-4 py-3 font-semibold text-on-surface">NPR {Number(b.total_amount).toFixed(0)}</td>
@@ -371,6 +463,13 @@ function BookingsTab() {
           </table>
         </div>
       </div>
+      {assigningBooking && (
+        <AssignCollectorModal
+          booking={assigningBooking}
+          onClose={() => setAssigningBooking(null)}
+          onAssigned={(updated) => setBookings((prev) => prev.map((b) => (b.id === updated.id ? updated : b)))}
+        />
+      )}
     </div>
   )
 }
