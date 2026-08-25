@@ -4976,6 +4976,10 @@ class AdminPharmacyDetailView(APIView):
             'total_pending': str(payouts.filter(status='PENDING').aggregate(s=Sum('net_payable'))['s'] or Decimal('0')),
         }
 
+        data['campaign_enrollments'] = PharmacyCampaignEnrollmentSerializer(
+            pharmacy.campaign_enrollments.select_related('campaign').order_by('-enrolled_at'), many=True,
+        ).data
+
         return Response({'success': True, 'data': {'pharmacy': data}})
 
     def patch(self, request, pk):

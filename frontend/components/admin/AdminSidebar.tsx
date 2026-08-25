@@ -23,6 +23,7 @@ const navItems = [
   { label: 'Customers',     href: '/admin/customers',     icon: 'group',       code: 'manage_customers' },
   { label: 'Delivery',      href: '/admin/delivery',      icon: 'local_shipping', code: 'manage_orders' },
   { label: 'Pharmacies',    href: '/admin/pharmacies',    icon: 'local_pharmacy', code: 'manage_pharmacies' },
+  { label: 'Campaigns',     href: '/admin/campaigns',     icon: 'redeem',         code: 'manage_pharmacies' },
   { label: 'Delivery Agents', href: '/admin/delivery-agents', icon: 'sports_motorsports', code: 'manage_delivery_agents' },
   { label: 'Wallet',        href: '/admin/wallet',        icon: 'account_balance_wallet', code: 'manage_finance' },
   { label: 'Finance',       href: '/admin/finance',       icon: 'payments', code: 'manage_finance' },
