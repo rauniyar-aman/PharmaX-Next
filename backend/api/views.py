@@ -4903,8 +4903,9 @@ class AdminPharmacyDocumentView(APIView):
             return Response({'success': False, 'message': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
         if file.content_type not in DOCUMENT_CONTENT_TYPES:
             return Response({'success': False, 'message': 'Only JPG, PNG, WebP, or PDF files are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
-        if file.size > DOCUMENT_MAX_SIZE:
-            return Response({'success': False, 'message': 'File must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        max_size = _document_max_size_bytes()
+        if file.size > max_size:
+            return Response({'success': False, 'message': f'File must be under {max_size // (1024 * 1024)}MB.'}, status=status.HTTP_400_BAD_REQUEST)
 
         doc = _save_pharmacy_document(pharmacy, doc_type, file, request.user)
         return Response({'success': True, 'data': {'document': PharmacyDocumentSerializer(doc).data}, 'message': 'Document uploaded.'})
@@ -5578,7 +5579,12 @@ class PharmacyLogoUploadView(APIView):
 
 
 DOCUMENT_CONTENT_TYPES = ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')
-DOCUMENT_MAX_SIZE = 5 * 1024 * 1024
+
+
+def _document_max_size_bytes():
+    """Admin-configurable via SystemSetting (document_max_size_mb, stored in MB) — read fresh at
+    every call site rather than cached at import time."""
+    return int(_get_setting('document_max_size_mb', '5')) * 1024 * 1024
 
 
 def _save_pharmacy_document(pharmacy, doc_type, file, uploaded_by):
@@ -5630,8 +5636,9 @@ class PharmacyDocumentView(APIView):
             return Response({'success': False, 'message': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
         if file.content_type not in DOCUMENT_CONTENT_TYPES:
             return Response({'success': False, 'message': 'Only JPG, PNG, WebP, or PDF files are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
-        if file.size > DOCUMENT_MAX_SIZE:
-            return Response({'success': False, 'message': 'File must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+        max_size = _document_max_size_bytes()
+        if file.size > max_size:
+            return Response({'success': False, 'message': f'File must be under {max_size // (1024 * 1024)}MB.'}, status=status.HTTP_400_BAD_REQUEST)
 
         doc = _save_pharmacy_document(pharmacy, doc_type, file, request.user)
         return Response({'success': True, 'data': {'document': PharmacyDocumentSerializer(doc).data}, 'message': 'Document uploaded.'})
