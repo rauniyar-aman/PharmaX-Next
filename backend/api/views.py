@@ -9,7 +9,7 @@ import uuid as uuid_lib
 import requests
 from django.utils import timezone
 from django.utils.dateparse import parse_date
-from datetime import timedelta
+from datetime import datetime, timedelta
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -2784,6 +2784,16 @@ class AppointmentDetailView(APIView):
             return Response({'success': False, 'message': 'You can only cancel an appointment.'}, status=status.HTTP_400_BAD_REQUEST)
         if appt.status in ('COMPLETED', 'CANCELLED'):
             return Response({'success': False, 'message': f'Cannot cancel an appointment that is {appt.status.lower()}.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # time_slot is always '%H:%M' (see scheduling.get_available_slots) — combined with
+        # scheduled_date to get the real moment the appointment is booked for, so the window is
+        # checked against the actual scheduled time, not just the date.
+        window_hours = float(_get_setting('appointment_cancellation_window_hours', '1'))
+        scheduled_at = timezone.make_aware(datetime.combine(appt.scheduled_date, datetime.strptime(appt.time_slot, '%H:%M').time()))
+        if scheduled_at - timezone.now() < timedelta(hours=window_hours):
+            window_label = f'{window_hours:g} hour' + ('s' if window_hours != 1 else '')
+            return Response({'success': False, 'message': f'Appointments can only be cancelled more than {window_label} before the scheduled time.'}, status=status.HTTP_400_BAD_REQUEST)
+
         appt.status = 'CANCELLED'
         appt.save(update_fields=['status'])
         return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment cancelled.'})
