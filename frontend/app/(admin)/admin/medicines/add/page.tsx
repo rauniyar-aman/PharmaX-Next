@@ -10,7 +10,7 @@ import type { Category, Brand } from '@/types'
 const EMPTY = {
   name: '', brand_id: '', category_id: '', type: 'OTC', price: '', original_price: '',
   stock_quantity: '', in_stock: true, package_size: '', manufacturer: '', image_url: '',
-  dosage: '', usage: '', description: '', side_effects: '', expiry_date: '',
+  dosage: '', usage: '', description: '', side_effects: '', expiry_date: '', promo_badge: '',
 }
 
 export default function AddMedicinePage() {
@@ -129,6 +129,12 @@ export default function AddMedicinePage() {
               <input type="date" value={form.expiry_date} onChange={(e) => set('expiry_date', e.target.value)}
                 className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
             </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-on-surface-variant">Promo Badge (optional)</label>
+            <input type="text" value={form.promo_badge} onChange={(e) => set('promo_badge', e.target.value)} placeholder="e.g., Best Seller, Doctor Recommended"
+              maxLength={30}
+              className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
           </div>
         </div>
 

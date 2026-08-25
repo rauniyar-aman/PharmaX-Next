@@ -336,6 +336,7 @@ export interface Medicine {
   total_reviews: number
   category: Category
   category_name?: string
+  promo_badge?: string | null
   created_at: string
   updated_at: string
   has_purchased?: boolean

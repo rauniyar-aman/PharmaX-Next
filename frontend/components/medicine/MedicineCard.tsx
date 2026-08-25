@@ -39,9 +39,16 @@ export default function MedicineCard({ medicine: med, inWishlist, cartLoading, o
             <span className="material-symbols-outlined text-3xl opacity-30">medication</span>
           </div>
         )}
-        <span className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${isRx ? 'bg-primary text-on-primary' : 'bg-secondary text-on-secondary'}`}>
-          {med.type}
-        </span>
+        <div className="absolute top-1.5 left-1.5 flex flex-col items-start gap-1">
+          <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${isRx ? 'bg-primary text-on-primary' : 'bg-secondary text-on-secondary'}`}>
+            {med.type}
+          </span>
+          {med.promo_badge && (
+            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-500 text-white">
+              {med.promo_badge}
+            </span>
+          )}
+        </div>
         <button onClick={(e) => onToggleWishlist(med.id, e)}
           className="absolute top-1.5 right-1.5 w-6 h-6 bg-surface rounded-full flex items-center justify-center shadow-sm hover:scale-110 transition-transform">
           <span className={`material-symbols-outlined ${inWishlist ? 'ms-filled text-error' : 'text-on-surface-variant'}`} style={{ fontSize: '13px' }}>favorite</span>

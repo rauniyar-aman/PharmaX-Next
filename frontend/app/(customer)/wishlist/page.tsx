@@ -67,9 +67,16 @@ export default function WishlistPage() {
                   <span className="material-symbols-outlined text-5xl text-on-surface-variant opacity-30">medication</span>
                 </div>
               )}
-              <span className={`absolute top-3 left-3 px-2.5 py-1 rounded-full text-[11px] font-bold ${med.type === 'Rx' ? 'bg-primary text-on-primary' : 'bg-secondary text-on-secondary'}`}>
-                {med.type}
-              </span>
+              <div className="absolute top-3 left-3 flex flex-col items-start gap-1">
+                <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${med.type === 'Rx' ? 'bg-primary text-on-primary' : 'bg-secondary text-on-secondary'}`}>
+                  {med.type}
+                </span>
+                {med.promo_badge && (
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500 text-white">
+                    {med.promo_badge}
+                  </span>
+                )}
+              </div>
             </Link>
             <div className="p-4 flex flex-col flex-1">
               <p className="text-xs text-on-surface-variant font-medium uppercase tracking-wide">{(med as any).category_name}</p>
