@@ -12,15 +12,13 @@ import PublicHeader from '@/components/common/PublicHeader'
 import PromoSlider, { type Slide } from '@/components/common/PromoSlider'
 import CategoryRail from '@/components/home/CategoryRail'
 import BrandRail from '@/components/home/BrandRail'
-import ProductRail from '@/components/home/ProductRail'
-import CountdownBadge from '@/components/home/CountdownBadge'
+import TabbedProductRail from '@/components/home/TabbedProductRail'
 import StatsBar from '@/components/home/StatsBar'
 import Testimonials from '@/components/home/Testimonials'
 import LabTestRail from '@/components/home/LabTestRail'
 import DoctorRail from '@/components/home/DoctorRail'
 import HealthArticlesRail from '@/components/home/HealthArticlesRail'
 import QuickLinksGrid from '@/components/home/QuickLinksGrid'
-import type { Medicine } from '@/types'
 
 // Mirrors the redirect map in signin/restore-account — every non-customer role has its own
 // dashboard and should never land on the customer storefront while logged in as themselves.
@@ -29,31 +27,6 @@ const NON_CUSTOMER_DASHBOARDS: Record<string, string> = {
   PHARMACY: '/pharmacy/dashboard',
   DELIVERY_AGENT: '/delivery/requests',
   LAB_COLLECTOR: '/lab-collector/active',
-}
-
-function useMedicineRail(params: Record<string, any>) {
-  const [medicines, setMedicines] = useState<Medicine[]>([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    let active = true
-    setLoading(true)
-    api.get('/medicines/', { params })
-      .then((r) => { if (active) setMedicines(r.data.data.medicines || []) })
-      .catch(() => {})
-      .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(params)])
-
-  return { medicines, loading }
-}
-
-function discountPct(m: Medicine) {
-  const price = Number(m.price)
-  const original = Number(m.original_price)
-  if (!original || original <= price) return 0
-  return (original - price) / original
 }
 
 export default function HomePage() {
@@ -89,13 +62,6 @@ export default function HomePage() {
     const dashboard = NON_CUSTOMER_DASHBOARDS[user.role as keyof typeof NON_CUSTOMER_DASHBOARDS]
     if (dashboard) router.replace(dashboard)
   }, [hydrated, user, router])
-
-  const { medicines: newLaunches, loading: newLoading } = useMedicineRail({ sortBy: 'newest', limit: 10 })
-  const { medicines: dealsPool, loading: dealsLoading } = useMedicineRail({ sortBy: 'price-asc', limit: 30 })
-  const { medicines: topRated, loading: topLoading } = useMedicineRail({ sortBy: 'rating', limit: 10 })
-  const { medicines: wellness, loading: wellnessLoading } = useMedicineRail({ category: 'Health Food and Drinks', limit: 10 })
-
-  const deals = [...dealsPool].sort((a, b) => discountPct(b) - discountPct(a)).slice(0, 10)
 
   const handleAddToCart = useCallback(async (medId: string, e: React.MouseEvent) => {
     e.preventDefault()
@@ -134,45 +100,7 @@ export default function HomePage() {
 
         <BrandRail />
 
-        <ProductRail
-          title="New Launches"
-          medicines={newLaunches}
-          loading={newLoading}
-          viewAllHref="/medicines?sortBy=newest"
-          wishlistIds={wishlistIds}
-          onToggleWishlist={handleWishlist}
-          onAddToCart={handleAddToCart}
-          cartLoading={cartLoading}
-        />
-
-        <ProductRail
-          title="Deals of the Day"
-          medicines={deals}
-          loading={dealsLoading}
-          viewAllHref="/medicines?sortBy=price-asc"
-          wishlistIds={wishlistIds}
-          onToggleWishlist={handleWishlist}
-          onAddToCart={handleAddToCart}
-          cartLoading={cartLoading}
-          badge={() => <CountdownBadge />}
-        />
-
-        <ProductRail
-          title="Top Rated"
-          medicines={topRated}
-          loading={topLoading}
-          viewAllHref="/medicines?sortBy=rating"
-          wishlistIds={wishlistIds}
-          onToggleWishlist={handleWishlist}
-          onAddToCart={handleAddToCart}
-          cartLoading={cartLoading}
-        />
-
-        <ProductRail
-          title="Wellness Essentials"
-          medicines={wellness}
-          loading={wellnessLoading}
-          viewAllHref="/medicines?category=Health+Food+and+Drinks"
+        <TabbedProductRail
           wishlistIds={wishlistIds}
           onToggleWishlist={handleWishlist}
           onAddToCart={handleAddToCart}
