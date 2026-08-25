@@ -10,7 +10,6 @@ import { useWishlist } from '@/hooks/useWishlist'
 import { useCart } from '@/hooks/useCart'
 import PublicHeader from '@/components/common/PublicHeader'
 import PromoSlider, { type Slide } from '@/components/common/PromoSlider'
-import PromoBannerGrid from '@/components/home/PromoBannerGrid'
 import CategoryRail from '@/components/home/CategoryRail'
 import BrandRail from '@/components/home/BrandRail'
 import ProductRail from '@/components/home/ProductRail'
@@ -130,8 +129,6 @@ export default function HomePage() {
         <PromoSlider slides={promoSlides} />
 
         <QuickLinksGrid />
-
-        <PromoBannerGrid />
 
         <CategoryRail />
 

@@ -7,7 +7,7 @@ const ITEMS = [
   { label: 'Healthcare', tagline: 'Shop Devices', icon: 'devices_other', href: '/medicines?category=Healthcare+Devices' },
   { label: 'Health Blogs', tagline: 'Read Tips', icon: 'article', href: '/health-articles' },
   { label: 'PLUS', tagline: 'Save More', icon: 'workspace_premium', href: '/plus-membership' },
-  { label: 'Offers', tagline: 'Best Deals', icon: 'sell', href: '/medicines?sortBy=price-asc' },
+  { label: 'Offers', tagline: 'Best Deals', icon: 'sell', href: '/offers' },
 ]
 
 export default function QuickLinksGrid() {
