@@ -5,13 +5,38 @@ import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 
-const SETTINGS_FIELDS = [
-  { key: 'store_name', label: 'Store Name', placeholder: 'PharmaX' },
-  { key: 'support_email', label: 'Support Email', placeholder: 'support@pharmax.com' },
-  { key: 'support_phone', label: 'Support Phone', placeholder: '+977 9800000000' },
-  { key: 'free_delivery_threshold', label: 'Free Delivery Threshold (NPR)', placeholder: '500' },
-  { key: 'delivery_charge', label: 'Standard Delivery Charge (NPR)', placeholder: '50' },
-  { key: 'low_stock_threshold', label: 'Low Stock Threshold (units)', placeholder: '10' },
+const SETTINGS_GROUPS = [
+  {
+    title: 'Store Settings',
+    fields: [
+      { key: 'store_name', label: 'Store Name', placeholder: 'PharmaX' },
+      { key: 'support_email', label: 'Support Email', placeholder: 'support@pharmax.com' },
+      { key: 'support_phone', label: 'Support Phone', placeholder: '+977 9800000000' },
+      { key: 'free_delivery_threshold', label: 'Free Delivery Threshold (NPR)', placeholder: '500' },
+      { key: 'delivery_charge', label: 'Standard Delivery Charge (NPR)', placeholder: '50' },
+      { key: 'low_stock_threshold', label: 'Low Stock Threshold (units)', placeholder: '10' },
+    ],
+  },
+  {
+    title: 'Matching & Delivery',
+    fields: [
+      { key: 'broadcast_radius_km', label: 'Broadcast Radius (km)', placeholder: '3' },
+      { key: 'broadcast_window_minutes', label: 'Broadcast Window (minutes)', placeholder: '10' },
+      { key: 'priority_window_seconds', label: 'Full-Coverage Priority Window (seconds)', placeholder: '30' },
+    ],
+  },
+  {
+    title: 'Uploads',
+    fields: [
+      { key: 'document_max_size_mb', label: 'Max Document Size (MB)', placeholder: '5' },
+    ],
+  },
+  {
+    title: 'Tracking',
+    fields: [
+      { key: 'eta_assumed_speed_kmh', label: 'Assumed Rider Speed for ETA (km/h)', placeholder: '20' },
+    ],
+  },
 ]
 
 export default function AdminSettingsPage() {
@@ -69,27 +94,33 @@ export default function AdminSettingsPage() {
 
   return (
     <div className="max-w-lg space-y-5">
-      <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
-        <h2 className="text-sm font-bold text-on-surface">Store Settings</h2>
-        {settingsLoading ? (
-          <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-10 bg-surface-container-low rounded-xl animate-pulse" />)}</div>
-        ) : (
-          <form onSubmit={handleSettingsSave} className="space-y-3">
-            {SETTINGS_FIELDS.map((f) => (
-              <div key={f.key}>
-                <label className="text-xs font-medium text-on-surface-variant">{f.label}</label>
-                <input type="text" value={settings[f.key] || ''} placeholder={f.placeholder}
-                  onChange={(e) => setSettings((p) => ({ ...p, [f.key]: e.target.value }))}
-                  className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+      {settingsLoading ? (
+        <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
+          {[...Array(3)].map((_, i) => <div key={i} className="h-10 bg-surface-container-low rounded-xl animate-pulse" />)}
+        </div>
+      ) : (
+        <form onSubmit={handleSettingsSave} className="space-y-5">
+          {SETTINGS_GROUPS.map((group) => (
+            <div key={group.title} className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
+              <h2 className="text-sm font-bold text-on-surface">{group.title}</h2>
+              <div className="space-y-3">
+                {group.fields.map((f) => (
+                  <div key={f.key}>
+                    <label className="text-xs font-medium text-on-surface-variant">{f.label}</label>
+                    <input type="text" value={settings[f.key] || ''} placeholder={f.placeholder}
+                      onChange={(e) => setSettings((p) => ({ ...p, [f.key]: e.target.value }))}
+                      className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+                  </div>
+                ))}
               </div>
-            ))}
-            <button type="submit" disabled={savingSettings}
-              className="px-6 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center gap-2">
-              {savingSettings ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />Saving...</> : 'Save Settings'}
-            </button>
-          </form>
-        )}
-      </div>
+            </div>
+          ))}
+          <button type="submit" disabled={savingSettings}
+            className="px-6 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center gap-2">
+            {savingSettings ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />Saving...</> : 'Save Settings'}
+          </button>
+        </form>
+      )}
 
       <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
         <h2 className="text-sm font-bold text-on-surface">Change Password</h2>
