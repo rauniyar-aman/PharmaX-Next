@@ -402,7 +402,7 @@ class MedicineListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'brand', 'brand_name', 'price', 'original_price', 'type',
             'in_stock', 'stock_quantity', 'image_url', 'rating',
-            'total_reviews', 'category', 'category_name',
+            'total_reviews', 'category', 'category_name', 'promo_badge',
         ]
 
 
@@ -418,7 +418,7 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'dosage', 'usage',
             'side_effects', 'price', 'original_price', 'type', 'in_stock',
             'package_size', 'manufacturer', 'image_url', 'stock_quantity',
-            'expiry_date', 'rating', 'total_reviews',
+            'expiry_date', 'rating', 'total_reviews', 'promo_badge',
             'category', 'category_id', 'brand', 'brand_id',
             'created_at', 'updated_at',
         ]
