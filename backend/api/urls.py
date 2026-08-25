@@ -112,6 +112,10 @@ urlpatterns = [
     # Coupons
     path('coupons/validate/',           views.CouponValidateView.as_view(),   name='coupon-validate'),
 
+    # Offers & Promo Banners
+    path('offers/',                     views.OffersView.as_view(),           name='offers'),
+    path('promo-banners/',              views.PromoBannerListView.as_view(),  name='promo-banners'),
+
     # Wallet
     path('wallet/',                     views.WalletView.as_view(),           name='wallet'),
 
@@ -159,9 +163,15 @@ urlpatterns = [
     path('admin/appointments/<uuid:pk>/',       views.AdminAppointmentDetailView.as_view(), name='admin-appointment-detail'),
     path('admin/plus-plans/',                   views.AdminPlusPlanListView.as_view(),      name='admin-plus-plans'),
     path('admin/plus-plans/<uuid:pk>/',         views.AdminPlusPlanDetailView.as_view(),    name='admin-plus-plan-detail'),
+    path('admin/plus-plans/<uuid:plan_id>/benefits/', views.AdminPlusBenefitListView.as_view(), name='admin-plus-benefits'),
+    path('admin/plus-plans/<uuid:plan_id>/benefits/<uuid:pk>/', views.AdminPlusBenefitDetailView.as_view(), name='admin-plus-benefit-detail'),
     path('admin/plus-memberships/',             views.AdminPlusMembershipListView.as_view(), name='admin-plus-memberships'),
     path('admin/coupons/',                      views.AdminCouponListView.as_view(),        name='admin-coupons'),
     path('admin/coupons/<uuid:pk>/',            views.AdminCouponDetailView.as_view(),      name='admin-coupon-detail'),
+    path('admin/featured-deals/',               views.AdminFeaturedDealListView.as_view(),  name='admin-featured-deals'),
+    path('admin/featured-deals/<uuid:pk>/',     views.AdminFeaturedDealDetailView.as_view(), name='admin-featured-deal-detail'),
+    path('admin/promo-banners/',                views.AdminPromoBannerListView.as_view(),   name='admin-promo-banners'),
+    path('admin/promo-banners/<uuid:pk>/',      views.AdminPromoBannerDetailView.as_view(), name='admin-promo-banner-detail'),
     path('admin/wallets/',                      views.AdminWalletListView.as_view(),        name='admin-wallets'),
     path('admin/wallets/adjust/',               views.AdminWalletAdjustView.as_view(),      name='admin-wallet-adjust'),
     path('admin/medicines/',                    views.AdminMedicineListView.as_view(),      name='admin-medicines'),

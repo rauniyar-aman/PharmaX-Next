@@ -26,12 +26,13 @@ from .models import (
     Cart, CartItem, Order, OrderItem, Review, WishlistItem,
     Notification, SystemSetting, StockLog,
     LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout,
-    PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
+    PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
     Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, DeliveryDecline,
     PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours,
     LabCollector, CollectorEarning, CollectorCodLiability,
     PharmacyDocument, PharmacyLocationChangeRequest,
+    FeaturedDeal, PromoBanner,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
@@ -46,10 +47,11 @@ from .serializers import (
     DoctorSerializer, DoctorAvailabilitySerializer, DoctorAppointmentSerializer,
     DoctorPayoutSerializer, AdminDoctorPayoutSerializer,
     AdminDoctorSerializer, AdminDoctorCreateSerializer, AdminDoctorLinkAccountSerializer,
-    PlusPlanSerializer, PlusMembershipSerializer,
+    PlusPlanSerializer, PlusMembershipSerializer, PlusBenefitSerializer,
     DoctorReviewSerializer, MyDoctorReviewSerializer, HealthRecordSerializer,
     MedicineReminderSerializer, ReminderLogSerializer,
     CouponSerializer, WalletSerializer, WalletTransactionSerializer, ReferralSerializer,
+    FeaturedDealSerializer, PromoBannerSerializer,
     PermissionSerializer, AdminUserSerializer, AdminUserCreateSerializer,
     AdminPharmacySerializer, AdminPharmacyCreateSerializer,
     AdminDeliveryAgentSerializer, AdminDeliveryAgentCreateSerializer,
@@ -1004,6 +1006,21 @@ def _has_active_plus(user):
     except PlusMembership.DoesNotExist:
         return False
     return membership.is_active
+
+
+def _user_has_plus_benefit(user, key):
+    """Whether `user`'s actual active plan grants the specific benefit `key` — not just "do they
+    have some active Plus membership" (_has_active_plus() above, still used for the flat delivery-
+    charge waiver, which stays a blanket Plus perk). Different plans can carry different benefits
+    now (see PlusBenefit), so a basic-tier member without this specific benefit is correctly NOT
+    covered even though _has_active_plus(user) would say True."""
+    try:
+        membership = PlusMembership.objects.select_related('plan').get(user=user)
+    except PlusMembership.DoesNotExist:
+        return False
+    if not membership.is_active:
+        return False
+    return membership.plan.benefits.filter(key=key, is_active=True).exists()
 
 
 # Order statuses that represent a genuine, confirmed purchase — excludes BROADCASTING/
@@ -2738,10 +2755,12 @@ class AppointmentListCreateView(APIView):
         if time_slot not in get_available_slots(doctor, scheduled_date):
             return Response({'success': False, 'message': 'That time slot is no longer available — someone may have just booked it. Please choose another.'}, status=status.HTTP_409_CONFLICT)
 
-        # PharmaX Plus members get every consultation free; the doctor is still paid their normal
-        # share (see DoctorPayout) — PharmaX absorbs the discount as a Plus perk. Non-Plus bookings
-        # stay PENDING (not yet confirmed) until payment clears.
-        is_plus_free = _has_active_plus(request.user)
+        # Free only for a member whose ACTUAL plan carries the FREE_DOCTOR_CONSULTATION benefit —
+        # not just "any active Plus membership" (that was the old, coarser behavior; see
+        # _user_has_plus_benefit()'s docstring). The doctor is still paid their normal share (see
+        # DoctorPayout) — PharmaX absorbs the discount as a Plus perk. Non-free bookings stay
+        # PENDING (not yet confirmed) until payment clears.
+        is_plus_free = _user_has_plus_benefit(request.user, 'FREE_DOCTOR_CONSULTATION')
         if is_plus_free:
             fee_charged, payment_status_value, initial_status = Decimal('0'), 'NOT_REQUIRED', 'CONFIRMED'
         else:
@@ -2976,6 +2995,56 @@ class AdminPlusPlanDetailView(APIView):
         return Response({'success': True, 'message': 'Plan deleted.'})
 
 
+class AdminPlusBenefitListView(APIView):
+    """Scoped under a specific plan — a PlusBenefit only ever makes sense attached to one plan, so
+    there's no plan-agnostic list/create."""
+    permission_classes = [require_permission('manage_plus_membership')]
+
+    def get(self, request, plan_id):
+        try:
+            plan = PlusPlan.objects.get(id=plan_id)
+        except PlusPlan.DoesNotExist:
+            return Response({'success': False, 'message': 'Plan not found.'}, status=status.HTTP_404_NOT_FOUND)
+        benefits = plan.benefits.order_by('key')
+        return Response({'success': True, 'data': {'benefits': PlusBenefitSerializer(benefits, many=True).data}})
+
+    def post(self, request, plan_id):
+        try:
+            plan = PlusPlan.objects.get(id=plan_id)
+        except PlusPlan.DoesNotExist:
+            return Response({'success': False, 'message': 'Plan not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = PlusBenefitSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        if plan.benefits.filter(key=s.validated_data['key']).exists():
+            return Response({'success': False, 'message': 'This plan already has a benefit with that key.'}, status=status.HTTP_400_BAD_REQUEST)
+        benefit = s.save(plan=plan)
+        return Response({'success': True, 'data': {'benefit': PlusBenefitSerializer(benefit).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminPlusBenefitDetailView(APIView):
+    permission_classes = [require_permission('manage_plus_membership')]
+
+    def put(self, request, plan_id, pk):
+        try:
+            benefit = PlusBenefit.objects.get(id=pk, plan_id=plan_id)
+        except PlusBenefit.DoesNotExist:
+            return Response({'success': False, 'message': 'Benefit not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = PlusBenefitSerializer(benefit, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'benefit': s.data}})
+
+    def delete(self, request, plan_id, pk):
+        try:
+            benefit = PlusBenefit.objects.get(id=pk, plan_id=plan_id)
+        except PlusBenefit.DoesNotExist:
+            return Response({'success': False, 'message': 'Benefit not found.'}, status=status.HTTP_404_NOT_FOUND)
+        benefit.delete()
+        return Response({'success': True, 'message': 'Benefit deleted.'})
+
+
 class AdminPlusMembershipListView(APIView):
     permission_classes = [require_permission('manage_plus_membership')]
 
@@ -3080,6 +3149,118 @@ class AdminCouponDetailView(APIView):
             return Response({'success': False, 'message': 'Coupon not found.'}, status=status.HTTP_404_NOT_FOUND)
         coupon.delete()
         return Response({'success': True, 'message': 'Coupon deleted.'})
+
+
+# ─── Offers Page (featured deals + coupons) ────────────────────────────────────
+
+def _active_featured_deals():
+    now = timezone.now()
+    return FeaturedDeal.objects.filter(is_active=True).filter(
+        Q(starts_at__isnull=True) | Q(starts_at__lte=now)
+    ).filter(
+        Q(ends_at__isnull=True) | Q(ends_at__gte=now)
+    ).select_related('medicine__category', 'medicine__brand', 'doctor', 'lab_test__category', 'plus_plan')
+
+
+class OffersView(APIView):
+    """Real Offers page data — admin-curated featured deals (covering medicines and services alike)
+    and every currently-active coupon, together in one response."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        now = timezone.now()
+        deals = _active_featured_deals()
+        coupons = Coupon.objects.filter(is_active=True, valid_from__lte=now, valid_until__gte=now).order_by('-created_at')
+        return Response({'success': True, 'data': {
+            'featured_deals': FeaturedDealSerializer(deals, many=True).data,
+            'coupons': CouponSerializer(coupons, many=True).data,
+        }})
+
+
+class AdminFeaturedDealListView(APIView):
+    permission_classes = [require_permission('manage_marketing')]
+
+    def get(self, request):
+        deals = FeaturedDeal.objects.select_related('medicine', 'doctor', 'lab_test', 'plus_plan').order_by('display_order', '-created_at')
+        return Response({'success': True, 'data': {'featured_deals': FeaturedDealSerializer(deals, many=True).data}})
+
+    def post(self, request):
+        s = FeaturedDealSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        deal = s.save()
+        return Response({'success': True, 'data': {'featured_deal': FeaturedDealSerializer(deal).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminFeaturedDealDetailView(APIView):
+    permission_classes = [require_permission('manage_marketing')]
+
+    def put(self, request, pk):
+        try:
+            deal = FeaturedDeal.objects.get(id=pk)
+        except FeaturedDeal.DoesNotExist:
+            return Response({'success': False, 'message': 'Featured deal not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = FeaturedDealSerializer(deal, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'featured_deal': FeaturedDealSerializer(deal).data}})
+
+    def delete(self, request, pk):
+        try:
+            deal = FeaturedDeal.objects.get(id=pk)
+        except FeaturedDeal.DoesNotExist:
+            return Response({'success': False, 'message': 'Featured deal not found.'}, status=status.HTTP_404_NOT_FOUND)
+        deal.delete()
+        return Response({'success': True, 'message': 'Featured deal deleted.'})
+
+
+# ─── Homepage Promo Banners ─────────────────────────────────────────────────────
+
+class PromoBannerListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        banners = PromoBanner.objects.filter(is_active=True).order_by('display_order', '-created_at')
+        return Response({'success': True, 'data': {'banners': PromoBannerSerializer(banners, many=True).data}})
+
+
+class AdminPromoBannerListView(APIView):
+    permission_classes = [require_permission('manage_marketing')]
+
+    def get(self, request):
+        banners = PromoBanner.objects.order_by('display_order', '-created_at')
+        return Response({'success': True, 'data': {'banners': PromoBannerSerializer(banners, many=True).data}})
+
+    def post(self, request):
+        s = PromoBannerSerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        banner = s.save()
+        return Response({'success': True, 'data': {'banner': PromoBannerSerializer(banner).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminPromoBannerDetailView(APIView):
+    permission_classes = [require_permission('manage_marketing')]
+
+    def put(self, request, pk):
+        try:
+            banner = PromoBanner.objects.get(id=pk)
+        except PromoBanner.DoesNotExist:
+            return Response({'success': False, 'message': 'Banner not found.'}, status=status.HTTP_404_NOT_FOUND)
+        s = PromoBannerSerializer(banner, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'banner': s.data}})
+
+    def delete(self, request, pk):
+        try:
+            banner = PromoBanner.objects.get(id=pk)
+        except PromoBanner.DoesNotExist:
+            return Response({'success': False, 'message': 'Banner not found.'}, status=status.HTTP_404_NOT_FOUND)
+        banner.delete()
+        return Response({'success': True, 'message': 'Banner deleted.'})
 
 
 class AdminWalletListView(APIView):
