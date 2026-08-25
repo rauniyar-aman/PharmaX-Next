@@ -743,6 +743,27 @@ class PlusMembership(models.Model):
         return f'{self.user.email} — {self.plan.name} (expires {self.expires_at.date()})'
 
 
+class PlusBenefit(models.Model):
+    """A specific perk attached to one plan. The old free-doctor-consultation logic (any active
+    Plus membership, regardless of plan, waived the fee) becomes real per-plan data instead of a
+    single blanket check — see _appointment_free_consultation_benefit() in views.py, the one place
+    that actually reads `key`."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    plan = models.ForeignKey(PlusPlan, on_delete=models.CASCADE, related_name='benefits')
+    key = models.CharField(max_length=50)  # e.g. 'FREE_DOCTOR_CONSULTATION' — a stable code, checked
+    # in application logic, not the display label (see `description` for what the user actually reads)
+    description = models.CharField(max_length=255)  # e.g. "Free doctor consultations"
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'plus_benefits'
+        unique_together = ('plan', 'key')
+
+    def __str__(self):
+        return f'{self.plan.name} — {self.key}'
+
+
 class HealthRecord(models.Model):
     RECORD_TYPES = [
         ('PRESCRIPTION', 'Prescription'),
@@ -899,6 +920,62 @@ class Referral(models.Model):
 
     def __str__(self):
         return f'{self.referrer.email} → {self.referred_user.email} ({self.status})'
+
+
+class FeaturedDeal(models.Model):
+    """Internal marketing only — no third-party advertiser accounts, no billing, no bidding.
+    Explicit per-target-type FK rather than a generic content-type relation, consistent with how
+    this codebase favors explicit FKs elsewhere (e.g. PharmacyPayout/DeliveryAgentEarning instead
+    of a generic payout table). Exactly one of medicine/doctor/lab_test/plus_plan should be set,
+    matching target_type — validated in FeaturedDealSerializer, not left to accidental
+    consistency."""
+    TARGET_TYPE = [('MEDICINE', 'Medicine'), ('DOCTOR', 'Doctor Consult'), ('LAB_TEST', 'Lab Test'), ('PLUS_PLAN', 'Plus Membership')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    target_type = models.CharField(max_length=20, choices=TARGET_TYPE)
+    medicine = models.ForeignKey(Medicine, on_delete=models.CASCADE, null=True, blank=True, related_name='+')
+    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, null=True, blank=True, related_name='+')
+    lab_test = models.ForeignKey(LabTest, on_delete=models.CASCADE, null=True, blank=True, related_name='+')
+    plus_plan = models.ForeignKey(PlusPlan, on_delete=models.CASCADE, null=True, blank=True, related_name='+')
+    # e.g. "30% OFF" — for medicines this is just a label (the real discount already shows via
+    # price/original_price); for services with no inherent "price comparison" (a doctor consult
+    # doesn't have an original_price the way a medicine does), this badge is the primary way to
+    # communicate the promotion at all.
+    badge_text = models.CharField(max_length=50, null=True, blank=True)
+    display_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'featured_deals'
+        ordering = ['display_order', '-created_at']
+
+    def __str__(self):
+        return f'{self.get_target_type_display()} deal ({self.id})'
+
+
+class PromoBanner(models.Model):
+    """Matches the frontend `Slide` interface (components/common/PromoSlider.tsx) field-for-field
+    — title/subtitle/cta/href/icon/gradient — so the homepage slider needs zero structural changes,
+    just a real data source instead of the hardcoded PROMO_SLIDES array."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    title = models.CharField(max_length=100)
+    subtitle = models.CharField(max_length=255)
+    cta = models.CharField(max_length=50)
+    href = models.CharField(max_length=255)
+    icon = models.CharField(max_length=50)
+    gradient = models.CharField(max_length=100)
+    display_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'promo_banners'
+        ordering = ['display_order', '-created_at']
+
+    def __str__(self):
+        return self.title
 
 
 class SystemSetting(models.Model):
