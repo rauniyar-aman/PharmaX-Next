@@ -143,6 +143,7 @@ urlpatterns = [
     path('admin/lab-test-bookings/',            views.AdminLabTestBookingListView.as_view(), name='admin-lab-test-bookings'),
     path('admin/lab-test-bookings/<uuid:pk>/',  views.AdminLabTestBookingDetailView.as_view(), name='admin-lab-test-booking-detail'),
     path('admin/lab-test-bookings/<uuid:pk>/upload-report/', views.AdminLabTestReportUploadView.as_view(), name='admin-lab-test-booking-upload-report'),
+    path('admin/lab-test-bookings/<uuid:pk>/assign-collector/', views.AdminLabTestBookingAssignCollectorView.as_view(), name='admin-lab-test-booking-assign-collector'),
     path('admin/blog/',                         views.AdminBlogPostListView.as_view(),      name='admin-blog-posts'),
     path('admin/blog/<uuid:pk>/',               views.AdminBlogPostDetailView.as_view(),    name='admin-blog-post-detail'),
     path('admin/subscriptions/',                views.AdminSubscriptionListView.as_view(),  name='admin-subscriptions'),

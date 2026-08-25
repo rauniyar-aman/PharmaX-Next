@@ -3798,6 +3798,35 @@ class AdminLabTestBookingDetailView(APIView):
         return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Booking updated.'})
 
 
+class AdminLabTestBookingAssignCollectorView(APIView):
+    """The only path a booking ever gets a collector — admin picks one explicitly. is_verified is
+    the only gate: verification is where "this person can actually do this job" gets decided, by
+    admin, once, at onboarding (see AdminLabCollectorListView.post()), not re-litigated per
+    booking. Reassignment is allowed — overwriting an existing collector — for the real-world case
+    of a collector becoming unavailable after being assigned."""
+    permission_classes = [require_permission('manage_lab_tests')]
+
+    def post(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.get(id=pk)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        collector_id = request.data.get('collector_id')
+        if not collector_id:
+            return Response({'success': False, 'message': 'collector_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            collector = LabCollector.objects.get(id=collector_id)
+        except LabCollector.DoesNotExist:
+            return Response({'success': False, 'message': 'Collector not found.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not collector.is_verified:
+            return Response({'success': False, 'message': 'This collector is not verified yet.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        booking.collector = collector
+        booking.save(update_fields=['collector'])
+        return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': f'{collector.user.full_name} assigned to this booking.'})
+
+
 class AdminLabTestReportUploadView(APIView):
     permission_classes = [require_permission('manage_lab_tests')]
 
