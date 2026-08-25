@@ -773,6 +773,15 @@ export interface DoctorPayout {
   created_at: string
 }
 
+export interface PlusBenefit {
+  id: string
+  plan?: string
+  key: string
+  description: string
+  is_active: boolean
+  created_at: string
+}
+
 export interface PlusPlan {
   id: string
   name: string
@@ -780,6 +789,7 @@ export interface PlusPlan {
   price: string
   description?: string | null
   is_active: boolean
+  benefits?: PlusBenefit[]
   created_at: string
   updated_at: string
 }
@@ -829,6 +839,36 @@ export interface Coupon {
   times_used?: number
   created_at: string
   updated_at: string
+}
+
+export type FeaturedDealTargetType = 'MEDICINE' | 'DOCTOR' | 'LAB_TEST' | 'PLUS_PLAN'
+
+export interface FeaturedDeal {
+  id: string
+  target_type: FeaturedDealTargetType
+  medicine?: Medicine | null
+  doctor?: Doctor | null
+  lab_test?: LabTest | null
+  plus_plan?: PlusPlan | null
+  badge_text?: string | null
+  display_order: number
+  is_active: boolean
+  starts_at?: string | null
+  ends_at?: string | null
+  created_at: string
+}
+
+export interface PromoBanner {
+  id: string
+  title: string
+  subtitle: string
+  cta: string
+  href: string
+  icon: string
+  gradient: string
+  display_order: number
+  is_active: boolean
+  created_at: string
 }
 
 export type WalletTransactionType = 'CREDIT' | 'DEBIT'

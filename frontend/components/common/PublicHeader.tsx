@@ -35,7 +35,7 @@ const NAV_LINKS = [
   { label: 'Lab Tests', href: '/lab-tests' },
   { label: 'PharmaX Plus', href: '/plus-membership' },
   { label: 'Health Insights', href: '/health-articles' },
-  { label: 'Offers', href: '/medicines?sortBy=price-asc' },
+  { label: 'Offers', href: '/offers' },
   { label: 'Categories', href: '/categories' },
   { label: 'Brands', href: '/brands' },
   { label: 'Prescriptions', href: '/prescriptions' },

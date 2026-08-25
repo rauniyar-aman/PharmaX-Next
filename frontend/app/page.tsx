@@ -32,45 +32,6 @@ const NON_CUSTOMER_DASHBOARDS: Record<string, string> = {
   LAB_COLLECTOR: '/lab-collector/active',
 }
 
-const PROMO_SLIDES: Slide[] = [
-  {
-    title: 'Order with Prescription',
-    subtitle: 'Upload your prescription and get verified Rx medicines delivered safely.',
-    cta: 'Upload Now', href: '/prescriptions', icon: 'description',
-    gradient: 'from-primary to-primary/70',
-  },
-  {
-    title: 'Up to 50% off Branded Substitutes',
-    subtitle: 'Save more on genuine medicines without compromising on quality.',
-    cta: 'Shop Deals', href: '/medicines?sortBy=price-asc', icon: 'sell',
-    gradient: 'from-secondary to-secondary/70',
-  },
-  {
-    title: 'Become a Plus Member',
-    subtitle: 'Unlock free delivery and exclusive discounts on every order.',
-    cta: 'Learn More', href: '/plus-membership', icon: 'workspace_premium',
-    gradient: 'from-amber-500 to-amber-600',
-  },
-  {
-    title: 'Diabetes & Wellness Essentials',
-    subtitle: 'Everything you need to manage diabetes and stay healthy.',
-    cta: 'Explore', href: '/medicines?category=Diabetes+Essentials', icon: 'water_drop',
-    gradient: 'from-purple-500 to-purple-700',
-  },
-  {
-    title: 'Lab Tests at Home',
-    subtitle: 'Book a certified lab test with free home sample collection.',
-    cta: 'Book Now', href: '/lab-tests', icon: 'biotech',
-    gradient: 'from-cyan-600 to-cyan-700',
-  },
-  {
-    title: 'Consult a Doctor Online',
-    subtitle: 'Talk to certified doctors from the comfort of your home.',
-    cta: 'Consult Now', href: '/doctor-consult', icon: 'stethoscope',
-    gradient: 'from-rose-500 to-rose-600',
-  },
-]
-
 function useMedicineRail(params: Record<string, any>) {
   const [medicines, setMedicines] = useState<Medicine[]>([])
   const [loading, setLoading] = useState(true)
@@ -104,10 +65,19 @@ export default function HomePage() {
   const { addToCart } = useCart()
 
   const [cartLoading, setCartLoading] = useState<Record<string, boolean>>({})
+  const [promoSlides, setPromoSlides] = useState<Slide[]>([])
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
     setHydrated(true)
+  }, [])
+
+  useEffect(() => {
+    api.get('/promo-banners/')
+      .then((r) => setPromoSlides((r.data.data.banners || []).map((b: any) => ({
+        title: b.title, subtitle: b.subtitle, cta: b.cta, href: b.href, icon: b.icon, gradient: b.gradient,
+      }))))
+      .catch(() => {})
   }, [])
 
   // Every other customer-facing page bounces a logged-in non-customer to their own dashboard (see
@@ -157,7 +127,7 @@ export default function HomePage() {
       <PublicHeader />
 
       <main className="w-full px-4 sm:px-6 py-6 space-y-10">
-        <PromoSlider slides={PROMO_SLIDES} />
+        <PromoSlider slides={promoSlides} />
 
         <QuickLinksGrid />
 
