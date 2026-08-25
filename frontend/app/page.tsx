@@ -15,9 +15,7 @@ import BrandRail from '@/components/home/BrandRail'
 import TabbedProductRail from '@/components/home/TabbedProductRail'
 import StatsBar from '@/components/home/StatsBar'
 import Testimonials from '@/components/home/Testimonials'
-import LabTestRail from '@/components/home/LabTestRail'
-import DoctorRail from '@/components/home/DoctorRail'
-import HealthArticlesRail from '@/components/home/HealthArticlesRail'
+import OurServicesSection from '@/components/home/OurServicesSection'
 import QuickLinksGrid from '@/components/home/QuickLinksGrid'
 
 // Mirrors the redirect map in signin/restore-account — every non-customer role has its own
@@ -107,11 +105,7 @@ export default function HomePage() {
           cartLoading={cartLoading}
         />
 
-        <LabTestRail />
-
-        <DoctorRail />
-
-        <HealthArticlesRail />
+        <OurServicesSection />
 
         <StatsBar />
 
