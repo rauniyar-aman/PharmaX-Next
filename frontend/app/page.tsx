@@ -16,6 +16,7 @@ import TabbedProductRail from '@/components/home/TabbedProductRail'
 import StatsBar from '@/components/home/StatsBar'
 import Testimonials from '@/components/home/Testimonials'
 import OurServicesSection from '@/components/home/OurServicesSection'
+import FeaturedDealsRail from '@/components/home/FeaturedDealsRail'
 import QuickLinksGrid from '@/components/home/QuickLinksGrid'
 
 // Mirrors the redirect map in signin/restore-account — every non-customer role has its own
@@ -93,6 +94,13 @@ export default function HomePage() {
         <PromoSlider slides={promoSlides} />
 
         <QuickLinksGrid />
+
+        <FeaturedDealsRail
+          wishlistIds={wishlistIds}
+          onToggleWishlist={handleWishlist}
+          onAddToCart={handleAddToCart}
+          cartLoading={cartLoading}
+        />
 
         <CategoryRail />
 
