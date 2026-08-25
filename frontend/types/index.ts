@@ -86,6 +86,36 @@ export interface AdminPharmacyDetail extends AdminPharmacy {
   listings_count: number
   request_stats: { accepted: number; declined: number; expired: number; pending: number }
   finance: { total_earned: string; total_commission: string; total_paid: string; total_pending: string }
+  campaign_enrollments: PharmacyCampaignEnrollment[]
+}
+
+export type CampaignType = 'DISCOUNT' | 'BONUS'
+
+export interface PharmacyIncentiveCampaign {
+  id: string
+  name: string
+  description?: string | null
+  campaign_type: CampaignType
+  discounted_commission_rate?: string | null
+  bonus_amount?: string | null
+  starts_at: string
+  ends_at: string
+  is_active: boolean
+  created_by_name?: string | null
+  created_at: string
+}
+
+export type CampaignEnrollmentStatus = 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
+
+export interface PharmacyCampaignEnrollment {
+  id: string
+  campaign: PharmacyIncentiveCampaign
+  pharmacy?: string
+  pharmacy_name?: string
+  status: CampaignEnrollmentStatus
+  bonus_paid: boolean
+  bonus_paid_at?: string | null
+  enrolled_at: string
 }
 
 export interface AdminDeliveryAgent {

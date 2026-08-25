@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { label: 'Requests',  href: '/pharmacy/requests',  icon: 'inbox' },
   { label: 'Orders',    href: '/pharmacy/orders',    icon: 'receipt_long' },
   { label: 'Finance',   href: '/pharmacy/finance',   icon: 'account_balance_wallet' },
+  { label: 'Campaigns', href: '/pharmacy/campaigns', icon: 'redeem' },
   { label: 'Team',      href: '/pharmacy/team',      icon: 'group' },
   { label: 'Settings',  href: '/pharmacy/settings',  icon: 'settings' },
 ]

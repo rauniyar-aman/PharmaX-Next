@@ -5,7 +5,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
-import type { AdminPharmacyDetail, PharmacyDocument } from '@/types'
+import type { AdminPharmacyDetail, PharmacyDocument, PharmacyIncentiveCampaign } from '@/types'
 
 const DOC_TYPES: { type: PharmacyDocument['doc_type']; label: string; hint: string; adminUploaded: boolean }[] = [
   { type: 'PAN_CARD', label: 'PAN Card', hint: 'Uploaded by the pharmacy.', adminUploaded: false },
@@ -38,9 +38,46 @@ export default function AdminPharmacyDetailPage() {
   const [rejectNote, setRejectNote] = useState('')
   const docFileRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
+  const [campaigns, setCampaigns] = useState<PharmacyIncentiveCampaign[]>([])
+  const [enrollCampaignId, setEnrollCampaignId] = useState('')
+  const [enrolling, setEnrolling] = useState(false)
+  const [markingPaidId, setMarkingPaidId] = useState<string | null>(null)
+
   const load = () => api.get(`/admin/pharmacies/${id}/`).then((r) => setPharmacy(r.data.data.pharmacy)).catch(() => toast.error('Failed to load pharmacy.')).finally(() => setLoading(false))
 
   useEffect(() => { load() }, [id])
+
+  useEffect(() => {
+    api.get('/admin/campaigns/').then((r) => setCampaigns(r.data.data.campaigns || [])).catch(() => {})
+  }, [])
+
+  const enroll = async () => {
+    if (!enrollCampaignId) return
+    setEnrolling(true)
+    try {
+      await api.post(`/admin/campaigns/${enrollCampaignId}/enroll/`, { pharmacy_id: id })
+      toast.success('Pharmacy enrolled.')
+      setEnrollCampaignId('')
+      load()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to enroll.')
+    } finally {
+      setEnrolling(false)
+    }
+  }
+
+  const markBonusPaid = async (enrollmentId: string) => {
+    setMarkingPaidId(enrollmentId)
+    try {
+      await api.post(`/admin/campaigns/enrollments/${enrollmentId}/mark-bonus-paid/`)
+      toast.success('Bonus marked as paid.')
+      load()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to mark bonus paid.')
+    } finally {
+      setMarkingPaidId(null)
+    }
+  }
 
   const patch = async (payload: Record<string, any>, successMsg: string) => {
     setUpdating(true)
@@ -189,6 +226,65 @@ export default function AdminPharmacyDetailPage() {
             <p className="text-xs text-on-surface-variant">Pending Payout</p>
           </div>
         </div>
+      </div>
+
+      {/* Incentive Campaigns */}
+      <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-sm font-bold text-on-surface">Incentive Campaigns</p>
+          <div className="flex items-center gap-2">
+            <select value={enrollCampaignId} onChange={(e) => setEnrollCampaignId(e.target.value)}
+              className="px-3 py-2 border border-outline-variant rounded-xl bg-surface text-xs text-on-surface focus:outline-none focus:border-secondary transition">
+              <option value="">Enroll in a campaign...</option>
+              {campaigns
+                .filter((c) => c.is_active && !pharmacy.campaign_enrollments.some((e) => e.campaign.id === c.id))
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.campaign_type === 'DISCOUNT' ? `${Number(c.discounted_commission_rate).toFixed(2)}% commission` : `NPR ${Number(c.bonus_amount).toFixed(0)} bonus`})
+                  </option>
+                ))}
+            </select>
+            <button onClick={enroll} disabled={!enrollCampaignId || enrolling}
+              className="px-3 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
+              {enrolling ? 'Enrolling...' : 'Enroll'}
+            </button>
+          </div>
+        </div>
+        {pharmacy.campaign_enrollments.length === 0 ? (
+          <p className="text-sm text-on-surface-variant">Not enrolled in any campaign.</p>
+        ) : (
+          <div className="space-y-2">
+            {pharmacy.campaign_enrollments.map((e) => {
+              const expired = new Date(e.campaign.ends_at).getTime() < Date.now()
+              return (
+                <div key={e.id} className="bg-surface-container-low rounded-xl px-3 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-on-surface">{e.campaign.name}</p>
+                    <p className="text-xs text-on-surface-variant">
+                      {e.campaign.campaign_type === 'DISCOUNT'
+                        ? `${Number(e.campaign.discounted_commission_rate).toFixed(2)}% commission`
+                        : `NPR ${Number(e.campaign.bonus_amount).toFixed(0)} bonus`}
+                      {' · '}{new Date(e.campaign.starts_at).toLocaleDateString()} – {new Date(e.campaign.ends_at).toLocaleDateString()}
+                      {expired && <span className="text-error font-semibold"> · Ended</span>}
+                    </p>
+                  </div>
+                  {e.campaign.campaign_type === 'BONUS' && (
+                    e.bonus_paid ? (
+                      <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-600 whitespace-nowrap">
+                        Paid {e.bonus_paid_at ? new Date(e.bonus_paid_at).toLocaleDateString() : ''}
+                      </span>
+                    ) : (
+                      <button onClick={() => markBonusPaid(e.id)} disabled={markingPaidId === e.id}
+                        className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60 whitespace-nowrap">
+                        {markingPaidId === e.id ? 'Marking...' : 'Mark Bonus Paid'}
+                      </button>
+                    )
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {/* Contact & Address */}
