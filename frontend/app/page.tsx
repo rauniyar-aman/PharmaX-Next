@@ -36,7 +36,7 @@ export default function HomePage() {
   const { addToCart } = useCart()
 
   const [cartLoading, setCartLoading] = useState<Record<string, boolean>>({})
-  const [promoSlides, setPromoSlides] = useState<Slide[]>([])
+  const [bannersByPlacement, setBannersByPlacement] = useState<Record<string, any[]>>({})
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
@@ -45,11 +45,16 @@ export default function HomePage() {
 
   useEffect(() => {
     api.get('/promo-banners/')
-      .then((r) => setPromoSlides((r.data.data.banners || []).map((b: any) => ({
-        title: b.title, subtitle: b.subtitle, cta: b.cta, href: b.href, icon: b.icon, gradient: b.gradient,
-      }))))
+      .then((r) => setBannersByPlacement(r.data.data.banners || {}))
       .catch(() => {})
   }, [])
+
+  const toSlides = (banners: any[] = []): Slide[] => banners.map((b) => ({
+    title: b.title, subtitle: b.subtitle, cta: b.cta, href: b.href, icon: b.icon, gradient: b.gradient,
+  }))
+  const heroSlides = toSlides(bannersByPlacement.HERO)
+  const midPageSlides = toSlides(bannersByPlacement.MID_PAGE)
+  const preFooterSlides = toSlides(bannersByPlacement.PRE_FOOTER)
 
   // Every other customer-facing page bounces a logged-in non-customer to their own dashboard (see
   // app/(customer)/layout.tsx) — this standalone top-level page didn't have that guard, so a
@@ -91,7 +96,7 @@ export default function HomePage() {
       <PublicHeader />
 
       <main className="w-full px-4 sm:px-6 py-6 space-y-10">
-        <PromoSlider slides={promoSlides} />
+        <PromoSlider slides={heroSlides} />
 
         <QuickLinksGrid />
 
@@ -113,7 +118,11 @@ export default function HomePage() {
           cartLoading={cartLoading}
         />
 
+        <PromoSlider slides={midPageSlides} />
+
         <OurServicesSection />
+
+        <PromoSlider slides={preFooterSlides} />
 
         <StatsBar />
 

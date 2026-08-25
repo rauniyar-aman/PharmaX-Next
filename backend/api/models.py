@@ -959,6 +959,8 @@ class PromoBanner(models.Model):
     """Matches the frontend `Slide` interface (components/common/PromoSlider.tsx) field-for-field
     — title/subtitle/cta/href/icon/gradient — so the homepage slider needs zero structural changes,
     just a real data source instead of the hardcoded PROMO_SLIDES array."""
+    PLACEMENT = [('HERO', 'Hero (top slider)'), ('MID_PAGE', 'Mid-page (after product rail)'), ('PRE_FOOTER', 'Pre-footer (before stats)')]
+
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     title = models.CharField(max_length=100)
     subtitle = models.CharField(max_length=255)
@@ -966,6 +968,7 @@ class PromoBanner(models.Model):
     href = models.CharField(max_length=255)
     icon = models.CharField(max_length=50)
     gradient = models.CharField(max_length=100)
+    placement = models.CharField(max_length=20, choices=PLACEMENT, default='HERO')
     display_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -1017,7 +1017,7 @@ class FeaturedDealSerializer(serializers.ModelSerializer):
 class PromoBannerSerializer(serializers.ModelSerializer):
     class Meta:
         model = PromoBanner
-        fields = ['id', 'title', 'subtitle', 'cta', 'href', 'icon', 'gradient', 'display_order', 'is_active', 'created_at']
+        fields = ['id', 'title', 'subtitle', 'cta', 'href', 'icon', 'gradient', 'placement', 'display_order', 'is_active', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
