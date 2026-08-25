@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability
+from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -807,11 +807,26 @@ class PrescriptionLabTestItemSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 
+class PlusBenefitSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PlusBenefit
+        fields = ['id', 'plan', 'key', 'description', 'is_active', 'created_at']
+        read_only_fields = ['id', 'plan', 'created_at']
+
+
 class PlusPlanSerializer(serializers.ModelSerializer):
+    # Active benefits only — this is the public-facing plan comparison shape; admin's dedicated
+    # PlusBenefit CRUD (scoped under /admin/plus-plans/<id>/benefits/) is where inactive ones are
+    # managed.
+    benefits = serializers.SerializerMethodField()
+
     class Meta:
         model = PlusPlan
-        fields = ['id', 'name', 'duration_days', 'price', 'description', 'is_active', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'duration_days', 'price', 'description', 'is_active', 'benefits', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_benefits(self, obj):
+        return PlusBenefitSerializer(obj.benefits.filter(is_active=True), many=True).data
 
 
 class PlusMembershipSerializer(serializers.ModelSerializer):
@@ -951,6 +966,59 @@ class DoctorSerializer(serializers.ModelSerializer):
             'total_consultations', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'rating', 'total_reviews', 'total_consultations', 'created_at', 'updated_at']
+
+
+class FeaturedDealSerializer(serializers.ModelSerializer):
+    # One nested read-only representation per target type, populated only for the matching
+    # target_type — the corresponding write-only *_id drives which one on create/update. Defined
+    # after MedicineDetailSerializer/LabTestListSerializer/DoctorSerializer/PlusPlanSerializer
+    # since each is instantiated here at class-body time, not lazily.
+    medicine = MedicineDetailSerializer(read_only=True)
+    medicine_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    doctor = DoctorSerializer(read_only=True)
+    doctor_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    lab_test = LabTestListSerializer(read_only=True)
+    lab_test_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    plus_plan = PlusPlanSerializer(read_only=True)
+    plus_plan_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+
+    TARGET_ID_FIELDS = {'MEDICINE': 'medicine_id', 'DOCTOR': 'doctor_id', 'LAB_TEST': 'lab_test_id', 'PLUS_PLAN': 'plus_plan_id'}
+
+    class Meta:
+        model = FeaturedDeal
+        fields = [
+            'id', 'target_type', 'medicine', 'medicine_id', 'doctor', 'doctor_id',
+            'lab_test', 'lab_test_id', 'plus_plan', 'plus_plan_id',
+            'badge_text', 'display_order', 'is_active', 'starts_at', 'ends_at', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+
+    def validate(self, data):
+        target_type = data.get('target_type') or getattr(self.instance, 'target_type', None)
+        if target_type not in dict(FeaturedDeal.TARGET_TYPE):
+            raise serializers.ValidationError({'target_type': 'A valid target_type is required.'})
+
+        expected_field = self.TARGET_ID_FIELDS[target_type]
+        expected_value = data[expected_field] if expected_field in data else (
+            getattr(self.instance, expected_field, None) if self.instance else None
+        )
+        if expected_value is None:
+            raise serializers.ValidationError({expected_field: f'Required when target_type is {target_type}.'})
+
+        # Force every OTHER target's id to null so switching target_type can't leave a stale FK
+        # from the previous target behind — never touches expected_field itself, so a partial
+        # update that isn't changing the target leaves its existing value alone.
+        for t, field in self.TARGET_ID_FIELDS.items():
+            if field != expected_field:
+                data[field] = None
+        return data
+
+
+class PromoBannerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PromoBanner
+        fields = ['id', 'title', 'subtitle', 'cta', 'href', 'icon', 'gradient', 'display_order', 'is_active', 'created_at']
+        read_only_fields = ['id', 'created_at']
 
 
 class DoctorAvailabilitySerializer(serializers.ModelSerializer):
