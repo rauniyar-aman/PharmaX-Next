@@ -32,7 +32,7 @@ from django.utils import timezone
 
 from .models import (
     Pharmacy, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, OrderItem, Order, Cart, Notification,
-    DeliveryAgent, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability,
+    DeliveryAgent, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyCampaignEnrollment,
 )
 
 EARTH_RADIUS_KM = 6371.0
@@ -906,20 +906,40 @@ def calculate_agent_payout(fulfillment):
     return Decimal(_get_setting('delivery_agent_payout_flat', '40'))
 
 
+def _pharmacy_commission_rate(pharmacy):
+    """The commission rate to use for a payout being created RIGHT NOW for `pharmacy` — an
+    ACTIVE enrollment in a DISCOUNT campaign whose starts_at/ends_at currently covers this moment
+    overrides the global pharmacy_commission_rate setting. Called from _create_settlement_records()
+    at the exact point a PharmacyPayout is created, so the (possibly discounted) rate is correctly
+    snapshotted per-payout, matching how commission_rate itself already is — never recalculated
+    after the fact, so a campaign ending later doesn't retroactively change past payouts, and a
+    payout created after ends_at correctly falls back to the global rate."""
+    now = timezone.now()
+    enrollment = PharmacyCampaignEnrollment.objects.filter(
+        pharmacy=pharmacy, status='ACTIVE',
+        campaign__campaign_type='DISCOUNT', campaign__is_active=True,
+        campaign__starts_at__lte=now, campaign__ends_at__gte=now,
+    ).select_related('campaign').first()
+    if enrollment:
+        return enrollment.campaign.discounted_commission_rate
+
+    from .views import _get_setting
+    return Decimal(_get_setting('pharmacy_commission_rate', '10'))
+
+
 def _create_settlement_records(order):
     """Creates the PharmacyPayout (and, if a rider was involved, DeliveryAgentEarning /
     DeliveryAgentCodLiability) records for every fulfillment on `order`, once — called from
     sync_order_status()'s PLACED -> DELIVERED transition, which can legitimately fire more than
     once, so this stays idempotent per fulfillment via the OneToOneField reverse-accessor check
     below rather than assuming it only ever runs a single time."""
-    from .views import _get_setting
-    commission_rate = Decimal(_get_setting('pharmacy_commission_rate', '10'))
     is_cod = order.payment_method == 'CASH_ON_DELIVERY'
 
     for fulfillment in order.fulfillments.all():
         if hasattr(fulfillment, 'pharmacy_payout'):
             continue  # already created — sync_order_status can be called more than once, stay idempotent
 
+        commission_rate = _pharmacy_commission_rate(fulfillment.pharmacy)
         gross = sum(i.unit_price * i.quantity for i in fulfillment.order_items.all())
         commission = (gross * commission_rate / Decimal('100')).quantize(Decimal('0.01'))
         PharmacyPayout.objects.create(
