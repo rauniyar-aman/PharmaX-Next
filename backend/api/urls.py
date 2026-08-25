@@ -225,8 +225,6 @@ urlpatterns = [
 
     # Lab collector dashboard
     path('lab-collector/finance/',              views.LabCollectorFinanceView.as_view(),        name='lab-collector-finance'),
-    path('lab-collector/requests/',             views.LabCollectorRequestListView.as_view(),    name='lab-collector-requests'),
-    path('lab-collector/requests/<uuid:pk>/accept/', views.LabCollectorAcceptView.as_view(),     name='lab-collector-request-accept'),
     path('lab-collector/active/',               views.LabCollectorActiveListView.as_view(),     name='lab-collector-active'),
     path('lab-collector/active/<uuid:pk>/confirm-collected/', views.LabCollectorConfirmCollectedView.as_view(), name='lab-collector-confirm-collected'),
     path('lab-collector/active/<uuid:pk>/upload-report/', views.LabCollectorReportUploadView.as_view(), name='lab-collector-upload-report'),
