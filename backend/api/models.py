@@ -1279,6 +1279,54 @@ class PharmacyPayout(models.Model):
         db_table = 'pharmacy_payouts'
 
 
+class PharmacyIncentiveCampaign(models.Model):
+    """Admin-created, time-limited incentive for specific pharmacies — either a reduced commission
+    rate or a flat cash bonus, decided per campaign (not a system-wide choice). Enrollment is
+    manual (see PharmacyCampaignEnrollment) — no auto-trigger conditions in this version."""
+    CAMPAIGN_TYPE = [('DISCOUNT', 'Reduced Commission'), ('BONUS', 'Cash Bonus')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    name = models.CharField(max_length=100)
+    description = models.TextField(null=True, blank=True)
+    campaign_type = models.CharField(max_length=20, choices=CAMPAIGN_TYPE)
+    # DISCOUNT fields — only meaningful when campaign_type == 'DISCOUNT'
+    discounted_commission_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    # BONUS fields — only meaningful when campaign_type == 'BONUS'
+    bonus_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pharmacy_incentive_campaigns'
+
+    def __str__(self):
+        return self.name
+
+
+class PharmacyCampaignEnrollment(models.Model):
+    """One pharmacy's participation in one campaign — admin creates this explicitly, per pharmacy."""
+    STATUS = [('ACTIVE', 'Active'), ('COMPLETED', 'Completed'), ('CANCELLED', 'Cancelled')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    campaign = models.ForeignKey(PharmacyIncentiveCampaign, on_delete=models.CASCADE, related_name='enrollments')
+    pharmacy = models.ForeignKey(Pharmacy, on_delete=models.CASCADE, related_name='campaign_enrollments')
+    status = models.CharField(max_length=20, choices=STATUS, default='ACTIVE')
+    # for BONUS campaigns — did the platform actually pay this out yet? Reuses the same PENDING/PAID
+    # shape as every other payout in this codebase, not a new pattern.
+    bonus_paid = models.BooleanField(default=False)
+    bonus_paid_at = models.DateTimeField(null=True, blank=True)
+    enrolled_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    enrolled_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pharmacy_campaign_enrollments'
+        unique_together = ('campaign', 'pharmacy')
+
+    def __str__(self):
+        return f'{self.pharmacy.name} — {self.campaign.name}'
+
+
 class DeliveryAgentEarning(models.Model):
     """One earning record per completed delivery — always a real payable the platform owes the
     agent for their delivery work, regardless of payment method. (COD no longer self-settles this —
