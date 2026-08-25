@@ -888,6 +888,8 @@ export interface FeaturedDeal {
   created_at: string
 }
 
+export type PromoBannerPlacement = 'HERO' | 'MID_PAGE' | 'PRE_FOOTER'
+
 export interface PromoBanner {
   id: string
   title: string
@@ -896,6 +898,7 @@ export interface PromoBanner {
   href: string
   icon: string
   gradient: string
+  placement: PromoBannerPlacement
   display_order: number
   is_active: boolean
   created_at: string

@@ -493,6 +493,11 @@ const GRADIENT_OPTIONS = [
   { label: 'Cyan', value: 'from-cyan-600 to-cyan-700' },
   { label: 'Rose', value: 'from-rose-500 to-rose-600' },
 ]
+const PLACEMENT_OPTIONS = [
+  { label: 'Hero (top slider)', value: 'HERO' },
+  { label: 'Mid-page (after product rail)', value: 'MID_PAGE' },
+  { label: 'Pre-footer (before stats)', value: 'PRE_FOOTER' },
+]
 
 function BannersTab() {
   const [banners, setBanners] = useState<PromoBanner[]>([])
@@ -506,6 +511,7 @@ function BannersTab() {
   const [href, setHref] = useState('')
   const [icon, setIcon] = useState(ICON_OPTIONS[0])
   const [gradient, setGradient] = useState(GRADIENT_OPTIONS[0].value)
+  const [placement, setPlacement] = useState(PLACEMENT_OPTIONS[0].value)
   const [displayOrder, setDisplayOrder] = useState('0')
 
   const load = () => {
@@ -515,7 +521,7 @@ function BannersTab() {
 
   const resetForm = () => {
     setTitle(''); setSubtitle(''); setCta(''); setHref(''); setIcon(ICON_OPTIONS[0]); setGradient(GRADIENT_OPTIONS[0].value)
-    setDisplayOrder('0'); setShowForm(false)
+    setPlacement(PLACEMENT_OPTIONS[0].value); setDisplayOrder('0'); setShowForm(false)
   }
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -525,7 +531,7 @@ function BannersTab() {
     try {
       await api.post('/admin/promo-banners/', {
         title: title.trim(), subtitle: subtitle.trim(), cta: cta.trim(), href: href.trim(),
-        icon, gradient, display_order: Number(displayOrder) || 0,
+        icon, gradient, placement, display_order: Number(displayOrder) || 0,
       })
       toast.success('Banner added.')
       resetForm()
@@ -592,6 +598,13 @@ function BannersTab() {
                 className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
             </div>
             <div>
+              <label className="text-xs font-medium text-on-surface-variant">Placement *</label>
+              <select value={placement} onChange={(e) => setPlacement(e.target.value)}
+                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
+                {PLACEMENT_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </div>
+            <div>
               <label className="text-xs font-medium text-on-surface-variant">Display Order</label>
               <input type="number" value={displayOrder} onChange={(e) => setDisplayOrder(e.target.value)}
                 className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
@@ -647,9 +660,14 @@ function BannersTab() {
                 <p className="text-xs text-white/85 mt-1 leading-relaxed line-clamp-2">{b.subtitle}</p>
               </div>
               <div className="relative flex items-center justify-between mt-3">
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${b.is_active ? 'bg-white/25' : 'bg-black/25'}`}>
-                  {b.is_active ? 'Active' : 'Inactive'}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${b.is_active ? 'bg-white/25' : 'bg-black/25'}`}>
+                    {b.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/15">
+                    {PLACEMENT_OPTIONS.find((p) => p.value === b.placement)?.label || b.placement}
+                  </span>
+                </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => toggleActive(b)} className="text-[11px] font-semibold underline">
                     {b.is_active ? 'Deactivate' : 'Activate'}

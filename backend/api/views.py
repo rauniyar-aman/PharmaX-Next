@@ -3224,7 +3224,11 @@ class PromoBannerListView(APIView):
 
     def get(self, request):
         banners = PromoBanner.objects.filter(is_active=True).order_by('display_order', '-created_at')
-        return Response({'success': True, 'data': {'banners': PromoBannerSerializer(banners, many=True).data}})
+        serialized = PromoBannerSerializer(banners, many=True).data
+        grouped = {choice: [] for choice, _ in PromoBanner.PLACEMENT}
+        for b in serialized:
+            grouped.setdefault(b['placement'], []).append(b)
+        return Response({'success': True, 'data': {'banners': grouped}})
 
 
 class AdminPromoBannerListView(APIView):
