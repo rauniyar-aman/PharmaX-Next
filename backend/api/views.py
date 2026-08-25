@@ -74,7 +74,7 @@ from .matching import (
     _tracking_payload, widen_stale_priority_broadcasts, _fulfillment_prescription_ready, broadcast_delivery,
 )
 from .scheduling import get_available_slots
-from .lab_collection import broadcast_collector, collector_accept, collector_confirm_sample_collected, _collector_eligible_for
+from .lab_collection import collector_confirm_sample_collected
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
@@ -2281,14 +2281,14 @@ def _confirm_lab_test_booking(booking):
     and a Plus-free doctor appointment confirms immediately with no admin gate — admin review in
     this codebase is reserved for things that need human judgment (verifying a pharmacy, curating a
     prescription), not for "did payment settle," which is already a deterministic, machine-checkable
-    fact. CONFIRMED is exactly the state a booking needs to reach before it's broadcast to
-    collectors, same as PLACED is what triggers broadcast_delivery() for orders.
+    fact. CONFIRMED is the state a booking needs to reach before admin can assign it a collector
+    (AdminLabTestBookingAssignCollectorView) — assignment itself is a separate, manual admin step,
+    not triggered from here.
     """
     if booking.status != 'PENDING':
         return
     booking.status = 'CONFIRMED'
     booking.save(update_fields=['status'])
-    broadcast_collector(booking)
 
 
 def _cancel_unpaid_lab_test_booking(booking):
@@ -6295,36 +6295,8 @@ class DeliveryOnlineToggleView(APIView):
 # Same two patterns as the delivery dashboard throughout: IsCollector (role-only) gates access,
 # and every query is additionally scoped to request.user.lab_collector / collector=... — that
 # second filter is the actual ownership boundary, IsCollector alone only proves "some collector is
-# logged in."
-
-class LabCollectorRequestListView(APIView):
-    """Available-to-accept, unclaimed collections — every booking this specific collector
-    currently qualifies for, per the same live eligibility check collector_accept() uses."""
-    permission_classes = [IsCollector]
-
-    def get(self, request):
-        collector = request.user.lab_collector
-        candidates = LabTestBooking.objects.filter(
-            status='CONFIRMED', collector_broadcast_at__isnull=False, collector__isnull=True,
-        ).select_related('lab_test__category', 'address', 'user')
-        eligible = [b for b in candidates if _collector_eligible_for(collector, b)]
-        return Response({'success': True, 'data': {'requests': LabTestBookingSerializer(eligible, many=True).data}})
-
-
-class LabCollectorAcceptView(APIView):
-    permission_classes = [IsCollector]
-
-    def post(self, request, pk):
-        try:
-            booking = LabTestBooking.objects.get(pk=pk, status='CONFIRMED')
-        except LabTestBooking.DoesNotExist:
-            return Response({'success': False, 'message': 'Collection not found or no longer available.'}, status=status.HTTP_404_NOT_FOUND)
-
-        ok, err = collector_accept(request.user.lab_collector, booking)
-        if not ok:
-            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({'success': True, 'message': 'Accepted! Head to the patient\'s address for collection.'})
-
+# logged in." There's no browse/accept here — a collector only ever sees bookings admin has
+# already assigned them (AdminLabTestBookingAssignCollectorView).
 
 class LabCollectorActiveListView(APIView):
     """This collector's own active collections — accepted but not yet reported. Once REPORT_READY

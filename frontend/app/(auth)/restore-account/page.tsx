@@ -79,7 +79,7 @@ function RestoreAccountForm() {
         user.role === 'ADMIN' ? '/admin/dashboard'
         : user.role === 'PHARMACY' ? '/pharmacy/dashboard'
         : user.role === 'DELIVERY_AGENT' ? '/delivery/requests'
-        : user.role === 'LAB_COLLECTOR' ? '/lab-collector/requests'
+        : user.role === 'LAB_COLLECTOR' ? '/lab-collector/active'
         : '/dashboard'
       )
     } catch (err: any) {
