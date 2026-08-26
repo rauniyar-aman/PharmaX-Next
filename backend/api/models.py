@@ -48,6 +48,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     notif_order_updates = models.BooleanField(default=True)
     notif_prescription_alerts = models.BooleanField(default=True)
     notif_promotions = models.BooleanField(default=False)
+    notif_delivery_updates = models.BooleanField(default=True)
+    notif_doctor_updates = models.BooleanField(default=True)
+    notif_lab_test_updates = models.BooleanField(default=True)
+    notif_reminders = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
