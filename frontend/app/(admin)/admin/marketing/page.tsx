@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 import PromoBannerImageField from '@/components/admin/PromoBannerImageField'
 import type { Coupon, DiscountType, FeaturedDeal, FeaturedDealTargetType, PromoBanner } from '@/types'
 
@@ -504,6 +505,7 @@ function BannersTab() {
   const [banners, setBanners] = useState<PromoBanner[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
   const [title, setTitle] = useState('')
@@ -523,23 +525,37 @@ function BannersTab() {
 
   const resetForm = () => {
     setTitle(''); setSubtitle(''); setCta(''); setHref(''); setIcon(ICON_OPTIONS[0]); setGradient(GRADIENT_OPTIONS[0].value)
-    setImage(''); setPlacement(PLACEMENT_OPTIONS[0].value); setDisplayOrder('0'); setShowForm(false)
+    setImage(''); setPlacement(PLACEMENT_OPTIONS[0].value); setDisplayOrder('0'); setEditingId(null); setShowForm(false)
   }
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const startEdit = (b: PromoBanner) => {
+    setEditingId(b.id)
+    setTitle(b.title); setSubtitle(b.subtitle); setCta(b.cta); setHref(b.href)
+    setIcon(b.icon); setGradient(b.gradient); setImage(b.image_url || '')
+    setPlacement(b.placement); setDisplayOrder(String(b.display_order))
+    setShowForm(true)
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!title.trim() || !subtitle.trim() || !cta.trim() || !href.trim()) { toast.error('Title, subtitle, CTA, and link are required.'); return }
     setSaving(true)
     try {
-      await api.post('/admin/promo-banners/', {
+      const payload = {
         title: title.trim(), subtitle: subtitle.trim(), cta: cta.trim(), href: href.trim(),
         icon, gradient, image_url: image || null, placement, display_order: Number(displayOrder) || 0,
-      })
-      toast.success('Banner added.')
+      }
+      if (editingId) {
+        await api.put(`/admin/promo-banners/${editingId}/`, payload)
+        toast.success('Banner updated.')
+      } else {
+        await api.post('/admin/promo-banners/', payload)
+        toast.success('Banner added.')
+      }
       resetForm()
       load()
     } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to add banner.')
+      toast.error(err.response?.data?.message || 'Failed to save banner.')
     } finally {
       setSaving(false)
     }
@@ -570,14 +586,15 @@ function BannersTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-on-surface-variant">{banners.length} homepage banners</p>
-        <button onClick={() => setShowForm((s) => !s)}
+        <button onClick={() => (showForm ? resetForm() : setShowForm(true))}
           className="flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity">
           <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>Add Banner
         </button>
       </div>
 
       {showForm && (
-        <form onSubmit={handleCreate} className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
+          <p className="text-sm font-bold text-on-surface">{editingId ? 'Edit Banner' : 'New Banner'}</p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-medium text-on-surface-variant">Title *</label>
@@ -638,7 +655,7 @@ function BannersTab() {
           <div className="flex items-center gap-3">
             <button type="submit" disabled={saving}
               className="px-6 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
-              {saving ? 'Saving...' : 'Add Banner'}
+              {saving ? 'Saving...' : editingId ? 'Save Changes' : 'Add Banner'}
             </button>
             <button type="button" onClick={resetForm} className="text-sm font-medium text-on-surface-variant hover:text-on-surface transition-colors">Cancel</button>
           </div>
@@ -655,31 +672,42 @@ function BannersTab() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {banners.map((b) => (
-            <div key={b.id} className={`relative overflow-hidden rounded-2xl p-4 bg-gradient-to-br ${b.gradient} text-white flex flex-col justify-between min-h-[130px]`}>
-              <span className="material-symbols-outlined ms-filled absolute -right-3 -bottom-3 text-white/15" style={{ fontSize: '80px' }}>{b.icon}</span>
-              <div className="relative">
-                <p className="text-sm font-bold leading-snug">{b.title}</p>
-                <p className="text-xs text-white/85 mt-1 leading-relaxed line-clamp-2">{b.subtitle}</p>
-              </div>
-              <div className="relative flex items-center justify-between mt-3">
-                <div className="flex items-center gap-1.5">
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${b.is_active ? 'bg-white/25' : 'bg-black/25'}`}>
-                    {b.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/15">
-                    {PLACEMENT_OPTIONS.find((p) => p.value === b.placement)?.label || b.placement}
-                  </span>
+          {banners.map((b) => {
+            const previewImg = resolveImg(b.image_url)
+            return (
+              <div key={b.id} className={`relative overflow-hidden rounded-2xl p-4 text-white flex flex-col justify-between min-h-[130px] ${previewImg ? '' : `bg-gradient-to-br ${b.gradient}`}`}>
+                {previewImg ? (
+                  <>
+                    <img src={previewImg} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/30" />
+                  </>
+                ) : (
+                  <span className="material-symbols-outlined ms-filled absolute -right-3 -bottom-3 text-white/15" style={{ fontSize: '80px' }}>{b.icon}</span>
+                )}
+                <div className="relative">
+                  <p className="text-sm font-bold leading-snug">{b.title}</p>
+                  <p className="text-xs text-white/85 mt-1 leading-relaxed line-clamp-2">{b.subtitle}</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => toggleActive(b)} className="text-[11px] font-semibold underline">
-                    {b.is_active ? 'Deactivate' : 'Activate'}
-                  </button>
-                  <button onClick={() => handleDelete(b.id)} className="text-[11px] font-semibold underline">Delete</button>
+                <div className="relative flex items-center justify-between mt-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${b.is_active ? 'bg-white/25' : 'bg-black/25'}`}>
+                      {b.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/15">
+                      {PLACEMENT_OPTIONS.find((p) => p.value === b.placement)?.label || b.placement}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => startEdit(b)} className="text-[11px] font-semibold underline">Edit</button>
+                    <button onClick={() => toggleActive(b)} className="text-[11px] font-semibold underline">
+                      {b.is_active ? 'Deactivate' : 'Activate'}
+                    </button>
+                    <button onClick={() => handleDelete(b.id)} className="text-[11px] font-semibold underline">Delete</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
