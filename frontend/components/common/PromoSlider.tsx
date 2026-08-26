@@ -39,7 +39,7 @@ export default function PromoSlider({ slides, intervalMs = 5000 }: Props) {
   if (slides.length === 0) return null
 
   return (
-    <div className="max-w-[1200px] mx-auto">
+    <div className="max-w-[480px] mx-auto">
       <div
         className="relative rounded-2xl overflow-hidden group"
         onMouseEnter={() => setPaused(true)}
