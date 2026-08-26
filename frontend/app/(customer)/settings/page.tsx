@@ -4,10 +4,20 @@ import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
+import type { User } from '@/types'
+
+const NOTIF_PREFS = [
+  { key: 'notif_order_updates', label: 'Order Updates', desc: 'Order placed, confirmed, shipped, and delivered.' },
+  { key: 'notif_prescription_alerts', label: 'Prescription Alerts', desc: 'Your prescription was verified or rejected.' },
+  { key: 'notif_delivery_updates', label: 'Delivery Updates', desc: 'Rider assigned, picked up, and delivered.' },
+  { key: 'notif_doctor_updates', label: 'Doctor Consult Updates', desc: 'Appointment confirmed and meeting links shared.' },
+  { key: 'notif_lab_test_updates', label: 'Lab Test Updates', desc: 'Booking confirmed and your report is ready.' },
+  { key: 'notif_reminders', label: 'Reminders', desc: 'Medicine reminders and doctor follow-ups.' },
+] as const satisfies readonly { key: keyof User; label: string; desc: string }[]
 
 export default function SettingsPage() {
   const router = useRouter()
-  const { logout } = useAuthStore()
+  const { user, setUser, logout } = useAuthStore()
 
   const [passwords, setPasswords] = useState({ current_password: '', new_password: '', confirm: '' })
   const [pwLoading, setPwLoading] = useState(false)
@@ -17,10 +27,29 @@ export default function SettingsPage() {
   const [deactivating, setDeactivating] = useState(false)
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false)
   const [support, setSupport] = useState<{ support_email?: string | null; support_phone?: string | null } | null>(null)
+  const [savingPref, setSavingPref] = useState<string | null>(null)
 
   useEffect(() => {
     api.get('/settings/').then((r) => setSupport(r.data.data)).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    api.get('/auth/me/').then((r) => setUser(r.data.data.user)).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const toggleNotifPref = async (key: keyof User) => {
+    if (!user) return
+    setSavingPref(key)
+    try {
+      const res = await api.put('/auth/me/', { [key]: !user[key] })
+      setUser(res.data.data.user)
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update preference.')
+    } finally {
+      setSavingPref(null)
+    }
+  }
 
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -104,6 +133,34 @@ export default function SettingsPage() {
             {pwLoading ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />Saving...</> : 'Update Password'}
           </button>
         </form>
+      </div>
+
+      <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-1">
+        <h2 className="text-sm font-bold text-on-surface">Notification Preferences</h2>
+        <p className="text-xs text-on-surface-variant">
+          Choose which updates you'd like emailed to you. Your in-app notifications (bell icon) are unaffected either way.
+        </p>
+        <div className="divide-y divide-outline-variant pt-2">
+          {NOTIF_PREFS.map((p) => (
+            <div key={p.key} className="flex items-center justify-between gap-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-on-surface">{p.label}</p>
+                <p className="text-xs text-on-surface-variant mt-0.5">{p.desc}</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!!user?.[p.key]}
+                aria-label={p.label}
+                onClick={() => toggleNotifPref(p.key)}
+                disabled={savingPref === p.key}
+                className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-60 ${user?.[p.key] ? 'bg-primary' : 'bg-surface-container-highest'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${user?.[p.key] ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
