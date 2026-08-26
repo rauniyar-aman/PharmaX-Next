@@ -14,6 +14,13 @@ export interface User {
   doctor_verified?: boolean | null           // only present when role === 'DOCTOR'
   lab_collector_verified?: boolean | null    // only present when role === 'LAB_COLLECTOR'
   lab_collector_online?: boolean | null      // only present when role === 'LAB_COLLECTOR'
+  notif_order_updates?: boolean
+  notif_prescription_alerts?: boolean
+  notif_promotions?: boolean
+  notif_delivery_updates?: boolean
+  notif_doctor_updates?: boolean
+  notif_lab_test_updates?: boolean
+  notif_reminders?: boolean
   created_at: string
   updated_at: string
 }
