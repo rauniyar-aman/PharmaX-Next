@@ -151,59 +151,49 @@ def send_otp_email_async(to_email, full_name, otp, subject=None):
     threading.Thread(target=_run, daemon=True).start()
 
 
-def send_order_placed_email_async(user, order):
-    """Best-effort receipt email — skipped entirely if the user opted out via notif_order_updates
-    (same preference field the in-app notification for this event doesn't yet honor either, but
-    email is the more intrusive channel so it's the one worth gating first)."""
-    if not user.notif_order_updates:
+def _should_email_notification(user, notif_type):
+    """The only two opt-out preferences that exist on User — everything else has no dedicated
+    toggle, so it's sent unconditionally. Substring match rather than an exact-type list since
+    order/prescription notifications use several distinct type strings (ORDER, ORDER_UPDATE,
+    ORDER_CANCELLED, NEW_ORDER, PRESCRIPTION, NEW_PRESCRIPTION, ...) that all share the same
+    opt-out intent."""
+    if 'ORDER' in notif_type or notif_type == 'PAYMENT_UPDATE':
+        return user.notif_order_updates
+    if 'PRESCRIPTION' in notif_type:
+        return user.notif_prescription_alerts
+    return True
+
+
+def _send_notification_email_async(user, notif_type, title, message, link=None):
+    if not _should_email_notification(user, notif_type):
         return
     store_name = get_store_name()
-    short_id = str(order.id)[:8].upper()
-    subject = f'Your {store_name} order #{short_id} is confirmed'
-    text_body = (
-        f'Hi {user.full_name},\n\n'
-        f'Your order #{short_id} (NPR {order.total_amount}) has been placed successfully.\n'
-        f'Track it here: {FRONTEND_URL}/orders/{order.id}\n\n'
-        f'— {store_name} Team'
-    )
-    body_html = (
-        f'Hi {user.full_name},<br><br>'
-        f'Thanks for your order! We\'ve received <strong>order #{short_id}</strong> for '
-        f'<strong>NPR {order.total_amount}</strong> and it\'s now being processed.'
-    )
-    html_body = _render_email_html(store_name, 'Order placed', body_html, cta_text='View Order', cta_url=f'{FRONTEND_URL}/orders/{order.id}')
-    _send_email_async(user.email, subject, html_body, text_body)
-
-
-def send_order_delivered_email_async(user, order):
-    if not user.notif_order_updates:
-        return
-    store_name = get_store_name()
-    short_id = str(order.id)[:8].upper()
-    subject = f'Your {store_name} order #{short_id} has arrived'
-    text_body = (
-        f'Hi {user.full_name},\n\n'
-        f'Your order #{short_id} has been delivered. We hope you\'re happy with it!\n'
-        f'{FRONTEND_URL}/orders/{order.id}\n\n'
-        f'— {store_name} Team'
-    )
-    body_html = (
-        f'Hi {user.full_name},<br><br>'
-        f'Your <strong>order #{short_id}</strong> has been delivered. We hope everything arrived in great shape — '
-        f'let us know if anything needs a second look.'
-    )
-    html_body = _render_email_html(store_name, 'Order delivered', body_html, cta_text='View Order', cta_url=f'{FRONTEND_URL}/orders/{order.id}')
-    _send_email_async(user.email, subject, html_body, text_body)
-
-
-def send_prescription_outcome_email_async(user, new_status, message, link=None):
-    if not user.notif_prescription_alerts:
-        return
-    store_name = get_store_name()
-    heading = 'Prescription verified' if new_status == 'VERIFIED' else 'Prescription rejected'
-    subject = f'{store_name}: {heading}'
+    subject = f'{store_name}: {title}'
     text_body = f'Hi {user.full_name},\n\n{message}\n\n— {store_name} Team'
     body_html = f'Hi {user.full_name},<br><br>{message}'
     cta_url = f'{FRONTEND_URL}{link}' if link else None
-    html_body = _render_email_html(store_name, heading, body_html, cta_text='View Details' if cta_url else None, cta_url=cta_url)
+    html_body = _render_email_html(store_name, title, body_html, cta_text='View Details' if cta_url else None, cta_url=cta_url)
     _send_email_async(user.email, subject, html_body, text_body)
+
+
+def notify_user(user, type, title, message, link=None):
+    """Drop-in replacement for Notification.objects.create(...) — every in-app notification also
+    becomes an email using the exact same title/message/link, so the two channels can never drift
+    out of sync. Import deferred like get_store_name()'s, to keep this module import-safe before
+    the app registry is ready."""
+    from .models import Notification
+    n = Notification.objects.create(user=user, type=type, title=title, message=message, link=link)
+    _send_notification_email_async(user, type, title, message, link)
+    return n
+
+
+def notify_users_bulk(users, type, title, message, link=None):
+    """Same as notify_user() but for _notify_admins()'s fan-out to every admin holding a
+    permission — bulk_create for the DB rows, one async email per recipient."""
+    from .models import Notification
+    users = list(users)
+    Notification.objects.bulk_create([
+        Notification(user=u, type=type, title=title, message=message, link=link) for u in users
+    ])
+    for u in users:
+        _send_notification_email_async(u, type, title, message, link)
