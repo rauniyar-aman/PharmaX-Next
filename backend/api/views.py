@@ -68,7 +68,7 @@ from .serializers import (
     AdminLabCollectorSerializer, AdminLabCollectorCreateSerializer,
     PharmacyIncentiveCampaignSerializer, PharmacyCampaignEnrollmentSerializer,
 )
-from .utils import generate_otp, send_otp_email_async, get_store_name
+from .utils import generate_otp, send_otp_email_async, get_store_name, send_order_placed_email_async, send_prescription_outcome_email_async
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
 from .throttles import AuthRateThrottle
 from .matching import (
@@ -1245,6 +1245,7 @@ def _create_order_from_cart(user, address_id, prescription_id, payment_method, n
         message=f'Your order #{str(order.id)[:8]} has been placed successfully.',
         link=f'/orders/{order.id}',
     )
+    send_order_placed_email_async(user, order)
     _notify_admins(
         'manage_orders', 'NEW_ORDER', 'New Order',
         f'{user.full_name} placed a new order #{str(order.id)[:8]} for NPR {order.total_amount}.',
@@ -4629,6 +4630,7 @@ class AdminPrescriptionDetailView(APIView):
             message=message,
             link=link,
         )
+        send_prescription_outcome_email_async(prescription.user, new_status, message, link)
 
         _notify_prescription_order_outcome(prescription, new_status)
 
