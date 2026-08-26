@@ -171,6 +171,7 @@ urlpatterns = [
     path('admin/featured-deals/',               views.AdminFeaturedDealListView.as_view(),  name='admin-featured-deals'),
     path('admin/featured-deals/<uuid:pk>/',     views.AdminFeaturedDealDetailView.as_view(), name='admin-featured-deal-detail'),
     path('admin/promo-banners/',                views.AdminPromoBannerListView.as_view(),   name='admin-promo-banners'),
+    path('admin/promo-banners/upload-image/',   views.AdminPromoBannerImageUploadView.as_view(), name='admin-promo-banner-image-upload'),
     path('admin/promo-banners/<uuid:pk>/',      views.AdminPromoBannerDetailView.as_view(), name='admin-promo-banner-detail'),
     path('admin/wallets/',                      views.AdminWalletListView.as_view(),        name='admin-wallets'),
     path('admin/wallets/adjust/',               views.AdminWalletAdjustView.as_view(),      name='admin-wallet-adjust'),

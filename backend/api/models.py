@@ -971,6 +971,9 @@ class PromoBanner(models.Model):
     href = models.CharField(max_length=255)
     icon = models.CharField(max_length=50)
     gradient = models.CharField(max_length=100)
+    # When set, PromoSlider renders this instead of the gradient+icon placeholder — the gradient
+    # and icon stay populated regardless so existing/imageless banners keep their current look.
+    image = models.ImageField(upload_to='promo_banners/', null=True, blank=True)
     placement = models.CharField(max_length=20, choices=PLACEMENT, default='HERO')
     display_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)

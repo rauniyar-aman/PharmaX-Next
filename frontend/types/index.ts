@@ -899,6 +899,7 @@ export interface PromoBanner {
   href: string
   icon: string
   gradient: string
+  image_url?: string | null
   placement: PromoBannerPlacement
   display_order: number
   is_active: boolean

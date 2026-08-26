@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import PromoBannerImageField from '@/components/admin/PromoBannerImageField'
 import type { Coupon, DiscountType, FeaturedDeal, FeaturedDealTargetType, PromoBanner } from '@/types'
 
 const TABS = ['Coupons', 'Featured Deals', 'Banners', 'Wallets'] as const
@@ -511,6 +512,7 @@ function BannersTab() {
   const [href, setHref] = useState('')
   const [icon, setIcon] = useState(ICON_OPTIONS[0])
   const [gradient, setGradient] = useState(GRADIENT_OPTIONS[0].value)
+  const [image, setImage] = useState('')
   const [placement, setPlacement] = useState(PLACEMENT_OPTIONS[0].value)
   const [displayOrder, setDisplayOrder] = useState('0')
 
@@ -521,7 +523,7 @@ function BannersTab() {
 
   const resetForm = () => {
     setTitle(''); setSubtitle(''); setCta(''); setHref(''); setIcon(ICON_OPTIONS[0]); setGradient(GRADIENT_OPTIONS[0].value)
-    setPlacement(PLACEMENT_OPTIONS[0].value); setDisplayOrder('0'); setShowForm(false)
+    setImage(''); setPlacement(PLACEMENT_OPTIONS[0].value); setDisplayOrder('0'); setShowForm(false)
   }
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -531,7 +533,7 @@ function BannersTab() {
     try {
       await api.post('/admin/promo-banners/', {
         title: title.trim(), subtitle: subtitle.trim(), cta: cta.trim(), href: href.trim(),
-        icon, gradient, placement, display_order: Number(displayOrder) || 0,
+        icon, gradient, image_url: image || null, placement, display_order: Number(displayOrder) || 0,
       })
       toast.success('Banner added.')
       resetForm()
@@ -632,6 +634,7 @@ function BannersTab() {
               </div>
             </div>
           </div>
+          <PromoBannerImageField value={image} onChange={setImage} />
           <div className="flex items-center gap-3">
             <button type="submit" disabled={saving}
               className="px-6 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
