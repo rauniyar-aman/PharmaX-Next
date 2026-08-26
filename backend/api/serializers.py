@@ -69,6 +69,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'blood_group', 'allergies', 'avatar_url', 'referral_code', 'role', 'is_active',
             'is_email_verified', 'notif_order_updates',
             'notif_prescription_alerts', 'notif_promotions',
+            'notif_delivery_updates', 'notif_doctor_updates', 'notif_lab_test_updates', 'notif_reminders',
             'is_super_admin', 'permission_codes', 'delivery_agent_verified', 'delivery_agent_online',
             'doctor_verified', 'lab_collector_verified', 'lab_collector_online',
             'created_at', 'updated_at',

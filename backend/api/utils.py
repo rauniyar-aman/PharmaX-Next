@@ -152,16 +152,34 @@ def send_otp_email_async(to_email, full_name, otp, subject=None):
 
 
 def _should_email_notification(user, notif_type):
-    """The only two opt-out preferences that exist on User — everything else has no dedicated
-    toggle, so it's sent unconditionally. Substring match rather than an exact-type list since
-    order/prescription notifications use several distinct type strings (ORDER, ORDER_UPDATE,
-    ORDER_CANCELLED, NEW_ORDER, PRESCRIPTION, NEW_PRESCRIPTION, ...) that all share the same
-    opt-out intent."""
+    """Business/operational notifications (pharmacy/doctor/delivery-agent/lab-collector "you have
+    work to do" alerts, and every _notify_admins() call) are never gated by these customer-only
+    preferences — see pharmax-notification-preferences-spec.md's design decision. That's a role
+    check, not a type check: several business-facing notifications reuse a type string that also
+    carries a customer preference (e.g. ORDER_CANCELLED/ORDER_UPDATE/FULFILLMENT_UPDATE sent to a
+    pharmacy or delivery agent), so gating on type alone would risk silencing an operationally
+    critical alert just because it shares a string with a customer-facing one.
+    LAB_BOOKING_UPDATE (not just LAB_TEST/REPORT) is matched here since that's the actual type
+    string the codebase uses for customer lab-booking notifications — the naive LAB_TEST substring
+    alone would never match it."""
+    if user.role != 'CUSTOMER':
+        return True
     if 'ORDER' in notif_type or notif_type == 'PAYMENT_UPDATE':
         return user.notif_order_updates
     if 'PRESCRIPTION' in notif_type:
         return user.notif_prescription_alerts
-    return True
+    if 'DELIVERY' in notif_type or notif_type == 'ORDER_OUT_FOR_DELIVERY':
+        return user.notif_delivery_updates
+    if 'DOCTOR' in notif_type or 'APPOINTMENT' in notif_type:
+        return user.notif_doctor_updates
+    if 'LAB_TEST' in notif_type or 'LAB_BOOKING' in notif_type or 'REPORT' in notif_type:
+        return user.notif_lab_test_updates
+    if 'REMINDER' in notif_type or 'FOLLOW_UP' in notif_type:
+        return user.notif_reminders
+    return True  # business/operational types (pharmacy/doctor/delivery/collector new-work alerts,
+    # admin _notify_admins() calls) fall through here deliberately — unconditional by design, see
+    # this spec's stated reasoning, not an oversight. Also catches genuinely customer-facing types
+    # with no dedicated preference field (REFERRAL, WALLET, PLUS) — see the Stage 2 audit notes.
 
 
 def _send_notification_email_async(user, notif_type, title, message, link=None):
