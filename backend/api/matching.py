@@ -34,6 +34,7 @@ from .models import (
     Pharmacy, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, OrderItem, Order, Cart, Notification,
     DeliveryAgent, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyCampaignEnrollment,
 )
+from .utils import send_order_delivered_email_async
 
 EARTH_RADIUS_KM = 6371.0
 
@@ -1060,3 +1061,4 @@ def sync_order_status(order):
                 message=f'Your order #{str(order.id)[:8]} has been delivered.',
                 link=f'/orders/{order.id}',
             )
+            send_order_delivered_email_async(order.user, order)
