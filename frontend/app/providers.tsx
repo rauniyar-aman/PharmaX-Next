@@ -3,6 +3,7 @@ import { useEffect, type ReactNode } from 'react'
 import { Toaster } from 'react-hot-toast'
 import { useAuthStore } from '@/store/auth'
 import { useThemeStore } from '@/store/theme'
+import NotificationToastWatcher from '@/components/notifications/NotificationToastWatcher'
 
 export default function Providers({ children }: { children: ReactNode }) {
   const dark = useThemeStore((s) => s.dark)
@@ -25,6 +26,7 @@ export default function Providers({ children }: { children: ReactNode }) {
   return (
     <>
       {children}
+      <NotificationToastWatcher />
       <Toaster position="top-right" toastOptions={{ duration: 4000 }} />
     </>
   )
