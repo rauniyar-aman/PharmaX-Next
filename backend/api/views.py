@@ -3246,6 +3246,29 @@ class AdminPromoBannerListView(APIView):
         return Response({'success': True, 'data': {'banner': PromoBannerSerializer(banner).data}}, status=status.HTTP_201_CREATED)
 
 
+class AdminPromoBannerImageUploadView(APIView):
+    permission_classes = [require_permission('manage_marketing')]
+
+    def post(self, request):
+        from django.core.files.storage import FileSystemStorage
+
+        file = request.FILES.get('image')
+        if not file:
+            return Response({'success': False, 'message': 'No image file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.content_type not in ('image/jpeg', 'image/png', 'image/webp', 'image/gif'):
+            return Response({'success': False, 'message': 'Only JPG, PNG, WebP, or GIF images are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
+        max_size = _document_max_size_bytes()
+        if file.size > max_size:
+            return Response({'success': False, 'message': f'Image must be under {max_size // (1024 * 1024)}MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ext = os.path.splitext(file.name)[1].lower() or '.jpg'
+        filename = f'promo_banner_{uuid_lib.uuid4().hex}{ext}'
+        storage = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'promo_banners'))
+        storage.save(filename, file)
+
+        return Response({'success': True, 'data': {'image_url': f'/media/promo_banners/{filename}'}})
+
+
 class AdminPromoBannerDetailView(APIView):
     permission_classes = [require_permission('manage_marketing')]
 

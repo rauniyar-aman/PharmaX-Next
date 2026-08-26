@@ -50,7 +50,7 @@ export default function HomePage() {
   }, [])
 
   const toSlides = (banners: any[] = []): Slide[] => banners.map((b) => ({
-    title: b.title, subtitle: b.subtitle, cta: b.cta, href: b.href, icon: b.icon, gradient: b.gradient,
+    title: b.title, subtitle: b.subtitle, cta: b.cta, href: b.href, icon: b.icon, gradient: b.gradient, image_url: b.image_url,
   }))
   const heroSlides = toSlides(bannersByPlacement.HERO)
   const midPageSlides = toSlides(bannersByPlacement.MID_PAGE)

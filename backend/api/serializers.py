@@ -1,5 +1,6 @@
 from decimal import Decimal
 from rest_framework import serializers
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
@@ -1015,10 +1016,38 @@ class FeaturedDealSerializer(serializers.ModelSerializer):
 
 
 class PromoBannerSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
     class Meta:
         model = PromoBanner
-        fields = ['id', 'title', 'subtitle', 'cta', 'href', 'icon', 'gradient', 'placement', 'display_order', 'is_active', 'created_at']
-        read_only_fields = ['id', 'created_at']
+        fields = ['id', 'title', 'subtitle', 'cta', 'href', 'icon', 'gradient', 'placement', 'image_url', 'display_order', 'is_active', 'created_at']
+        read_only_fields = ['id', 'created_at', 'image_url']
+
+    def get_image_url(self, obj):
+        return obj.image.url if obj.image else None
+
+    def _apply_image_url(self, instance):
+        # The upload endpoint (AdminPromoBannerImageUploadView) saves the file straight to storage
+        # and hands back its media-relative URL, same two-step flow as Medicine.image_url — this
+        # bridges that URL onto the real ImageField without needing a multipart create/update request.
+        if 'image_url' not in self.initial_data:
+            return
+        raw = self.initial_data.get('image_url')
+        if not raw:
+            instance.image = None
+        else:
+            instance.image = raw[len(settings.MEDIA_URL):] if raw.startswith(settings.MEDIA_URL) else raw
+        instance.save(update_fields=['image'])
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        self._apply_image_url(instance)
+        return instance
+
+    def update(self, instance, validated_data):
+        instance = super().update(instance, validated_data)
+        self._apply_image_url(instance)
+        return instance
 
 
 class DoctorAvailabilitySerializer(serializers.ModelSerializer):
