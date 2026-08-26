@@ -34,7 +34,7 @@ from .models import (
     Pharmacy, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, OrderItem, Order, Cart, Notification,
     DeliveryAgent, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyCampaignEnrollment,
 )
-from .utils import send_order_delivered_email_async
+from .utils import notify_user
 
 EARTH_RADIUS_KM = 6371.0
 
@@ -127,7 +127,7 @@ def _create_requests_for_item(item, listings):
     for listing in listings:
         _req, req_created = FulfillmentRequest.objects.get_or_create(order_item=item, pharmacy=listing.pharmacy)
         if req_created:
-            Notification.objects.create(
+            notify_user(
                 user=listing.pharmacy.user, type='NEW_FULFILLMENT_REQUEST', title='New Order Request',
                 message=f'A nearby customer needs {item.medicine.name} × {item.quantity}.',
                 link='/pharmacy/requests',
@@ -395,7 +395,7 @@ def pharmacy_advance_fulfillment(pharmacy, fulfillment):
         # first confirmation that a real pharmacy is actually acting on it, not just that the
         # payment cleared.
         pharmacy_name = fulfillment.pharmacy.name if fulfillment.pharmacy else 'The pharmacy'
-        Notification.objects.create(
+        notify_user(
             user=fulfillment.order.user, type='ORDER_UPDATE', title='Order Confirmed',
             message=f'{pharmacy_name} confirmed order #{str(fulfillment.order_id)[:8]} and is preparing it.',
             link=f'/orders/{fulfillment.order_id}',
@@ -629,14 +629,14 @@ def _maybe_finalize_pickup(order):
     # admin-facing signal); see pharmax-rider-tracking-spec.md Part 1. One customer notification
     # for the whole order, but one per pharmacy — each pharmacy needs its own "your leg was picked
     # up" ping regardless of how many other legs are on the same order.
-    Notification.objects.create(
+    notify_user(
         user=fulfillments[0].order.user, type='ORDER_UPDATE', title='Order Out for Delivery',
         message=f'{agent.user.full_name} is on the way with order #{str(fulfillments[0].order_id)[:8]}.',
         link=f'/orders/{fulfillments[0].order_id}',
     )
     for f in fulfillments:
         if f.pharmacy_id:
-            Notification.objects.create(
+            notify_user(
                 user=f.pharmacy.user, type='ORDER_UPDATE', title='Rider Picked Up',
                 message=f'{agent.user.full_name} picked up order #{str(f.order_id)[:8]}.',
                 link='/pharmacy/orders',
@@ -710,7 +710,7 @@ def delivery_agent_accept(agent, fulfillment):
         # _maybe_finalize_pickup() actually completes the handoff — firing them here too would be
         # a customer-facing lie about a pickup that hasn't happened, and would double-notify in
         # the case where packing had already finished before this accept).
-        Notification.objects.create(
+        notify_user(
             user=fulfillment.order.user, type='ORDER_UPDATE', title='Rider Assigned',
             message=f'{agent.user.full_name} has been assigned to order #{str(fulfillment.order_id)[:8]} and is heading to pick it up.',
             link=f'/orders/{fulfillment.order_id}',
@@ -815,7 +815,7 @@ def _deliver_fulfillment(fulfillment):
     # premature "delivered" notification the moment the FIRST leg finished, while other legs were
     # still in transit.
     if fulfillment.pharmacy_id:
-        Notification.objects.create(
+        notify_user(
             user=fulfillment.pharmacy.user, type='ORDER_UPDATE', title='Delivery Completed',
             message=f'Order #{str(fulfillment.order_id)[:8]} was delivered successfully.',
             link='/pharmacy/orders',
@@ -990,7 +990,7 @@ def sync_order_status(order):
             if order.fulfillments.exists():
                 order.status = 'AWAITING_PAYMENT'
                 order.save(update_fields=['status'])
-                Notification.objects.create(
+                notify_user(
                     user=order.user, type='ORDER_UPDATE', title='Order Ready for Payment',
                     message=f'Nearby pharmacies have responded to order #{str(order.id)[:8]} — review and pay to confirm.',
                     link=f'/orders/{order.id}',
@@ -998,7 +998,7 @@ def sync_order_status(order):
             else:
                 order.status = 'NO_PHARMACY_FOUND'
                 order.save(update_fields=['status'])
-                Notification.objects.create(
+                notify_user(
                     user=order.user, type='ORDER_UPDATE', title='No Pharmacy Had Your Items',
                     message=f"No nearby pharmacy had the items in order #{str(order.id)[:8]} in stock — feel free to try again.",
                     link='/medicines',
@@ -1018,7 +1018,7 @@ def sync_order_status(order):
                 cart = Cart.objects.filter(user=order.user).first()
                 if cart:
                     cart.items.all().delete()
-            Notification.objects.create(
+            notify_user(
                 user=order.user, type='ORDER', title='Order Placed',
                 message=f'Your order #{str(order.id)[:8]} has been placed successfully.',
                 link=f'/orders/{order.id}',
@@ -1056,9 +1056,8 @@ def sync_order_status(order):
                 update_fields.append('payment_status')
             order.save(update_fields=update_fields)
             _create_settlement_records(order)
-            Notification.objects.create(
+            notify_user(
                 user=order.user, type='ORDER_UPDATE', title='Order Delivered',
                 message=f'Your order #{str(order.id)[:8]} has been delivered.',
                 link=f'/orders/{order.id}',
             )
-            send_order_delivered_email_async(order.user, order)

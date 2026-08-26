@@ -68,7 +68,7 @@ from .serializers import (
     AdminLabCollectorSerializer, AdminLabCollectorCreateSerializer,
     PharmacyIncentiveCampaignSerializer, PharmacyCampaignEnrollmentSerializer,
 )
-from .utils import generate_otp, send_otp_email_async, get_store_name, send_order_placed_email_async, send_prescription_outcome_email_async
+from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
 from .throttles import AuthRateThrottle
 from .matching import (
@@ -1046,10 +1046,7 @@ def _notify_admins(permission_code, notif_type, title, message, link=None):
     admins = User.objects.filter(role='ADMIN', is_active=True).filter(
         Q(is_super_admin=True) | Q(permissions__code=permission_code)
     ).distinct()
-    Notification.objects.bulk_create([
-        Notification(user=admin, type=notif_type, title=title, message=message, link=link)
-        for admin in admins
-    ])
+    notify_users_bulk(admins, notif_type, title, message, link)
 
 
 def _validate_coupon(code, user, subtotal):
@@ -1115,12 +1112,12 @@ def _maybe_reward_referral(user):
     referral.rewarded_at = timezone.now()
     referral.save(update_fields=['status', 'reward_amount', 'rewarded_at'])
 
-    Notification.objects.create(
+    notify_user(
         user=referral.referrer, type='REFERRAL', title='Referral Bonus Earned!',
         message=f'You earned NPR {referrer_bonus} because {user.full_name} placed their first order.',
         link='/referrals',
     )
-    Notification.objects.create(
+    notify_user(
         user=user, type='REFERRAL', title='Welcome Bonus Credited!',
         message=f'NPR {referee_bonus} has been added to your wallet as a welcome bonus.',
         link='/wallet',
@@ -1238,14 +1235,13 @@ def _create_order_from_cart(user, address_id, prescription_id, payment_method, n
 
     _maybe_reward_referral(user)
 
-    Notification.objects.create(
+    notify_user(
         user=user,
         type='ORDER',
         title='Order Placed',
         message=f'Your order #{str(order.id)[:8]} has been placed successfully.',
         link=f'/orders/{order.id}',
     )
-    send_order_placed_email_async(user, order)
     _notify_admins(
         'manage_orders', 'NEW_ORDER', 'New Order',
         f'{user.full_name} placed a new order #{str(order.id)[:8]} for NPR {order.total_amount}.',
@@ -1623,13 +1619,13 @@ class OrderCancelView(APIView):
                             PharmacyMedicineListing.objects.filter(
                                 pharmacy_id=fulfillment.pharmacy_id, medicine_id=item.medicine_id,
                             ).update(stock_quantity=F('stock_quantity') + item.quantity)
-                    Notification.objects.create(
+                    notify_user(
                         user=fulfillment.pharmacy.user, type='ORDER_CANCELLED', title='Order Cancelled',
                         message=f'The customer cancelled order #{str(order.id)[:8]} — no need to prepare it further.',
                         link='/pharmacy/orders',
                     )
                 if fulfillment.delivery_agent_id:
-                    Notification.objects.create(
+                    notify_user(
                         user=fulfillment.delivery_agent.user, type='ORDER_CANCELLED', title='Order Cancelled',
                         message=f'The customer cancelled order #{str(order.id)[:8]} — do not deliver it.',
                         link='/delivery/active',
@@ -1829,7 +1825,7 @@ def _finalize_paid_order(order):
     order.save(update_fields=['payment_status'])
     sync_order_status(order)
 
-    Notification.objects.create(
+    notify_user(
         user=order.user, type='PAYMENT_UPDATE', title='Payment Received',
         message=f'Payment for order #{str(order.id)[:8]} was received successfully.',
         link=f'/orders/{order.id}',
@@ -2100,7 +2096,7 @@ class AppointmentKhaltiVerifyView(APIView):
             appt.payment_status = 'PAID'
             appt.status = 'CONFIRMED'
             appt.save(update_fields=['payment_status', 'status'])
-            Notification.objects.create(
+            notify_user(
                 user=appt.user, type='PAYMENT_UPDATE', title='Payment Received',
                 message=f'Payment for your consultation with Dr. {appt.doctor.name} was received — your appointment is confirmed.',
                 link=f'/doctor-consult/appointments/{appt.id}',
@@ -2333,7 +2329,7 @@ def _upload_lab_report(booking, file):
     booking.status = 'REPORT_READY'
     booking.save(update_fields=['report_file', 'report_uploaded_at', 'status'])
 
-    Notification.objects.create(
+    notify_user(
         user=booking.user, type='LAB_BOOKING_UPDATE', title='Report Ready',
         message=f'Your {booking.lab_test.name} report is ready to view.',
         link='/lab-test-bookings',
@@ -2421,7 +2417,7 @@ class LabTestKhaltiVerifyView(APIView):
             booking.payment_status = 'PAID'
             booking.save(update_fields=['payment_status'])
             _confirm_lab_test_booking(booking)
-            Notification.objects.create(
+            notify_user(
                 user=booking.user, type='PAYMENT_UPDATE', title='Payment Received',
                 message=f'Payment for your {booking.lab_test.name} booking was received — it\'s confirmed.',
                 link='/lab-test-bookings',
@@ -2515,7 +2511,7 @@ class LabTestEsewaSuccessView(APIView):
             booking.payment_status = 'PAID'
             booking.save(update_fields=['payment_status'])
             _confirm_lab_test_booking(booking)
-            Notification.objects.create(
+            notify_user(
                 user=booking.user, type='PAYMENT_UPDATE', title='Payment Received',
                 message=f'Payment for your {booking.lab_test.name} booking was received — it\'s confirmed.',
                 link='/lab-test-bookings',
@@ -2946,7 +2942,7 @@ class PlusMembershipView(APIView):
             membership.price_paid = plan.price
             membership.save()
 
-        Notification.objects.create(
+        notify_user(
             user=request.user,
             type='PLUS',
             title='Welcome to PharmaX Plus!',
@@ -3340,7 +3336,7 @@ class AdminWalletAdjustView(APIView):
         WalletTransaction.objects.create(
             wallet=wallet, type=adj_type, amount=amount, reason=reason, balance_after=wallet.balance,
         )
-        Notification.objects.create(
+        notify_user(
             user=user, type='WALLET', title='Wallet Updated',
             message=f'NPR {amount} was {"credited to" if adj_type == "CREDIT" else "debited from"} your wallet: {reason}',
             link='/wallet',
@@ -4471,7 +4467,7 @@ class AdminOrderDetailView(APIView):
         if payment_status:
             order.payment_status = payment_status
         order.save()
-        Notification.objects.create(
+        notify_user(
             user=order.user,
             type='ORDER',
             title='Order Updated',
@@ -4572,13 +4568,13 @@ def _notify_prescription_order_outcome(prescription, new_status):
                 for fulfillment in order.fulfillments.exclude(status='CANCELLED'):
                     if fulfillment.delivery_broadcast_at is None and _fulfillment_prescription_ready(fulfillment):
                         broadcast_delivery(fulfillment)
-            Notification.objects.create(
+            notify_user(
                 user=order.user, type='ORDER', title='Prescription Verified',
                 message=f'Your prescription was verified — order #{short_id} can now be prepared by the pharmacy.',
                 link=f'/orders/{order.id}',
             )
         else:
-            Notification.objects.create(
+            notify_user(
                 user=order.user, type='ORDER', title='Prescription Rejected',
                 message=f'A prescription for order #{short_id} was rejected. Please upload a new one so the pharmacy can prepare it.',
                 link=f'/orders/{order.id}',
@@ -4623,14 +4619,13 @@ class AdminPrescriptionDetailView(APIView):
             link = None
         if admin_comment:
             message += f' Note from pharmacist: {admin_comment}'
-        Notification.objects.create(
+        notify_user(
             user=prescription.user,
             type='PRESCRIPTION',
             title='Prescription ' + new_status.capitalize(),
             message=message,
             link=link,
         )
-        send_prescription_outcome_email_async(prescription.user, new_status, message, link)
 
         _notify_prescription_order_outcome(prescription, new_status)
 
@@ -5064,7 +5059,7 @@ class AdminPharmacyLocationChangeApproveView(APIView):
         req.reviewed_at = timezone.now()
         req.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
 
-        Notification.objects.create(
+        notify_user(
             user=pharmacy.user, type='PHARMACY_LOCATION_CHANGE_REVIEWED', title='Location Change Approved',
             message='Your requested pharmacy location change has been approved and is now live.',
             link='/pharmacy/settings',
@@ -5096,7 +5091,7 @@ class AdminPharmacyLocationChangeRejectView(APIView):
         req.reviewed_at = timezone.now()
         req.save(update_fields=['status', 'admin_note', 'reviewed_by', 'reviewed_at'])
 
-        Notification.objects.create(
+        notify_user(
             user=req.pharmacy.user, type='PHARMACY_LOCATION_CHANGE_REVIEWED', title='Location Change Rejected',
             message=f'Your requested pharmacy location change was rejected: {admin_note}',
             link='/pharmacy/settings',
@@ -5365,7 +5360,7 @@ class DoctorAppointmentConfirmView(APIView):
         appt.status = 'CONFIRMED'
         appt.save(update_fields=['status'])
 
-        Notification.objects.create(
+        notify_user(
             user=appt.user, type='APPOINTMENT_UPDATE', title='Appointment Confirmed',
             message=f'Dr. {doctor.name} has confirmed your appointment on {appt.scheduled_date} at {appt.time_slot}.',
             link=f'/doctor-consult/appointments/{appt.id}',
@@ -5395,7 +5390,7 @@ class DoctorAppointmentSetMeetingLinkView(APIView):
         appt.meeting_link = meeting_link
         appt.save(update_fields=['meeting_link'])
 
-        Notification.objects.create(
+        notify_user(
             user=appt.user, type='APPOINTMENT_UPDATE', title='Meeting Link Ready',
             message=f'Dr. {doctor.name} has shared the meeting link for your appointment on {appt.scheduled_date}.',
             link=f'/doctor-consult/appointments/{appt.id}',
@@ -5514,7 +5509,7 @@ class DoctorAppointmentCompleteView(APIView):
             else:
                 message = f'Dr. {doctor.name} has completed your consultation — your notes are ready.'
                 link = '/appointments'
-            Notification.objects.create(
+            notify_user(
                 user=appt.user, type='PRESCRIPTION', title='Consultation Notes Ready',
                 message=message, link=link,
             )
