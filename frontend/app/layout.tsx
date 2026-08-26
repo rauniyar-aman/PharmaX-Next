@@ -6,7 +6,7 @@ import Providers from './providers'
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
 export const metadata: Metadata = {
-  title: 'PharmaX',
+  title: { default: 'PharmaX', template: '%s | PharmaX' },
   description: 'Your trusted online pharmacy',
   icons: { icon: '/PharmaX_Icon.png' },
 }
