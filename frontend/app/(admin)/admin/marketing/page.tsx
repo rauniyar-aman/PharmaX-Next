@@ -6,7 +6,7 @@ import { resolveImg } from '@/lib/resolveImg'
 import PromoBannerImageField from '@/components/admin/PromoBannerImageField'
 import type { Coupon, DiscountType, FeaturedDeal, FeaturedDealTargetType, PromoBanner } from '@/types'
 
-const TABS = ['Coupons', 'Featured Deals', 'Banners', 'Wallets'] as const
+const TABS = ['Coupons', 'Featured Deals', 'Banners'] as const
 type Tab = typeof TABS[number]
 
 export default function AdminMarketingPage() {
@@ -24,7 +24,6 @@ export default function AdminMarketingPage() {
       {tab === 'Coupons' && <CouponsTab />}
       {tab === 'Featured Deals' && <FeaturedDealsTab />}
       {tab === 'Banners' && <BannersTab />}
-      {tab === 'Wallets' && <WalletsTab />}
     </div>
   )
 }
@@ -710,123 +709,6 @@ function BannersTab() {
           })}
         </div>
       )}
-    </div>
-  )
-}
-
-function WalletsTab() {
-  const [wallets, setWallets] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [showForm, setShowForm] = useState(false)
-  const [userEmail, setUserEmail] = useState('')
-  const [amount, setAmount] = useState('')
-  const [reason, setReason] = useState('')
-  const [adjType, setAdjType] = useState<'CREDIT' | 'DEBIT'>('CREDIT')
-  const [saving, setSaving] = useState(false)
-
-  const load = () => {
-    setLoading(true)
-    api.get('/admin/wallets/', { params: search ? { search } : {} }).then((r) => setWallets(r.data.data.wallets || [])).catch(() => {}).finally(() => setLoading(false))
-  }
-  useEffect(() => { load() }, [search])
-
-  const handleAdjust = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!userEmail.trim() || !amount || !reason.trim()) { toast.error('All fields are required.'); return }
-    setSaving(true)
-    try {
-      const userRes = await api.get('/admin/customers/', { params: { search: userEmail.trim() } })
-      const match = (userRes.data.data.customers || []).find((u: any) => u.email.toLowerCase() === userEmail.trim().toLowerCase())
-      if (!match) { toast.error('No customer found with that email.'); setSaving(false); return }
-      await api.post('/admin/wallets/adjust/', { user_id: match.id, amount: Number(amount), reason: reason.trim(), type: adjType })
-      toast.success('Wallet adjusted!')
-      setUserEmail(''); setAmount(''); setReason(''); setShowForm(false)
-      load()
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to adjust wallet.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or email..."
-          className="flex-1 min-w-[200px] max-w-sm px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary transition" />
-        <button onClick={() => setShowForm((s) => !s)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity">
-          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>Adjust Wallet
-        </button>
-      </div>
-
-      {showForm && (
-        <form onSubmit={handleAdjust} className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-on-surface-variant">Customer Email *</label>
-              <input type="email" value={userEmail} onChange={(e) => setUserEmail(e.target.value)} placeholder="customer@example.com"
-                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary transition" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-on-surface-variant">Adjustment Type</label>
-              <select value={adjType} onChange={(e) => setAdjType(e.target.value as 'CREDIT' | 'DEBIT')}
-                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
-                <option value="CREDIT">Credit (Add)</option>
-                <option value="DEBIT">Debit (Deduct)</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-on-surface-variant">Amount (NPR) *</label>
-              <input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)}
-                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-on-surface-variant">Reason *</label>
-              <input type="text" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g., Goodwill credit for delayed delivery"
-                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary transition" />
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button type="submit" disabled={saving}
-              className="px-6 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
-              {saving ? 'Saving...' : 'Apply Adjustment'}
-            </button>
-            <button type="button" onClick={() => setShowForm(false)} className="text-sm font-medium text-on-surface-variant hover:text-on-surface transition-colors">Cancel</button>
-          </div>
-        </form>
-      )}
-
-      <div className="bg-surface rounded-2xl border border-outline-variant overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-surface-container-low border-b border-outline-variant">
-              <tr>
-                {['Customer', 'Balance', 'Last Updated'].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-on-surface-variant whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-outline-variant">
-              {loading ? (
-                [...Array(4)].map((_, i) => <tr key={i}><td colSpan={3} className="px-4 py-3"><div className="h-6 bg-surface-container-low rounded animate-pulse" /></td></tr>)
-              ) : wallets.length === 0 ? (
-                <tr><td colSpan={3} className="px-4 py-12 text-center text-on-surface-variant">No wallets found</td></tr>
-              ) : wallets.map((w) => (
-                <tr key={w.id} className="hover:bg-surface-container-low transition-colors">
-                  <td className="px-4 py-3">
-                    <p className="text-sm text-on-surface">{w.user.full_name}</p>
-                    <p className="text-xs text-on-surface-variant">{w.user.email}</p>
-                  </td>
-                  <td className="px-4 py-3 font-semibold text-on-surface">NPR {Number(w.balance).toFixed(0)}</td>
-                  <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap">{new Date(w.updated_at).toLocaleDateString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   )
 }
