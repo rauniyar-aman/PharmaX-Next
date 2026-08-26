@@ -50,7 +50,7 @@ export default function PromoSlider({ slides, intervalMs = 5000 }: Props) {
             const image = resolveImg(slide.image_url)
             return (
               <Link key={i} href={slide.href}
-                className={`relative w-full flex-shrink-0 px-6 py-7 sm:px-10 sm:py-9 flex items-center justify-between gap-6 overflow-hidden ${image ? '' : `bg-gradient-to-r ${slide.gradient}`}`}>
+                className={`relative w-full aspect-square flex-shrink-0 px-6 py-7 sm:px-10 sm:py-9 flex items-center justify-between gap-6 overflow-hidden ${image ? '' : `bg-gradient-to-r ${slide.gradient}`}`}>
                 {image && (
                   <>
                     <img src={image} alt={slide.title} className="absolute inset-0 w-full h-full object-cover" />
