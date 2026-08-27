@@ -168,7 +168,7 @@ def _should_email_notification(user, notif_type):
         return user.notif_order_updates
     if 'PRESCRIPTION' in notif_type:
         return user.notif_prescription_alerts
-    if 'DELIVERY' in notif_type or notif_type == 'ORDER_OUT_FOR_DELIVERY':
+    if 'DELIVERY' in notif_type:
         return user.notif_delivery_updates
     if 'DOCTOR' in notif_type or 'APPOINTMENT' in notif_type:
         return user.notif_doctor_updates

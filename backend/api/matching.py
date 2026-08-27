@@ -630,7 +630,7 @@ def _maybe_finalize_pickup(order):
     # for the whole order, but one per pharmacy — each pharmacy needs its own "your leg was picked
     # up" ping regardless of how many other legs are on the same order.
     notify_user(
-        user=fulfillments[0].order.user, type='ORDER_UPDATE', title='Order Out for Delivery',
+        user=fulfillments[0].order.user, type='DELIVERY_OUT_FOR_DELIVERY', title='Order Out for Delivery',
         message=f'{agent.user.full_name} is on the way with order #{str(fulfillments[0].order_id)[:8]}.',
         link=f'/orders/{fulfillments[0].order_id}',
     )
@@ -1057,7 +1057,7 @@ def sync_order_status(order):
             order.save(update_fields=update_fields)
             _create_settlement_records(order)
             notify_user(
-                user=order.user, type='ORDER_UPDATE', title='Order Delivered',
+                user=order.user, type='DELIVERY_COMPLETED', title='Order Delivered',
                 message=f'Your order #{str(order.id)[:8]} has been delivered.',
                 link=f'/orders/{order.id}',
             )

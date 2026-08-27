@@ -1,6 +1,8 @@
 export const NOTIFICATION_TYPE_CFG: Record<string, { icon: string; color: string }> = {
   ORDER_PLACED:           { icon: 'shopping_bag',   color: 'text-secondary bg-secondary/10' },
   ORDER_UPDATE:           { icon: 'local_shipping', color: 'text-primary bg-primary/10' },
+  DELIVERY_OUT_FOR_DELIVERY: { icon: 'local_shipping', color: 'text-primary bg-primary/10' },
+  DELIVERY_COMPLETED:     { icon: 'local_shipping', color: 'text-primary bg-primary/10' },
   PAYMENT_UPDATE:         { icon: 'payments',       color: 'text-primary bg-primary/10' },
   PRESCRIPTION_SUBMITTED: { icon: 'upload_file',    color: 'text-amber-600 bg-amber-100' },
   PRESCRIPTION_VERIFIED:  { icon: 'verified_user',  color: 'text-primary bg-primary/10' },
