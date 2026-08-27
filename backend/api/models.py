@@ -659,6 +659,7 @@ class DoctorAppointment(models.Model):
     # Both optional — set only if the doctor recommends a follow-up when completing this consultation.
     follow_up_date = models.DateField(null=True, blank=True)
     follow_up_notes = models.CharField(max_length=255, null=True, blank=True)
+    follow_up_notified_at = models.DateTimeField(null=True, blank=True)
     booked_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

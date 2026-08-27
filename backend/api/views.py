@@ -2817,6 +2817,34 @@ class AppointmentDetailView(APIView):
         return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment cancelled.'})
 
 
+class AppointmentFollowUpsDueView(APIView):
+    """Single source of truth for 'you have a follow-up due' — both the Notification/email trigger
+    here and the customer layout's toast poll read from this same query, instead of the frontend
+    deriving its own due list from the plain appointment list (which never touched the Notification
+    model or respected notif_reminders at all). follow_up_notified_at makes this fire once per
+    appointment, not once per poll — same discipline as ReminderLog.notified_at."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        today = timezone.now().date()
+        due = list(DoctorAppointment.objects.filter(
+            user=request.user, follow_up_date__isnull=False, follow_up_date__lte=today,
+            follow_up_notified_at__isnull=True,
+        ).select_related('doctor'))
+
+        for appt in due:
+            overdue = appt.follow_up_date < today
+            message = f'Dr. {appt.doctor.name} recommended a follow-up' + (f' — {appt.follow_up_notes}' if appt.follow_up_notes else '') + '.'
+            notify_user(
+                user=request.user, type='REMINDER_DUE', title='Follow-up overdue' if overdue else 'Follow-up due today',
+                message=message, link=f'/doctor-consult/{appt.doctor.id}',
+            )
+        if due:
+            DoctorAppointment.objects.filter(id__in=[a.id for a in due]).update(follow_up_notified_at=timezone.now())
+
+        return Response({'success': True, 'data': {'follow_ups': DoctorAppointmentSerializer(due, many=True).data}})
+
+
 def _recalc_doctor_rating(doctor):
     agg = DoctorReview.objects.filter(doctor=doctor).aggregate(avg=Avg('rating'), cnt=Count('id'))
     doctor.rating = round(agg['avg'] or 0, 2)

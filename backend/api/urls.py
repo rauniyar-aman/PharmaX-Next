@@ -99,6 +99,7 @@ urlpatterns = [
     path('doctors/specialties/',        views.DoctorSpecialtyListView.as_view(), name='doctor-specialties'),
     path('doctors/appointments/',       views.AppointmentListCreateView.as_view(), name='appointments'),
     path('doctors/appointments/<uuid:pk>/', views.AppointmentDetailView.as_view(), name='appointment-detail'),
+    path('appointments/follow-ups-due/',  views.AppointmentFollowUpsDueView.as_view(), name='appointment-follow-ups-due'),
     path('doctors/my-reviews/',         views.MyDoctorReviewsView.as_view(),  name='my-doctor-reviews'),
     path('doctors/',                    views.DoctorListView.as_view(),       name='doctors'),
     path('doctors/<uuid:pk>/',          views.DoctorDetailView.as_view(),     name='doctor-detail'),

@@ -69,7 +69,6 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   const router = useRouter()
   const user = useAuthStore((s) => s.user)
   const alertedRef = useRef<Set<string>>(new Set())
-  const followUpAlertedRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
@@ -131,23 +130,20 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   }, [hydrated, user])
 
   // Same polling/toast/chime pattern as the medicine-reminder check above, kept as its own effect
-  // rather than folded into checkDue() — different data source (appointments, not reminders/today)
-  // and different dedup shape, but conceptually the same kind of alert, not a new UX.
+  // rather than folded into checkDue() — different data source, but conceptually the same kind of
+  // alert, not a new UX. The due-ness check and the once-only dedup both now live server-side
+  // (follow_up_notified_at) via /appointments/follow-ups-due/, which also fires the real
+  // Notification/email — this endpoint is the single source of truth for both, so whatever it
+  // returns is guaranteed newly-due and gets a toast with no further client-side filtering.
   useEffect(() => {
     if (!hydrated || !user || user.role !== 'CUSTOMER') return
 
     const checkFollowUps = () => {
-      api.get('/doctors/appointments/').then((r) => {
-        const appointments: DoctorAppointment[] = r.data.data.appointments || []
-        const todayStr = new Date().toISOString().slice(0, 10)
-        for (const appt of appointments) {
-          if (!appt.follow_up_date || appt.follow_up_date > todayStr) continue // not due yet
-          const key = `${appt.id}-${todayStr}`
-          if (followUpAlertedRef.current.has(key)) continue
-
-          followUpAlertedRef.current.add(key)
+      api.get('/appointments/follow-ups-due/').then((r) => {
+        const dueFollowUps: DoctorAppointment[] = r.data.data.follow_ups || []
+        for (const appt of dueFollowUps) {
           playNotificationChime()
-          const toastId = `follow-up-${key}`
+          const toastId = `follow-up-${appt.id}`
           toast.custom(
             (t) => (
               <DueFollowUpToast
