@@ -828,6 +828,7 @@ class ReminderLog(models.Model):
     scheduled_date = models.DateField()
     scheduled_time = models.CharField(max_length=10)
     taken_at = models.DateTimeField(null=True, blank=True)
+    notified_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'reminder_logs'

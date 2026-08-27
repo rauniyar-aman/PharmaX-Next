@@ -3498,6 +3498,7 @@ class ReminderTodayView(APIView):
 
     def get(self, request):
         today = timezone.now().date()
+        now = timezone.now()
         reminders = [
             r for r in MedicineReminder.objects.filter(
                 user=request.user, is_active=True, start_date__lte=today,
@@ -3514,6 +3515,21 @@ class ReminderTodayView(APIView):
         for r in reminders:
             for t in [t.strip() for t in r.times.split(',') if t.strip()]:
                 log = logs.get((r.id, t))
+                scheduled_dt = timezone.make_aware(datetime.combine(today, datetime.strptime(t, '%H:%M').time()))
+                if log is None and now >= scheduled_dt:
+                    # get_or_create + the (reminder, scheduled_date, scheduled_time) unique_together
+                    # constraint is what guarantees this fires exactly once per due occurrence, same
+                    # discipline as delivery_stale_notified_at elsewhere in this codebase — two
+                    # concurrent polls racing here just means one of them gets created=False.
+                    log, created = ReminderLog.objects.get_or_create(reminder=r, scheduled_date=today, scheduled_time=t)
+                    if created or log.notified_at is None:
+                        notify_user(
+                            user=request.user, type='REMINDER_DUE', title='Medicine Reminder',
+                            message=f'Time for {r.medicine_name}{f" ({r.dosage})" if r.dosage else ""} — scheduled for {t}.',
+                            link='/reminders',
+                        )
+                        log.notified_at = timezone.now()
+                        log.save(update_fields=['notified_at'])
                 schedule.append({
                     'reminder_id': str(r.id),
                     'medicine_name': r.medicine_name,
