@@ -47,7 +47,7 @@ services:
       - key: EMAIL_HOST_PASSWORD
         sync: false
       - key: EMAIL_FROM
-        value: "PharmaX <pharmax@rauniyaraman.com.np>"
+        value: "PharmaX <noreply@rauniyaraman.com.np>"
       - key: ESEWA_PRODUCT_CODE
         sync: false
       - key: ESEWA_SECRET_KEY
