@@ -457,6 +457,40 @@ class PublicSettingsView(APIView):
         }})
 
 
+class HomeShowcaseView(APIView):
+    """Public homepage stats + testimonials from live data. On a fresh DB these are
+    genuinely zero / empty — the frontend renders the real numbers and hides the
+    testimonials section when there are none, rather than showing invented figures."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        delivered = Order.objects.filter(status='DELIVERED')
+        cities_served = (
+            delivered.exclude(address__city__isnull=True)
+                     .exclude(address__city='')
+                     .values('address__city').distinct().count()
+        )
+        stats = {
+            'happy_customers': User.objects.filter(role='CUSTOMER', is_active=True, is_deleted=False).count(),
+            'orders_delivered': delivered.count(),
+            'medicines_available': Medicine.objects.filter(in_stock=True).count(),
+            'cities_served': cities_served,
+        }
+
+        reviews = (
+            Review.objects.filter(rating__gte=4)
+                  .exclude(comment__isnull=True).exclude(comment='')
+                  .select_related('user')
+                  .order_by('-created_at')[:6]
+        )
+        testimonials = [
+            {'name': r.user.full_name, 'rating': r.rating, 'comment': r.comment}
+            for r in reviews
+        ]
+
+        return Response({'success': True, 'data': {'stats': stats, 'testimonials': testimonials}})
+
+
 # ─── Categories ───────────────────────────────────────────────────────────────
 
 class CategoryListView(APIView):

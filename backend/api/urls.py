@@ -20,6 +20,7 @@ urlpatterns = [
 
     # Public catalog
     path('settings/',                      views.PublicSettingsView.as_view(),     name='public-settings'),
+    path('home/showcase/',                 views.HomeShowcaseView.as_view(),       name='home-showcase'),
     path('categories/',                    views.CategoryListView.as_view(),       name='categories'),
     path('medicines/my-reviews/',          views.MyReviewsView.as_view(),          name='my-reviews'),
     path('medicines/brands/',              views.MedicineBrandsView.as_view(),     name='medicine-brands'),
