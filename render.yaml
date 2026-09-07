@@ -1,4 +1,5 @@
-# Render Blueprint: PharmaX-Next (Django API + Next.js frontend) from one repo.
+# Render Blueprint: PharmaX-Next Django API. The Next.js frontend is deployed separately to
+# Cloudflare Workers (via @opennextjs/cloudflare) at pharmax.rauniyaraman.com.np.
 # Secrets (marked sync: false) are set in the Render dashboard, not committed here.
 services:
   # ── Django backend → api.pharmax.rauniyaraman.com.np ──────────────────────
@@ -60,19 +61,3 @@ services:
         sync: false
       - key: KHALTI_API_URL
         sync: false
-
-  # ── Next.js frontend → pharmax.rauniyaraman.com.np ────────────────────────
-  - type: web
-    name: pharmax-web
-    runtime: node
-    rootDir: frontend
-    plan: free
-    buildCommand: "npm ci && npm run build"
-    startCommand: "npm run start"
-    envVars:
-      - key: NEXT_PUBLIC_API_URL
-        value: "https://api.pharmax.rauniyaraman.com.np/api"
-      - key: NEXT_PUBLIC_BACKEND_URL
-        value: "https://api.pharmax.rauniyaraman.com.np"
-      - key: NEXT_PUBLIC_MEDIA_URL
-        value: "https://media.pharmax.rauniyaraman.com.np"
