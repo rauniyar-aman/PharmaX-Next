@@ -1,0 +1,78 @@
+# Render Blueprint: PharmaX-Next (Django API + Next.js frontend) from one repo.
+# Secrets (marked sync: false) are set in the Render dashboard, not committed here.
+services:
+  # ── Django backend → api.pharmax.rauniyaraman.com.np ──────────────────────
+  - type: web
+    name: pharmax-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn backend.wsgi:application --bind 0.0.0.0:$PORT"
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_HOSTS
+        value: "api.pharmax.rauniyaraman.com.np"
+      - key: FRONTEND_URL
+        value: "https://pharmax.rauniyaraman.com.np"
+      - key: BACKEND_URL
+        value: "https://api.pharmax.rauniyaraman.com.np"
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://pharmax.rauniyaraman.com.np"
+      - key: CSRF_TRUSTED_ORIGINS
+        value: "https://pharmax.rauniyaraman.com.np,https://api.pharmax.rauniyaraman.com.np"
+      - key: DATABASE_URL
+        sync: false
+      - key: USE_R2
+        value: "True"
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_STORAGE_BUCKET_NAME
+        sync: false
+      - key: AWS_S3_ENDPOINT_URL
+        sync: false
+      - key: AWS_S3_CUSTOM_DOMAIN
+        sync: false
+      - key: EMAIL_HOST
+        value: "smtp.resend.com"
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_HOST_USER
+        value: "resend"
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        value: "PharmaX <pharmax@rauniyaraman.com.np>"
+      - key: ESEWA_PRODUCT_CODE
+        sync: false
+      - key: ESEWA_SECRET_KEY
+        sync: false
+      - key: ESEWA_FORM_URL
+        sync: false
+      - key: ESEWA_VERIFY_URL
+        sync: false
+      - key: KHALTI_SECRET_KEY
+        sync: false
+      - key: KHALTI_API_URL
+        sync: false
+
+  # ── Next.js frontend → pharmax.rauniyaraman.com.np ────────────────────────
+  - type: web
+    name: pharmax-web
+    runtime: node
+    rootDir: frontend
+    plan: free
+    buildCommand: "npm ci && npm run build"
+    startCommand: "npm run start"
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: "https://api.pharmax.rauniyaraman.com.np/api"
+      - key: NEXT_PUBLIC_BACKEND_URL
+        value: "https://api.pharmax.rauniyaraman.com.np"
+      - key: NEXT_PUBLIC_MEDIA_URL
+        value: "https://media.pharmax.rauniyaraman.com.np"
