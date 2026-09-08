@@ -39,7 +39,7 @@ export default function AboutPage() {
           <div>
             <h1 className="text-4xl font-bold text-on-surface">PharmaX</h1>
             <p className="mt-3 text-lg text-on-surface-variant max-w-xl mx-auto">
-              A full-stack online pharmacy platform — order medicines, upload prescriptions, and track deliveries, all in one place.
+              Your trusted online pharmacy — order medicines, upload prescriptions, and track deliveries, all in one place.
             </p>
           </div>
           <div className="flex items-center justify-center gap-4 flex-wrap">
@@ -100,57 +100,14 @@ export default function AboutPage() {
           </div>
         </section>
 
-        {/* Tech Stack */}
-        <section>
-          <h2 className="text-xl font-bold text-on-surface mb-6 flex items-center gap-2">
-            <span className="material-symbols-outlined text-on-surface-variant">code</span>
-            Tech Stack
-          </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {[
-              { label: 'Next.js 16', sub: 'App Router + TypeScript' },
-              { label: 'Django 6', sub: 'REST Framework' },
-              { label: 'PostgreSQL', sub: 'Primary database' },
-              { label: 'Tailwind CSS 4', sub: 'Styling' },
-            ].map((t) => (
-              <div key={t.label} className="bg-surface-container-low rounded-2xl border border-outline-variant px-4 py-4 text-center">
-                <p className="font-bold text-on-surface text-sm">{t.label}</p>
-                <p className="text-xs text-on-surface-variant mt-1">{t.sub}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Open Source */}
-        <section>
-          <h2 className="text-xl font-bold text-on-surface mb-6 flex items-center gap-2">
-            <span className="material-symbols-outlined text-on-surface-variant">code_blocks</span>
-            Open Source
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <a href="https://github.com/rauniyar-aman/PharmaX_Dev" target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-4 bg-surface rounded-2xl border border-outline-variant p-5 hover:bg-surface-container transition-colors group">
-              <span className="material-symbols-outlined text-on-surface-variant group-hover:text-on-surface" style={{ fontSize: '28px' }}>web</span>
-              <div>
-                <p className="font-semibold text-on-surface text-sm">Web App (React + Express)</p>
-                <p className="text-xs text-on-surface-variant mt-0.5">github.com/rauniyar-aman/PharmaX_Dev</p>
-              </div>
-            </a>
-            <a href="https://github.com/rauniyar-aman/PharmaX" target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-4 bg-surface rounded-2xl border border-outline-variant p-5 hover:bg-surface-container transition-colors group">
-              <span className="material-symbols-outlined text-on-surface-variant group-hover:text-on-surface" style={{ fontSize: '28px' }}>android</span>
-              <div>
-                <p className="font-semibold text-on-surface text-sm">Android App (Kotlin)</p>
-                <p className="text-xs text-on-surface-variant mt-0.5">github.com/rauniyar-aman/PharmaX</p>
-              </div>
-            </a>
-          </div>
-        </section>
-
       </main>
 
-      <footer className="border-t border-outline-variant mt-8 py-8 text-center text-xs text-on-surface-variant">
-        PharmaX — Built with Next.js &amp; Django
+      <footer className="border-t border-outline-variant mt-8 py-8 text-center text-xs text-on-surface-variant space-y-2">
+        <div className="flex items-center justify-center gap-4">
+          <Link href="/" className="hover:text-on-surface transition-colors">Home</Link>
+          <Link href="/privacy" className="hover:text-on-surface transition-colors">Privacy Policy</Link>
+        </div>
+        <p>© {new Date().getFullYear()} PharmaX. All rights reserved.</p>
       </footer>
     </div>
   )
