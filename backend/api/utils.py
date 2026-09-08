@@ -79,15 +79,49 @@ def _render_email_html(store_name, heading, body_html, cta_text=None, cta_url=No
 </html>'''
 
 
+def _use_resend_http():
+    """Render's free tier blocks outbound SMTP ports (25/465/587), so SMTP sends to
+    smtp.resend.com silently time out in prod. When the backend is configured for Resend,
+    send over Resend's HTTP API (port 443, never blocked) instead. Local dev on Gmail SMTP
+    is unaffected and keeps using Django's SMTP backend below."""
+    return settings.EMAIL_HOST == 'smtp.resend.com' and bool(settings.EMAIL_HOST_PASSWORD)
+
+
+def _send_via_resend_http(to_email, subject, html_body, text_body):
+    import requests
+    resp = requests.post(
+        'https://api.resend.com/emails',
+        headers={
+            'Authorization': f'Bearer {settings.EMAIL_HOST_PASSWORD}',
+            'Content-Type': 'application/json',
+        },
+        json={
+            'from': settings.EMAIL_FROM,
+            'to': [to_email],
+            'subject': subject,
+            'html': html_body,
+            'text': text_body,
+        },
+        timeout=15,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f'Resend API {resp.status_code}: {resp.text}')
+
+
+def _send_via_smtp(to_email, subject, html_body, text_body):
+    msg = EmailMultiAlternatives(
+        subject=subject, body=text_body, from_email=settings.EMAIL_FROM, to=[to_email],
+    )
+    msg.attach_alternative(html_body, 'text/html')
+    msg.send(fail_silently=False)
+
+
 def _send_email(to_email, subject, html_body, text_body, retries=2):
+    send = _send_via_resend_http if _use_resend_http() else _send_via_smtp
     last_error = None
     for attempt in range(1, retries + 1):
         try:
-            msg = EmailMultiAlternatives(
-                subject=subject, body=text_body, from_email=settings.EMAIL_FROM, to=[to_email],
-            )
-            msg.attach_alternative(html_body, 'text/html')
-            msg.send(fail_silently=False)
+            send(to_email, subject, html_body, text_body)
             return
         except Exception as e:
             last_error = e
