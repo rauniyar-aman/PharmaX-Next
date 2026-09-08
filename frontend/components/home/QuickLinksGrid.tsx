@@ -1,13 +1,17 @@
 import Link from 'next/link'
 
+// These are deliberately quick *actions* / account shortcuts, NOT the category-browse links in the
+// header nav (Medicines, Lab Tests, Doctor Consult, Healthcare, Health Insights, PLUS, Offers) or
+// the homepage "Our Services" section. Every destination here is absent from both so the icon grid
+// complements the text nav instead of duplicating it.
 const ITEMS = [
-  { label: 'Medicine', tagline: 'Order Now', icon: 'medication', href: '/medicines' },
-  { label: 'Lab Tests', tagline: 'Book at Home', icon: 'biotech', href: '/lab-tests' },
-  { label: 'Doctor Consult', tagline: 'Consult Online', icon: 'stethoscope', href: '/doctor-consult' },
-  { label: 'Healthcare', tagline: 'Shop Devices', icon: 'devices_other', href: '/medicines?category=Healthcare+Devices' },
-  { label: 'Health Blogs', tagline: 'Read Tips', icon: 'article', href: '/health-articles' },
-  { label: 'PLUS', tagline: 'Save More', icon: 'workspace_premium', href: '/plus-membership' },
-  { label: 'Offers', tagline: 'Best Deals', icon: 'sell', href: '/offers' },
+  { label: 'Upload Rx', tagline: 'Order fast', icon: 'upload_file', href: '/prescriptions' },
+  { label: 'My Orders', tagline: 'Track & reorder', icon: 'receipt_long', href: '/orders' },
+  { label: 'Wallet', tagline: 'PharmaX Cash', icon: 'account_balance_wallet', href: '/wallet' },
+  { label: 'Refer & Earn', tagline: 'Get rewards', icon: 'redeem', href: '/referrals' },
+  { label: 'Reminders', tagline: 'Never miss a dose', icon: 'alarm', href: '/reminders' },
+  { label: 'Subscribe', tagline: 'Auto-refill', icon: 'autorenew', href: '/subscriptions' },
+  { label: 'Wishlist', tagline: 'Saved items', icon: 'favorite', href: '/wishlist' },
 ]
 
 export default function QuickLinksGrid() {
