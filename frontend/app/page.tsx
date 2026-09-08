@@ -163,6 +163,7 @@ function Footer() {
           <p className="text-xs font-bold text-on-surface uppercase tracking-wide mb-3">Help</p>
           <ul className="space-y-2 text-sm text-on-surface-variant">
             <li><Link href="/about" className="hover:text-primary transition-colors">About Us</Link></li>
+            <li><Link href="/privacy" className="hover:text-primary transition-colors">Privacy Policy</Link></li>
             <li><Link href="/signin" className="hover:text-primary transition-colors">Track Order</Link></li>
             {support.support_email && (
               <li><a href={`mailto:${support.support_email}`} className="hover:text-primary transition-colors">{support.support_email}</a></li>
