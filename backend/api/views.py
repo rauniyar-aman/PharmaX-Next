@@ -76,6 +76,7 @@ from .matching import (
     pharmacy_accept_item, pharmacy_decline_item, pharmacy_advance_fulfillment, pharmacy_verify_pickup_code,
     delivery_agent_accept, update_agent_location, collect_cash, mark_delivered, _agent_eligible_for,
     _tracking_payload, widen_stale_priority_broadcasts, _fulfillment_prescription_ready, broadcast_delivery,
+    annotate_medicine_availability, _broadcast_radius_km,
 )
 from .scheduling import get_available_slots
 from .lab_collection import collector_confirm_sample_collected
@@ -503,6 +504,20 @@ class CategoryListView(APIView):
 
 # ─── Medicines ────────────────────────────────────────────────────────────────
 
+def _parse_geo(request):
+    """(lat, lng) floats from the request query params, or None when absent/invalid. The catalog
+    is location-aware only when both are present — the storefront sends them from the visitor's
+    saved/detected location (useLocationStore); with no location we fall back to the full,
+    unfiltered catalog."""
+    lat, lng = request.query_params.get('lat'), request.query_params.get('lng')
+    if lat in (None, '') or lng in (None, ''):
+        return None
+    try:
+        return float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+
+
 class MedicineListView(APIView):
     permission_classes = [AllowAny]
 
@@ -520,6 +535,7 @@ class MedicineListView(APIView):
         max_price = request.query_params.get('maxPrice')
         min_rating = request.query_params.get('minRating')
         sort = request.query_params.get('sortBy', 'popular')
+        geo = _parse_geo(request)
 
         if search:
             qs = qs.filter(Q(name__icontains=search) | Q(brand__name__icontains=search) | Q(manufacturer__icontains=search))
@@ -575,6 +591,16 @@ class MedicineListView(APIView):
             except Exception:
                 pass
 
+        # Location-aware availability: keep only medicines a verified + active pharmacy can deliver
+        # to this visitor (express within the broadcast radius, else same-day citywide) and expose
+        # the tier via the serializer. No location → full catalog, unchanged (browse mode).
+        radius_km = None
+        if geo:
+            radius_km = _broadcast_radius_km()
+            qs = annotate_medicine_availability(qs, geo[0], geo[1]).filter(nearest_km__isnull=False)
+            if request.query_params.get('deliveryTier', '').strip() == 'express':
+                qs = qs.filter(nearest_km__lte=radius_km)
+
         sort_map = {
             'popular': '-total_reviews',
             'price-asc': 'price',
@@ -583,7 +609,10 @@ class MedicineListView(APIView):
             'newest': '-created_at',
             'name': 'name',
         }
-        qs = qs.order_by(sort_map.get(sort, '-total_reviews'))
+        if geo and sort == 'nearest':
+            qs = qs.order_by('nearest_km')
+        else:
+            qs = qs.order_by(sort_map.get(sort, '-total_reviews'))
 
         try:
             page = max(1, int(request.query_params.get('page', 1)))
@@ -594,11 +623,12 @@ class MedicineListView(APIView):
         total = qs.count()
         start = (page - 1) * limit
         medicines = qs[start:start + limit]
+        ctx = {'radius_km': radius_km} if geo else {}
 
         return Response({
             'success': True,
             'data': {
-                'medicines': MedicineListSerializer(medicines, many=True).data,
+                'medicines': MedicineListSerializer(medicines, many=True, context=ctx).data,
                 'pagination': {
                     'total': total,
                     'page': page,
@@ -622,11 +652,21 @@ class MedicineDetailView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, pk):
+        # Annotate nearest_km when the visitor shares a location so the detail page can show the
+        # express / same-day tier. We still return the medicine even if no pharmacy stocks it, so
+        # shared/refreshed deep links never 404 — the serializer just reports delivery_tier: null.
+        geo = _parse_geo(request)
+        qs = Medicine.objects.select_related('category', 'brand')
+        radius_km = None
+        if geo:
+            radius_km = _broadcast_radius_km()
+            qs = annotate_medicine_availability(qs, geo[0], geo[1])
         try:
-            medicine = Medicine.objects.select_related('category', 'brand').get(id=pk)
+            medicine = qs.get(id=pk)
         except Medicine.DoesNotExist:
             return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
-        data = MedicineDetailSerializer(medicine).data
+        ctx = {'radius_km': radius_km} if geo else {}
+        data = MedicineDetailSerializer(medicine, context=ctx).data
         data['has_purchased'] = _user_has_purchased(request.user, medicine)
         return Response({'success': True, 'data': {'medicine': data}})
 
@@ -3230,10 +3270,34 @@ class OffersView(APIView):
 
     def get(self, request):
         now = timezone.now()
-        deals = _active_featured_deals()
+        deals = list(_active_featured_deals())
+        geo = _parse_geo(request)
+        radius_km = None
+        if geo:
+            radius_km = _broadcast_radius_km()
+            # Location-aware: drop medicine deals no reachable pharmacy can fulfil, and stamp the
+            # survivors' medicine with nearest_km so each card shows the right express/same-day badge.
+            med_ids = [d.medicine_id for d in deals if d.target_type == 'MEDICINE' and d.medicine_id]
+            nearest_map = {}
+            if med_ids:
+                nearest_map = dict(
+                    annotate_medicine_availability(
+                        Medicine.objects.filter(id__in=med_ids), geo[0], geo[1],
+                    ).filter(nearest_km__isnull=False).values_list('id', 'nearest_km')
+                )
+            kept = []
+            for d in deals:
+                if d.target_type == 'MEDICINE' and d.medicine_id:
+                    if d.medicine_id not in nearest_map:
+                        continue
+                    if d.medicine is not None:
+                        d.medicine.nearest_km = nearest_map[d.medicine_id]
+                kept.append(d)
+            deals = kept
         coupons = Coupon.objects.filter(is_active=True, valid_from__lte=now, valid_until__gte=now).order_by('-created_at')
+        ctx = {'radius_km': radius_km} if geo else {}
         return Response({'success': True, 'data': {
-            'featured_deals': FeaturedDealSerializer(deals, many=True).data,
+            'featured_deals': FeaturedDealSerializer(deals, many=True, context=ctx).data,
             'coupons': CouponSerializer(coupons, many=True).data,
         }})
 

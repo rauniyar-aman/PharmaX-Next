@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
 import { useAuthStore } from '@/store/auth'
+import { useLocationStore } from '@/store/location'
 import { useWishlist } from '@/hooks/useWishlist'
 import { useCart } from '@/hooks/useCart'
 import type { Medicine, Review, Address } from '@/types'
@@ -22,6 +23,7 @@ export default function MedicineDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const user = useAuthStore((s) => s.user)
+  const { lat, lng } = useLocationStore()
   const { wishlistIds, toggle } = useWishlist()
   const { addToCart } = useCart()
 
@@ -70,8 +72,11 @@ export default function MedicineDetailPage() {
   useEffect(() => {
     if (!id) return
     setLoading(true)
+    // Pass the visitor's location so the response carries delivery_tier for this medicine
+    // (express vs same-day). Omitted when unknown — the medicine still loads either way.
+    const medParams = lat != null && lng != null ? { params: { lat, lng } } : undefined
     Promise.all([
-      api.get(`/medicines/${id}/`),
+      api.get(`/medicines/${id}/`, medParams),
       api.get(`/medicines/${id}/reviews/`),
     ]).then(([medRes, revRes]) => {
       setMedicine(medRes.data.data.medicine)
@@ -80,7 +85,7 @@ export default function MedicineDetailPage() {
       const mine = revs.find((r) => (r as any).is_mine || (r as any).mine)
       if (mine) { setMyRating(mine.rating); setMyReview(mine.comment || '') }
     }).catch(() => toast.error('Medicine not found.')).finally(() => setLoading(false))
-  }, [id])
+  }, [id, lat, lng])
 
   const handleAddToCart = async () => {
     if (!user) { router.push('/signin'); return }
@@ -227,7 +232,7 @@ export default function MedicineDetailPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${medicine.in_stock ? 'bg-emerald-50 text-emerald-600' : 'bg-error/10 text-error'}`}>
               <span className="material-symbols-outlined ms-filled" style={{ fontSize: '14px' }}>{medicine.in_stock ? 'check_circle' : 'cancel'}</span>
               {medicine.in_stock ? 'In Stock' : 'Out of Stock'}
@@ -238,7 +243,34 @@ export default function MedicineDetailPage() {
                 Prescription Required
               </span>
             )}
+            {medicine.delivery_tier === 'express' && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500 text-white">
+                <span className="material-symbols-outlined ms-filled" style={{ fontSize: '14px' }}>bolt</span>
+                Express delivery
+              </span>
+            )}
+            {medicine.delivery_tier === 'same_day' && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-500 text-white">
+                <span className="material-symbols-outlined ms-filled" style={{ fontSize: '14px' }}>schedule</span>
+                Same-day / 24hr
+              </span>
+            )}
           </div>
+
+          {(lat != null && lng != null) && medicine.delivery_tier == null && (
+            <div className="flex items-start gap-2 rounded-xl bg-amber-500/5 border border-amber-500/20 p-3">
+              <span className="material-symbols-outlined ms-filled text-amber-500 flex-shrink-0" style={{ fontSize: '18px' }}>info</span>
+              <p className="text-xs text-on-surface-variant">
+                No pharmacy near <span className="font-medium text-on-surface">your location</span> currently stocks this. You can still browse it, but it can't be delivered to you right now.
+              </p>
+            </div>
+          )}
+          {medicine.delivery_tier === 'same_day' && (
+            <p className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+              <span className="material-symbols-outlined text-amber-500" style={{ fontSize: '15px' }}>local_shipping</span>
+              Not stocked within the express radius — delivered same-day / within 24 hours from a pharmacy farther out.
+            </p>
+          )}
 
           <div className="space-y-2">
             <p className="text-xs text-on-surface-variant font-medium">Quantity</p>

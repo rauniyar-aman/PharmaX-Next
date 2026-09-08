@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import api from '@/lib/api'
+import { useLocationStore } from '@/store/location'
 import MedicineCard, { MedicineCardSkeleton } from '@/components/medicine/MedicineCard'
 import CountdownBadge from '@/components/home/CountdownBadge'
 import type { Medicine } from '@/types'
@@ -52,11 +53,15 @@ interface Props {
 
 export default function TabbedProductRail({ wishlistIds, onToggleWishlist, onAddToCart, cartLoading = {} }: Props) {
   const [tab, setTab] = useState<TabKey>(TABS[0].key)
+  const { lat, lng } = useLocationStore()
+  // When the visitor's location is known, every rail is scoped to what's deliverable to them
+  // (and each card shows its express/same-day badge); otherwise the rails stay location-agnostic.
+  const geo = lat != null && lng != null ? { lat, lng } : {}
 
-  const { medicines: newLaunches, loading: newLoading } = useMedicineRail({ sortBy: 'newest', limit: 10 })
-  const { medicines: dealsPool, loading: dealsLoading } = useMedicineRail({ sortBy: 'price-asc', limit: 30 })
-  const { medicines: topRated, loading: topLoading } = useMedicineRail({ sortBy: 'rating', limit: 10 })
-  const { medicines: wellness, loading: wellnessLoading } = useMedicineRail({ category: 'Health Food and Drinks', limit: 10 })
+  const { medicines: newLaunches, loading: newLoading } = useMedicineRail({ sortBy: 'newest', limit: 10, ...geo })
+  const { medicines: dealsPool, loading: dealsLoading } = useMedicineRail({ sortBy: 'price-asc', limit: 30, ...geo })
+  const { medicines: topRated, loading: topLoading } = useMedicineRail({ sortBy: 'rating', limit: 10, ...geo })
+  const { medicines: wellness, loading: wellnessLoading } = useMedicineRail({ category: 'Health Food and Drinks', limit: 10, ...geo })
 
   const deals = [...dealsPool].sort((a, b) => discountPct(b) - discountPct(a)).slice(0, 10)
 

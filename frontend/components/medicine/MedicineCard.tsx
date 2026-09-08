@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { resolveImg } from '@/lib/resolveImg'
+import DeliveryTierBadge from '@/components/medicine/DeliveryTierBadge'
 import type { Medicine } from '@/types'
 
 export function MedicineCardSkeleton() {
@@ -48,6 +49,7 @@ export default function MedicineCard({ medicine: med, inWishlist, cartLoading, o
               {med.promo_badge}
             </span>
           )}
+          <DeliveryTierBadge tier={med.delivery_tier} className="px-1.5 py-0.5 text-[9px]" />
         </div>
         <button onClick={(e) => onToggleWishlist(med.id, e)}
           className="absolute top-1.5 right-1.5 w-6 h-6 bg-surface rounded-full flex items-center justify-center shadow-sm hover:scale-110 transition-transform">

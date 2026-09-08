@@ -347,6 +347,11 @@ export interface Medicine {
   created_at: string
   updated_at: string
   has_purchased?: boolean
+  // Location-aware delivery. Present only when the request carried the visitor's lat/lng:
+  // 'express' = a stocking pharmacy is within the broadcast radius; 'same_day' = one exists but
+  // farther out (same-day / 24hr); null = location unknown or no pharmacy stocks it.
+  delivery_tier?: 'express' | 'same_day' | null
+  nearest_km?: number | null
 }
 
 export interface Address {

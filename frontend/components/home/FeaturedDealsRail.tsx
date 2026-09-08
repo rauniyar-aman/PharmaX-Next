@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import api from '@/lib/api'
+import { useLocationStore } from '@/store/location'
 import MedicineCard, { MedicineCardSkeleton } from '@/components/medicine/MedicineCard'
 import ServiceDealCard from '@/components/offers/ServiceDealCard'
 import type { FeaturedDeal } from '@/types'
@@ -16,15 +17,19 @@ interface Props {
 export default function FeaturedDealsRail({ wishlistIds, onToggleWishlist, onAddToCart, cartLoading = {} }: Props) {
   const [deals, setDeals] = useState<FeaturedDeal[]>([])
   const [loading, setLoading] = useState(true)
+  const { lat, lng } = useLocationStore()
 
   // The same GET /offers/ endpoint the real offers page reads from — only the coupons half of
   // that response is unused here, since this rail is specifically the featured-deals promo strip.
+  // With a known location the backend drops medicine deals no nearby pharmacy can fulfil and tags
+  // the rest with their express/same-day tier.
   useEffect(() => {
-    api.get('/offers/')
+    const params = lat != null && lng != null ? { params: { lat, lng } } : undefined
+    api.get('/offers/', params)
       .then((r) => setDeals(r.data.data.featured_deals || []))
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+  }, [lat, lng])
 
   if (!loading && deals.length === 0) return null
 
