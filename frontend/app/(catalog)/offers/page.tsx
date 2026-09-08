@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
+import { useLocationStore } from '@/store/location'
 import { useWishlist } from '@/hooks/useWishlist'
 import { useCart } from '@/hooks/useCart'
 import MedicineCard, { MedicineCardSkeleton } from '@/components/medicine/MedicineCard'
@@ -40,6 +41,7 @@ export default function OffersPage() {
   const user = useAuthStore((s) => s.user)
   const { wishlistIds, toggle: toggleWishlist } = useWishlist()
   const { addToCart } = useCart()
+  const { lat, lng } = useLocationStore()
   const [cartLoading, setCartLoading] = useState<Record<string, boolean>>({})
 
   const [deals, setDeals] = useState<FeaturedDeal[]>([])
@@ -52,14 +54,17 @@ export default function OffersPage() {
   }, [])
 
   useEffect(() => {
-    api.get('/offers/')
+    // Location-aware when known: medicine deals no nearby pharmacy can fulfil are dropped and the
+    // rest carry their express/same-day tier (see OffersView). Coupons are unaffected either way.
+    const params = lat != null && lng != null ? { params: { lat, lng } } : undefined
+    api.get('/offers/', params)
       .then((r) => {
         setDeals(r.data.data.featured_deals || [])
         setCoupons(r.data.data.coupons || [])
       })
       .catch(() => toast.error('Failed to load offers.'))
       .finally(() => setLoading(false))
-  }, [])
+  }, [lat, lng])
 
   const handleAddToCart = useCallback(async (medId: string, e: React.MouseEvent) => {
     e.preventDefault()

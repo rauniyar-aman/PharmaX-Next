@@ -26,7 +26,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import F, Value, FloatField, ExpressionWrapper, Avg, Count
+from django.db.models import F, Value, FloatField, ExpressionWrapper, Avg, Count, OuterRef, Subquery
 from django.db.models.functions import Radians, Sin, Cos, ASin, Sqrt, Power
 from django.utils import timezone
 
@@ -88,6 +88,32 @@ def _annotate_distance_km(queryset, lat, lng, lat_field='lat', lng_field='lng'):
     return queryset.annotate(distance_km=ExpressionWrapper(c * radius, output_field=FloatField()))
 
 
+def annotate_medicine_availability(medicine_qs, lat, lng):
+    """Annotate each Medicine with `nearest_km`: the great-circle distance to the closest
+    verified + active pharmacy that currently has an available, in-stock, non-expired listing for
+    it. Medicines that no eligible pharmacy stocks get `nearest_km = None`.
+
+    Pure query-side (a per-medicine Subquery over PharmacyMedicineListing joined to its pharmacy,
+    reusing _annotate_distance_km) — no schema change. The caller turns `nearest_km` into the
+    customer-facing delivery tier: within _broadcast_radius_km() = 'express', farther = 'same-day',
+    None = not orderable at this location (hidden from storefront lists). This is the browse-time
+    mirror of _eligible_pharmacies_for_item(), which applies the same eligibility rule at checkout."""
+    nearest = _annotate_distance_km(
+        PharmacyMedicineListing.objects.filter(
+            medicine=OuterRef('pk'),
+            is_available=True,
+            stock_quantity__gt=0,
+            expiry_date__gt=timezone.now().date(),
+            pharmacy__is_verified=True,
+            pharmacy__is_active=True,
+        ),
+        lat, lng, lat_field='pharmacy__lat', lng_field='pharmacy__lng',
+    ).order_by('distance_km')
+    return medicine_qs.annotate(
+        nearest_km=Subquery(nearest.values('distance_km')[:1], output_field=FloatField()),
+    )
+
+
 def _haversine_km(lat1, lng1, lat2, lng2):
     """Plain-Python great-circle distance between two points, in km — same haversine formula and
     EARTH_RADIUS_KM as _annotate_distance_km() above, but as a normal function rather than a
@@ -99,22 +125,26 @@ def _haversine_km(lat1, lng1, lat2, lng2):
 
 
 def _eligible_pharmacies_for_item(item, address):
-    """PharmacyMedicineListings within BROADCAST_RADIUS_KM of `address` that can cover `item`:
-    verified + active pharmacy, listing available, enough stock, not expired. Shared by
-    broadcast_order() and widen_stale_priority_broadcasts() so both use the exact same
-    eligibility rule."""
-    nearby_pharmacies = _annotate_distance_km(
-        Pharmacy.objects.filter(is_verified=True, is_active=True),
-        address.lat, address.lng,
-    ).filter(distance_km__lte=_broadcast_radius_km())
-
-    return PharmacyMedicineListing.objects.filter(
-        pharmacy__in=nearby_pharmacies,
-        medicine=item.medicine,
-        is_available=True,
-        stock_quantity__gte=item.quantity,
-        expiry_date__gt=timezone.now().date(),
-    ).select_related('pharmacy')
+    """PharmacyMedicineListings that can cover `item` (verified + active pharmacy, listing
+    available, enough stock, not expired), preferring those within BROADCAST_RADIUS_KM of
+    `address` (express). If no in-radius pharmacy stocks it, widen to any distance so the item can
+    still be fulfilled as a same-day delivery — the browse catalog surfaces exactly these items
+    with a 'same-day' badge (see annotate_medicine_availability). Shared by broadcast_order() and
+    widen_stale_priority_broadcasts() so both use the exact same eligibility rule."""
+    listings = _annotate_distance_km(
+        PharmacyMedicineListing.objects.filter(
+            medicine=item.medicine,
+            is_available=True,
+            stock_quantity__gte=item.quantity,
+            expiry_date__gt=timezone.now().date(),
+            pharmacy__is_verified=True,
+            pharmacy__is_active=True,
+        ).select_related('pharmacy'),
+        address.lat, address.lng, lat_field='pharmacy__lat', lng_field='pharmacy__lng',
+    )
+    express = listings.filter(distance_km__lte=_broadcast_radius_km())
+    # Express first (in-radius); fall back to citywide same-day only when nothing is in range.
+    return express if express.exists() else listings
 
 
 def _create_requests_for_item(item, listings):

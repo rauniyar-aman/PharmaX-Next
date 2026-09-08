@@ -398,6 +398,11 @@ class BrandSerializer(serializers.ModelSerializer):
 class MedicineListSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
     brand_name = serializers.CharField(source='brand.name', read_only=True)
+    # Location-aware delivery tier. Only populated when the view annotated the queryset via
+    # matching.annotate_medicine_availability (i.e. the request carried lat/lng); otherwise both
+    # are None and the storefront treats the row as location-agnostic. See get_delivery_tier.
+    delivery_tier = serializers.SerializerMethodField()
+    nearest_km = serializers.SerializerMethodField()
 
     class Meta:
         model = Medicine
@@ -405,7 +410,26 @@ class MedicineListSerializer(serializers.ModelSerializer):
             'id', 'name', 'brand', 'brand_name', 'price', 'original_price', 'type',
             'in_stock', 'stock_quantity', 'image_url', 'rating',
             'total_reviews', 'category', 'category_name', 'promo_badge',
+            'delivery_tier', 'nearest_km',
         ]
+
+    def get_delivery_tier(self, obj):
+        return _delivery_tier(obj, self.context)
+
+    def get_nearest_km(self, obj):
+        nearest = getattr(obj, 'nearest_km', None)
+        return round(nearest, 2) if nearest is not None else None
+
+
+def _delivery_tier(obj, context):
+    """'express' when the nearest stocking pharmacy is within the broadcast radius, 'same_day' when
+    one exists but farther out, None when the queryset wasn't location-annotated or no pharmacy
+    stocks it. `radius_km` is supplied in the serializer context by the geo-aware catalog views."""
+    nearest = getattr(obj, 'nearest_km', None)
+    radius = context.get('radius_km')
+    if nearest is None or radius is None:
+        return None
+    return 'express' if nearest <= radius else 'same_day'
 
 
 class MedicineDetailSerializer(serializers.ModelSerializer):
@@ -413,6 +437,8 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
     category_id = serializers.UUIDField(write_only=True)
     brand = BrandSerializer(read_only=True)
     brand_id = serializers.UUIDField(write_only=True)
+    delivery_tier = serializers.SerializerMethodField()
+    nearest_km = serializers.SerializerMethodField()
 
     class Meta:
         model = Medicine
@@ -422,9 +448,17 @@ class MedicineDetailSerializer(serializers.ModelSerializer):
             'package_size', 'manufacturer', 'image_url', 'stock_quantity',
             'expiry_date', 'rating', 'total_reviews', 'promo_badge',
             'category', 'category_id', 'brand', 'brand_id',
+            'delivery_tier', 'nearest_km',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'rating', 'total_reviews', 'created_at', 'updated_at']
+
+    def get_delivery_tier(self, obj):
+        return _delivery_tier(obj, self.context)
+
+    def get_nearest_km(self, obj):
+        nearest = getattr(obj, 'nearest_km', None)
+        return round(nearest, 2) if nearest is not None else None
 
 
 class PrescriptionSerializer(serializers.ModelSerializer):

@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
+import { useLocationStore } from '@/store/location'
 import { useWishlist } from '@/hooks/useWishlist'
 import { useCart } from '@/hooks/useCart'
 import MedicineCard, { MedicineCardSkeleton } from '@/components/medicine/MedicineCard'
@@ -49,6 +50,7 @@ export default function MedicinesPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const user = useAuthStore((s) => s.user)
+  const { lat, lng, label: locationLabel } = useLocationStore()
   const { wishlistIds, toggle } = useWishlist()
   const { addToCart } = useCart()
 
@@ -72,6 +74,7 @@ export default function MedicinesPage() {
   const [selectedAvailability, setSelectedAvailability] = useState<string[]>([])
   const [selectedRatings, setSelectedRatings] = useState<number[]>([])
   const [selectedTypes, setSelectedTypes] = useState<string[]>([])
+  const [expressOnly, setExpressOnly] = useState(false)
   const [sortBy, setSortBy] = useState(searchParams.get('sortBy') || 'popular')
 
   // The useState initializers above only run once, on first mount — but /medicines,
@@ -105,6 +108,13 @@ export default function MedicinesPage() {
     if (selectedAvailability.length) params.availability = selectedAvailability.join(',')
     if (selectedRatings.length) params.minRating = Math.min(...selectedRatings)
     if (selectedTypes.length) params.type = selectedTypes.join(',')
+    // With a known location the backend filters to medicines a nearby pharmacy can actually
+    // deliver and tags each with express/same-day; expressOnly narrows to the in-radius ones.
+    if (lat != null && lng != null) {
+      params.lat = lat
+      params.lng = lng
+      if (expressOnly) params.deliveryTier = 'express'
+    }
     api.get('/medicines/', { params })
       .then((r) => {
         setMedicines(r.data.data.medicines || [])
@@ -113,7 +123,7 @@ export default function MedicinesPage() {
       })
       .catch(() => toast.error('Failed to load medicines.'))
       .finally(() => setLoading(false))
-  }, [search, selectedCategories, selectedBrands, selectedPriceRanges, selectedAvailability, selectedRatings, selectedTypes, sortBy, page, itemsPerPage])
+  }, [search, selectedCategories, selectedBrands, selectedPriceRanges, selectedAvailability, selectedRatings, selectedTypes, sortBy, page, itemsPerPage, lat, lng, expressOnly])
 
   useEffect(() => { fetchMedicines() }, [fetchMedicines])
 
@@ -248,6 +258,29 @@ export default function MedicinesPage() {
       </aside>
 
       <div className="flex-1 min-w-0 space-y-4">
+        {lat != null && lng != null ? (
+          <div className="bg-primary/5 border border-primary/20 rounded-2xl px-4 py-3 flex items-center gap-3 flex-wrap">
+            <span className="material-symbols-outlined ms-filled text-primary flex-shrink-0" style={{ fontSize: '20px' }}>distance</span>
+            <p className="text-sm text-on-surface flex-1 min-w-0">
+              Showing what's deliverable to <span className="font-semibold">{locationLabel || 'your location'}</span>.
+              <span className="text-on-surface-variant"> Express arrives fastest; same-day covers the rest.</span>
+            </p>
+            <button onClick={() => { setExpressOnly((v) => !v); setPage(1) }}
+              className={`flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1.5 border transition-colors flex-shrink-0 ${
+                expressOnly ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-surface text-on-surface-variant border-outline-variant hover:border-emerald-500 hover:text-emerald-600'
+              }`}>
+              <span className="material-symbols-outlined ms-filled" style={{ fontSize: '15px' }}>bolt</span>
+              Express only
+            </button>
+          </div>
+        ) : (
+          <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl px-4 py-3 flex items-center gap-3">
+            <span className="material-symbols-outlined ms-filled text-amber-500 flex-shrink-0" style={{ fontSize: '20px' }}>location_off</span>
+            <p className="text-sm text-on-surface flex-1">
+              Set your delivery location to see only medicines pharmacies near you can deliver — with express and same-day options.
+            </p>
+          </div>
+        )}
         <div className="bg-surface rounded-2xl border border-outline-variant p-4 space-y-3">
           <div className="relative">
             <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant" style={{ fontSize: '20px' }}>search</span>
@@ -269,7 +302,12 @@ export default function MedicinesPage() {
               )}
             </button>
             <div className="ml-auto flex items-center gap-1 bg-surface-container-low rounded-xl p-1">
-              {[{ val: 'popular', label: 'Popular' }, { val: 'price-asc', label: 'Price: Low' }, { val: 'newest', label: 'Newest' }].map((opt) => (
+              {[
+                { val: 'popular', label: 'Popular' },
+                { val: 'price-asc', label: 'Price: Low' },
+                { val: 'newest', label: 'Newest' },
+                ...(lat != null && lng != null ? [{ val: 'nearest', label: 'Nearest' }] : []),
+              ].map((opt) => (
                 <button key={opt.val} onClick={() => { setSortBy(opt.val); setPage(1) }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${sortBy === opt.val ? 'bg-surface text-on-surface shadow-sm' : 'text-on-surface-variant hover:text-on-surface'}`}>
                   {opt.label}
