@@ -1,8 +1,9 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { Suspense } from 'react'
-import { Lock } from 'lucide-react'
+import { Lock, Eye, EyeOff } from 'lucide-react'
 import toast from 'react-hot-toast'
 import AuthLayout from '@/components/common/AuthLayout'
 import Input from '@/components/ui/Input'
@@ -15,6 +16,9 @@ function ResetPasswordForm() {
   const email = params.get('email') || ''
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
   const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [resending, setResending] = useState(false)
@@ -60,6 +64,7 @@ function ResetPasswordForm() {
     const code = otp.join('')
     if (code.length < 6) { setError('Enter the 6-digit code.'); return }
     if (newPassword.length < 6) { setError('Password must be at least 6 characters.'); return }
+    if (newPassword !== confirmPassword) { setError('Passwords do not match.'); return }
     setLoading(true)
     try {
       await api.post('/auth/reset-password/', { email, otp: code, new_password: newPassword })
@@ -75,6 +80,14 @@ function ResetPasswordForm() {
     <AuthLayout>
       <div className="w-full max-w-md">
         <div className="rounded-[32px] border border-surface-container bg-surface p-8 shadow-[0_30px_60px_-30px_rgba(15,23,42,0.2)] text-center">
+          <div className="mb-6 text-left">
+            <Link href="/signin" className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:text-primary-dark">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_back</span>
+              </span>
+              Back to sign in
+            </Link>
+          </div>
           <h1 className="text-2xl font-semibold text-on-surface mb-2">Reset Password</h1>
           <p className="text-sm text-on-surface-variant mb-8">Enter the code sent to <span className="font-medium text-on-surface">{email}</span></p>
 
@@ -89,8 +102,32 @@ function ResetPasswordForm() {
               ))}
             </div>
 
-            <Input label="New Password" type="password" placeholder="••••••••" icon={<Lock size={16} />}
-              value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+            <Input
+              label="New Password"
+              type={showPassword ? 'text' : 'password'}
+              placeholder="••••••••"
+              icon={<Lock size={16} />}
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              right={
+                <button type="button" onClick={() => setShowPassword((p) => !p)} className="text-on-surface-variant hover:text-on-surface transition-colors" aria-label={showPassword ? 'Hide password' : 'Show password'}>
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              }
+            />
+            <Input
+              label="Confirm New Password"
+              type={showConfirmPassword ? 'text' : 'password'}
+              placeholder="••••••••"
+              icon={<Lock size={16} />}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              right={
+                <button type="button" onClick={() => setShowConfirmPassword((p) => !p)} className="text-on-surface-variant hover:text-on-surface transition-colors" aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}>
+                  {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              }
+            />
 
             {error && (
               <p className="text-xs text-error bg-error-container/30 border border-error-container rounded-xl px-4 py-2.5">{error}</p>
