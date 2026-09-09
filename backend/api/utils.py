@@ -185,6 +185,24 @@ def send_otp_email_async(to_email, full_name, otp, subject=None):
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _admin_wants_notification(user, notif_type):
+    """Per-admin category opt-out for _notify_admins() fan-outs. Maps the notif_type an admin
+    alert is sent under to the User boolean that governs it; unknown/miscellaneous admin types
+    fall under the catch-all 'business' category. default=True on every field means an admin who
+    has never touched their preferences keeps receiving everything. getattr guards keep this safe
+    for any user row predating the migration."""
+    if notif_type in ('NEW_ORDER', 'ORDER_CANCELLED', 'PAYMENT_UPDATE'):
+        return getattr(user, 'notif_admin_orders', True)
+    if notif_type == 'NEW_LAB_BOOKING':
+        return getattr(user, 'notif_admin_lab_bookings', True)
+    if notif_type == 'NEW_APPOINTMENT':
+        return getattr(user, 'notif_admin_appointments', True)
+    if notif_type == 'NEW_PRESCRIPTION':
+        return getattr(user, 'notif_admin_prescriptions', True)
+    return getattr(user, 'notif_admin_business', True)  # NEW_REVIEW, NEW_SUBSCRIPTION,
+    # NEW_PLUS_MEMBER, PHARMACY_*, and any future admin alert type
+
+
 def _should_email_notification(user, notif_type):
     """Business/operational notifications (pharmacy/doctor/delivery-agent/lab-collector "you have
     work to do" alerts, and every _notify_admins() call) are never gated by these customer-only
@@ -196,6 +214,8 @@ def _should_email_notification(user, notif_type):
     LAB_BOOKING_UPDATE (not just LAB_TEST/REPORT) is matched here since that's the actual type
     string the codebase uses for customer lab-booking notifications — the naive LAB_TEST substring
     alone would never match it."""
+    if getattr(user, 'role', None) == 'ADMIN':
+        return _admin_wants_notification(user, notif_type)
     if user.role != 'CUSTOMER':
         return True
     if 'ORDER' in notif_type or notif_type == 'PAYMENT_UPDATE':

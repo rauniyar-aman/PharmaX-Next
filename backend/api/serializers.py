@@ -70,6 +70,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'is_email_verified', 'notif_order_updates',
             'notif_prescription_alerts', 'notif_promotions',
             'notif_delivery_updates', 'notif_doctor_updates', 'notif_lab_test_updates', 'notif_reminders',
+            'notif_admin_orders', 'notif_admin_lab_bookings', 'notif_admin_appointments',
+            'notif_admin_prescriptions', 'notif_admin_business',
             'is_super_admin', 'permission_codes', 'delivery_agent_verified', 'delivery_agent_online',
             'doctor_verified', 'lab_collector_verified', 'lab_collector_online',
             'created_at', 'updated_at',
@@ -1591,3 +1593,46 @@ class AdminCollectorCodLiabilitySerializer(serializers.ModelSerializer):
         if obj.status != 'PENDING':
             return None
         return (timezone.now() - obj.created_at).days
+
+
+# Slim read-only rows for the per-channel finance drill-down (revenue ledger).
+# Deliberately lighter than the nested OrderSerializer / LabTestBookingSerializer /
+# DoctorAppointmentSerializer — a finance table only needs who / what / how much / when.
+class AdminChannelOrderSerializer(serializers.ModelSerializer):
+    customer_name = serializers.CharField(source='user.full_name', read_only=True)
+    item_summary = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Order
+        fields = ['id', 'customer_name', 'item_summary', 'total_amount',
+                  'payment_method', 'payment_status', 'status', 'placed_at']
+        read_only_fields = fields
+
+    def get_item_summary(self, obj):
+        items = list(obj.items.all())  # prefetched in the view
+        if not items:
+            return '—'
+        first = items[0].medicine.name
+        return first if len(items) == 1 else f'{first} +{len(items) - 1} more'
+
+
+class AdminChannelLabBookingSerializer(serializers.ModelSerializer):
+    customer_name = serializers.CharField(source='user.full_name', read_only=True)
+    lab_test_name = serializers.CharField(source='lab_test.name', read_only=True)
+
+    class Meta:
+        model = LabTestBooking
+        fields = ['id', 'customer_name', 'lab_test_name', 'total_amount',
+                  'payment_method', 'payment_status', 'status', 'booked_at']
+        read_only_fields = fields
+
+
+class AdminChannelAppointmentSerializer(serializers.ModelSerializer):
+    patient_name = serializers.CharField(source='user.full_name', read_only=True)
+    doctor_name = serializers.CharField(source='doctor.name', read_only=True)
+
+    class Meta:
+        model = DoctorAppointment
+        fields = ['id', 'patient_name', 'doctor_name', 'fee_charged', 'is_plus_free',
+                  'payment_method', 'payment_status', 'status', 'booked_at']
+        read_only_fields = fields

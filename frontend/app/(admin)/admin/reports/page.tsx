@@ -4,6 +4,9 @@ import api from '@/lib/api'
 
 interface ReportsData {
   total_revenue: number
+  order_revenue: number
+  lab_test_revenue: number
+  appointment_revenue: number
   monthly_revenue: number
   total_orders: number
   cancelled_count: number
@@ -93,6 +96,35 @@ export default function ReportsPage() {
               </div>
             ))}
           </div>
+
+          {data && (
+            <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold text-on-surface">Revenue Breakdown</h2>
+                <span className="text-sm font-bold text-on-surface">NPR {data.total_revenue.toLocaleString()}</span>
+              </div>
+              <div className="space-y-3">
+                {[
+                  { label: 'Medicine Orders', value: data.order_revenue, color: 'bg-primary' },
+                  { label: 'Lab Tests', value: data.lab_test_revenue, color: 'bg-secondary' },
+                  { label: 'Doctor Appointments', value: data.appointment_revenue, color: 'bg-emerald-500' },
+                ].map((r) => {
+                  const pct = data.total_revenue > 0 ? Math.round((r.value / data.total_revenue) * 100) : 0
+                  return (
+                    <div key={r.label} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-medium text-on-surface">{r.label}</span>
+                        <span className="text-on-surface-variant">NPR {r.value.toLocaleString()} ({pct}%)</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-surface-container-low overflow-hidden">
+                        <div className={`h-full rounded-full ${r.color}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">

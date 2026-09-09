@@ -4,12 +4,22 @@ import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { resolveImg } from '@/lib/resolveImg'
+import type { User } from '@/types'
+
+const ADMIN_NOTIF_PREFS = [
+  { key: 'notif_admin_orders', label: 'Orders', desc: 'New orders, cancellations, and order payments.' },
+  { key: 'notif_admin_lab_bookings', label: 'Lab Bookings', desc: 'New lab test bookings, once confirmed.' },
+  { key: 'notif_admin_appointments', label: 'Doctor Appointments', desc: 'New appointments, once confirmed.' },
+  { key: 'notif_admin_prescriptions', label: 'Prescriptions', desc: 'New prescriptions submitted for review.' },
+  { key: 'notif_admin_business', label: 'Business & Other', desc: 'Reviews, subscriptions, Plus members, and pharmacy alerts.' },
+] as const satisfies readonly { key: keyof User; label: string; desc: string }[]
 
 export default function AdminProfilePage() {
   const { user, setUser } = useAuthStore()
   const [form, setForm] = useState({ full_name: '', phone: '' })
   const [loading, setLoading] = useState(false)
   const [avatarLoading, setAvatarLoading] = useState(false)
+  const [savingPref, setSavingPref] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -62,6 +72,19 @@ export default function AdminProfilePage() {
       toast.error('Failed to remove image.')
     } finally {
       setAvatarLoading(false)
+    }
+  }
+
+  const toggleNotifPref = async (key: keyof User) => {
+    if (!user) return
+    setSavingPref(key)
+    try {
+      const res = await api.put('/auth/me/', { [key]: !user[key] })
+      setUser(res.data.data.user)
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update preference.')
+    } finally {
+      setSavingPref(null)
     }
   }
 
@@ -120,6 +143,37 @@ export default function AdminProfilePage() {
             {loading ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />Saving...</> : 'Save Changes'}
           </button>
         </form>
+      </div>
+
+      <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-1">
+        <h2 className="text-sm font-bold text-on-surface">Notification Preferences</h2>
+        <p className="text-xs text-on-surface-variant">
+          Muting a category stops both its emails and its bell notifications for your account. Customer-facing alerts are never affected.
+        </p>
+        <div className="divide-y divide-outline-variant pt-2">
+          {ADMIN_NOTIF_PREFS.map((p) => {
+            const on = user?.[p.key] !== false
+            return (
+              <div key={p.key} className="flex items-center justify-between gap-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-on-surface">{p.label}</p>
+                  <p className="text-xs text-on-surface-variant mt-0.5">{p.desc}</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={on}
+                  aria-label={p.label}
+                  onClick={() => toggleNotifPref(p.key)}
+                  disabled={savingPref === p.key}
+                  className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-60 ${on ? 'bg-primary' : 'bg-surface-container-highest'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${on ? 'translate-x-5' : 'translate-x-0'}`} />
+                </button>
+              </div>
+            )
+          })}
+        </div>
       </div>
     </div>
   )

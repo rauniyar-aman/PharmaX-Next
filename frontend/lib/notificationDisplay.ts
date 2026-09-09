@@ -7,6 +7,8 @@ export const NOTIFICATION_TYPE_CFG: Record<string, { icon: string; color: string
   PRESCRIPTION_SUBMITTED: { icon: 'upload_file',    color: 'text-amber-600 bg-amber-100' },
   PRESCRIPTION_VERIFIED:  { icon: 'verified_user',  color: 'text-primary bg-primary/10' },
   PRESCRIPTION_REJECTED:  { icon: 'cancel',         color: 'text-error bg-error/10' },
+  LAB_BOOKING_UPDATE:     { icon: 'biotech',        color: 'text-primary bg-primary/10' },
+  APPOINTMENT_UPDATE:     { icon: 'stethoscope',    color: 'text-secondary bg-secondary/10' },
   NEW_ORDER:              { icon: 'receipt_long',   color: 'text-secondary bg-secondary/10' },
   NEW_PRESCRIPTION:       { icon: 'description',    color: 'text-amber-600 bg-amber-100' },
   NEW_LAB_BOOKING:        { icon: 'biotech',         color: 'text-primary bg-primary/10' },

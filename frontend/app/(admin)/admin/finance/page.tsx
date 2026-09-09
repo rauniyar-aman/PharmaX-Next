@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
-import type { FinanceSummary } from '@/types'
+import type { FinanceSummary, ChannelsSummary } from '@/types'
 
 function fmt(n: string | number) {
   return `NPR ${Number(n).toLocaleString('en-NP', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
@@ -15,6 +15,7 @@ export default function AdminFinancePage() {
   const router = useRouter()
   const user = useAuthStore((s) => s.user)
   const [summary, setSummary] = useState<FinanceSummary | null>(null)
+  const [channels, setChannels] = useState<ChannelsSummary | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -28,6 +29,7 @@ export default function AdminFinancePage() {
   useEffect(() => {
     if (!canAccess) return
     api.get('/admin/finance/summary/').then((r) => setSummary(r.data.data)).catch(() => toast.error('Failed to load finance summary.')).finally(() => setLoading(false))
+    api.get('/admin/finance/channels/').then((r) => setChannels(r.data.data)).catch(() => {})
   }, [canAccess])
 
   if (!canAccess) return null
@@ -103,6 +105,42 @@ export default function AdminFinancePage() {
         <p className="text-2xl font-bold text-on-surface mt-1">{fmt(summary.coupon_cost_this_month)}</p>
         <p className="text-[10px] text-on-surface-variant mt-1">Total discount given away via coupons since the start of this month</p>
       </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h2 className="text-sm font-bold text-on-surface">Revenue by Channel</h2>
+          {channels && (
+            <span className="text-xs text-on-surface-variant">
+              Net after costs, all channels:{' '}
+              <span className={`font-bold ${Number(channels.totals.net) >= 0 ? 'text-emerald-600' : 'text-error'}`}>{fmt(channels.totals.net)}</span>
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {!channels ? (
+            [...Array(3)].map((_, i) => <div key={i} className="h-36 bg-surface-container-low rounded-2xl animate-pulse" />)
+          ) : channels.channels.map((c) => {
+            const icon = c.key === 'medicine' ? 'medication' : c.key === 'lab-tests' ? 'biotech' : 'stethoscope'
+            const netPositive = Number(c.net) >= 0
+            return (
+              <Link key={c.key} href={`/admin/finance/revenue/${c.key}`}
+                className="bg-surface rounded-2xl border border-outline-variant p-5 hover:border-primary/40 transition-colors">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary" style={{ fontSize: '20px' }}>{icon}</span>
+                  <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide">{c.label}</p>
+                </div>
+                <p className="text-2xl font-bold text-on-surface mt-1">{fmt(c.gross)}</p>
+                <p className="text-[10px] text-on-surface-variant mt-1">Gross collected · {c.count} paid</p>
+                <div className="mt-3 pt-3 border-t border-outline-variant flex items-center justify-between">
+                  <span className="text-[10px] font-medium text-on-surface-variant uppercase tracking-wide">Net after costs</span>
+                  <span className={`text-sm font-bold ${netPositive ? 'text-emerald-600' : 'text-error'}`}>{fmt(c.net)}</span>
+                </div>
+              </Link>
+            )
+          })}
+        </div>
+      </div>
+
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Link href="/admin/finance/pharmacy-payouts" className="flex items-center gap-3 px-4 py-3 bg-surface rounded-xl border border-outline-variant hover:border-primary/40 transition-colors">
