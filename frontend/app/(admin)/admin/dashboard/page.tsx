@@ -24,7 +24,7 @@ export default function AdminDashboardPage() {
   const cards = [
     { label: 'Total Customers', value: stats?.total_customers ?? 0, icon: 'group', color: 'bg-secondary/10 text-secondary', href: '/admin/customers' },
     { label: 'Total Orders', value: stats?.total_orders ?? 0, icon: 'package_2', color: 'bg-primary/10 text-primary', href: '/admin/orders' },
-    { label: 'Revenue (NPR)', value: `${((stats?.total_revenue ?? 0) / 1000).toFixed(1)}K`, icon: 'payments', color: 'bg-emerald-50 text-emerald-600', href: '/admin/reports' },
+    { label: 'Revenue (NPR)', value: Number(stats?.total_revenue ?? 0).toLocaleString('en-NP', { maximumFractionDigits: 0 }), icon: 'payments', color: 'bg-emerald-50 text-emerald-600', href: '/admin/reports' },
     { label: 'Active Orders', value: stats?.pending_orders ?? 0, icon: 'pending_actions', color: 'bg-amber-50 text-amber-600', href: '/admin/orders' },
     { label: 'Low Stock Items', value: stats?.low_stock_count ?? 0, icon: 'inventory_2', color: 'bg-error/10 text-error', href: '/admin/inventory' },
     { label: 'Pending Rx', value: stats?.pending_prescriptions ?? 0, icon: 'description', color: 'bg-purple-50 text-purple-600', href: '/admin/prescriptions' },
