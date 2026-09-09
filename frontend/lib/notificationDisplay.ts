@@ -13,6 +13,8 @@ export const NOTIFICATION_TYPE_CFG: Record<string, { icon: string; color: string
   NEW_PRESCRIPTION:       { icon: 'description',    color: 'text-amber-600 bg-amber-100' },
   NEW_LAB_BOOKING:        { icon: 'biotech',         color: 'text-primary bg-primary/10' },
   NEW_APPOINTMENT:        { icon: 'stethoscope',     color: 'text-secondary bg-secondary/10' },
+  COLLECTION_ASSIGNED:    { icon: 'science',         color: 'text-primary bg-primary/10' },
+  ACCOUNT_UPDATE:         { icon: 'badge',           color: 'text-secondary bg-secondary/10' },
 }
 
 const DEFAULT_NOTIFICATION_CFG = { icon: 'info', color: 'text-on-surface-variant bg-surface-container' }

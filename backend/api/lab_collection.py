@@ -26,7 +26,7 @@ def collector_confirm_sample_collected(collector, booking, amount_confirmed=None
 
     if locked.collector_id != collector.id:
         return False, 'This booking is not assigned to you.'
-    if locked.status != 'CONFIRMED':
+    if locked.status not in ('CONFIRMED', 'EN_ROUTE', 'ARRIVED'):
         return False, f'Cannot confirm collection for a booking that is {locked.status.replace("_", " ").lower()}.'
 
     is_cod = locked.payment_method == 'CASH_ON_DELIVERY'
@@ -56,6 +56,75 @@ def collector_confirm_sample_collected(collector, booking, amount_confirmed=None
     Notification.objects.create(
         user=locked.user, type='LAB_BOOKING_UPDATE', title='Sample Collected',
         message=f'Your {locked.lab_test.name} sample has been collected. Your report will be ready soon.',
+        link='/lab-test-bookings',
+    )
+    return True, None
+
+
+# The three progress transitions below mirror collector_confirm_sample_collected exactly — same
+# select_for_update lock, same ownership check, a single source-status guard, then an in-app-only
+# Notification (no email, matching the deliberate precedent above: these are lightweight "where's my
+# collector" pings, not the account/assignment events that warrant a branded email). They carry no
+# money side effects — COD/earnings are created once, at SAMPLE_COLLECTED, and nowhere else.
+
+@transaction.atomic
+def collector_mark_en_route(collector, booking):
+    """CONFIRMED -> EN_ROUTE. The collector has set out toward the patient's address."""
+    locked = LabTestBooking.objects.select_for_update().get(pk=booking.pk)
+
+    if locked.collector_id != collector.id:
+        return False, 'This booking is not assigned to you.'
+    if locked.status != 'CONFIRMED':
+        return False, f'Cannot mark en route for a booking that is {locked.status.replace("_", " ").lower()}.'
+
+    locked.status = 'EN_ROUTE'
+    locked.save(update_fields=['status'])
+
+    Notification.objects.create(
+        user=locked.user, type='LAB_BOOKING_UPDATE', title='Collector On the Way',
+        message=f'Your collector is on the way to collect your {locked.lab_test.name} sample.',
+        link='/lab-test-bookings',
+    )
+    return True, None
+
+
+@transaction.atomic
+def collector_mark_arrived(collector, booking):
+    """EN_ROUTE -> ARRIVED. The collector is at the patient's door."""
+    locked = LabTestBooking.objects.select_for_update().get(pk=booking.pk)
+
+    if locked.collector_id != collector.id:
+        return False, 'This booking is not assigned to you.'
+    if locked.status != 'EN_ROUTE':
+        return False, f'Cannot mark arrived for a booking that is {locked.status.replace("_", " ").lower()}.'
+
+    locked.status = 'ARRIVED'
+    locked.save(update_fields=['status'])
+
+    Notification.objects.create(
+        user=locked.user, type='LAB_BOOKING_UPDATE', title='Collector Arrived',
+        message=f'Your collector has arrived to collect your {locked.lab_test.name} sample.',
+        link='/lab-test-bookings',
+    )
+    return True, None
+
+
+@transaction.atomic
+def collector_mark_submitted_to_lab(collector, booking):
+    """SAMPLE_COLLECTED -> SUBMITTED_TO_LAB. The collected sample has been handed off to the lab."""
+    locked = LabTestBooking.objects.select_for_update().get(pk=booking.pk)
+
+    if locked.collector_id != collector.id:
+        return False, 'This booking is not assigned to you.'
+    if locked.status != 'SAMPLE_COLLECTED':
+        return False, f'Cannot mark submitted to lab for a booking that is {locked.status.replace("_", " ").lower()}.'
+
+    locked.status = 'SUBMITTED_TO_LAB'
+    locked.save(update_fields=['status'])
+
+    Notification.objects.create(
+        user=locked.user, type='LAB_BOOKING_UPDATE', title='Sample Submitted to Lab',
+        message=f'Your {locked.lab_test.name} sample has been submitted to the lab. Your report will be ready soon.',
         link='/lab-test-bookings',
     )
     return True, None

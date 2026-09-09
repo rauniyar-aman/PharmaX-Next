@@ -462,7 +462,10 @@ class LabTestBooking(models.Model):
     STATUS = [
         ('PENDING', 'Pending'),
         ('CONFIRMED', 'Confirmed'),
+        ('EN_ROUTE', 'Collector En Route'),
+        ('ARRIVED', 'Collector Arrived'),
         ('SAMPLE_COLLECTED', 'Sample Collected'),
+        ('SUBMITTED_TO_LAB', 'Submitted to Lab'),
         ('REPORT_READY', 'Report Ready'),
         ('CANCELLED', 'Cancelled'),
     ]

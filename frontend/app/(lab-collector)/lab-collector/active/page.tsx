@@ -63,6 +63,18 @@ function UploadReportControl({ booking, busy, onUpload }: {
   )
 }
 
+/** The collector's linear step chain for a booking in the active list — each status shows where the
+ * sample is and (below) the single action that advances it. Mirrors the backend guard chain in
+ * lab_collection.py exactly: CONFIRMED → EN_ROUTE → ARRIVED → SAMPLE_COLLECTED → SUBMITTED_TO_LAB →
+ * [report upload] → REPORT_READY. */
+const STATUS_PILL: Record<string, { label: string; color: string }> = {
+  CONFIRMED:        { label: 'Awaiting collection',              color: 'bg-amber-50 text-amber-600' },
+  EN_ROUTE:         { label: 'On the way',                       color: 'bg-indigo-50 text-indigo-600' },
+  ARRIVED:          { label: 'At the patient',                   color: 'bg-blue-50 text-blue-600' },
+  SAMPLE_COLLECTED: { label: 'Sample collected',                color: 'bg-primary/10 text-primary' },
+  SUBMITTED_TO_LAB: { label: 'Submitted to lab — awaiting report', color: 'bg-purple-50 text-purple-600' },
+}
+
 export default function LabCollectorActivePage() {
   const [bookings, setBookings] = useState<LabTestBooking[]>([])
   const [loading, setLoading] = useState(true)
@@ -112,6 +124,45 @@ export default function LabCollectorActivePage() {
     }
   }
 
+  const markEnRoute = async (bookingId: string) => {
+    setBusyId(bookingId)
+    try {
+      await api.post(`/lab-collector/active/${bookingId}/en-route/`)
+      toast.success('Marked on the way.')
+      setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status: 'EN_ROUTE' } : b)))
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update status.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const markArrived = async (bookingId: string) => {
+    setBusyId(bookingId)
+    try {
+      await api.post(`/lab-collector/active/${bookingId}/arrived/`)
+      toast.success('Marked arrived.')
+      setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status: 'ARRIVED' } : b)))
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update status.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const markSubmittedToLab = async (bookingId: string) => {
+    setBusyId(bookingId)
+    try {
+      await api.post(`/lab-collector/active/${bookingId}/submitted-to-lab/`)
+      toast.success('Marked submitted to lab.')
+      setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status: 'SUBMITTED_TO_LAB' } : b)))
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update status.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   const uploadReport = async (bookingId: string, file: File) => {
     setBusyId(bookingId)
     const formData = new FormData()
@@ -152,7 +203,7 @@ export default function LabCollectorActivePage() {
       ) : bookings.length === 0 ? (
         <div className="bg-surface rounded-2xl border border-outline-variant py-16 text-center text-on-surface-variant">
           <span className="material-symbols-outlined" style={{ fontSize: '40px' }}>task_alt</span>
-          <p className="mt-2 text-sm">No active collections — accept one from Requests.</p>
+          <p className="mt-2 text-sm">No active collections right now.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -186,16 +237,34 @@ export default function LabCollectorActivePage() {
                   {b.scheduled_date} · {b.time_slot}
                 </div>
 
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${b.status === 'SAMPLE_COLLECTED' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                    {b.status === 'SAMPLE_COLLECTED' ? 'Sample Collected — awaiting report' : 'Awaiting Collection'}
-                  </span>
-                  {b.status === 'SAMPLE_COLLECTED' ? (
-                    <UploadReportControl booking={b} busy={busy} onUpload={uploadReport} />
-                  ) : (
-                    <ConfirmCollectedControl booking={b} busy={busy} onConfirm={confirmCollected} />
-                  )}
-                </div>
+                {(() => {
+                  const pill = STATUS_PILL[b.status] || { label: b.status.replace(/_/g, ' '), color: 'bg-surface-container text-on-surface-variant' }
+                  return (
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${pill.color}`}>{pill.label}</span>
+                      {b.status === 'CONFIRMED' ? (
+                        <button onClick={() => markEnRoute(b.id)} disabled={busy}
+                          className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
+                          On my way
+                        </button>
+                      ) : b.status === 'EN_ROUTE' ? (
+                        <button onClick={() => markArrived(b.id)} disabled={busy}
+                          className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
+                          Mark arrived
+                        </button>
+                      ) : b.status === 'ARRIVED' ? (
+                        <ConfirmCollectedControl booking={b} busy={busy} onConfirm={confirmCollected} />
+                      ) : b.status === 'SAMPLE_COLLECTED' ? (
+                        <button onClick={() => markSubmittedToLab(b.id)} disabled={busy}
+                          className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
+                          Submitted to lab
+                        </button>
+                      ) : b.status === 'SUBMITTED_TO_LAB' ? (
+                        <UploadReportControl booking={b} busy={busy} onUpload={uploadReport} />
+                      ) : null}
+                    </div>
+                  )
+                })()}
               </div>
             )
           })}

@@ -9,7 +9,10 @@ import type { LabTestBooking } from '@/types'
 const STATUS_COLORS: Record<string, string> = {
   PENDING: 'bg-amber-50 text-amber-600',
   CONFIRMED: 'bg-secondary/10 text-secondary',
+  EN_ROUTE: 'bg-indigo-50 text-indigo-600',
+  ARRIVED: 'bg-blue-50 text-blue-600',
   SAMPLE_COLLECTED: 'bg-primary/10 text-primary',
+  SUBMITTED_TO_LAB: 'bg-purple-50 text-purple-600',
   REPORT_READY: 'bg-emerald-50 text-emerald-600',
   CANCELLED: 'bg-error/10 text-error',
 }
@@ -17,7 +20,10 @@ const STATUS_COLORS: Record<string, string> = {
 const STATUS_ICONS: Record<string, string> = {
   PENDING: 'hourglass_empty',
   CONFIRMED: 'check_circle',
+  EN_ROUTE: 'directions_car',
+  ARRIVED: 'pin_drop',
   SAMPLE_COLLECTED: 'vaccines',
+  SUBMITTED_TO_LAB: 'biotech',
   REPORT_READY: 'description',
   CANCELLED: 'cancel',
 }
@@ -177,7 +183,7 @@ export default function LabTestBookingsPage() {
                   {payingId === b.id ? 'Redirecting...' : 'Complete Payment'}
                 </button>
               )}
-              {(b.status === 'PENDING' || b.status === 'CONFIRMED') && (
+              {(b.status === 'PENDING' || b.status === 'CONFIRMED' || b.status === 'EN_ROUTE' || b.status === 'ARRIVED') && (
                 <button onClick={() => handleCancel(b.id)} disabled={cancelling === b.id}
                   className="text-xs font-semibold text-error hover:underline disabled:opacity-50">
                   {cancelling === b.id ? 'Cancelling...' : 'Cancel Booking'}
