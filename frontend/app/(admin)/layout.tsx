@@ -20,6 +20,7 @@ const PAGE_TITLES: Record<string, { title: string; icon: string }> = {
   '/admin/customers':     { title: 'Customers',            icon: 'group' },
   '/admin/delivery':      { title: 'Delivery',             icon: 'local_shipping' },
   '/admin/reports':       { title: 'Reports & Analytics',  icon: 'bar_chart' },
+  '/admin/notifications': { title: 'Notifications',         icon: 'notifications' },
   '/admin/settings':      { title: 'Settings',             icon: 'settings' },
   '/admin/profile':       { title: 'Admin Profile',        icon: 'manage_accounts' },
 }
@@ -46,7 +47,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }, [pathname])
   const { user, logout } = useAuthStore()
   const { dark, toggle: toggleDark } = useThemeStore()
-  const { notifs, loading: notifLoading, unread, markRead, markAllRead, deleteOne, clearAll } = useNotifications()
+  const { notifs, loading: notifLoading, unread, markRead, markAllRead, deleteOne } = useNotifications()
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
@@ -146,7 +147,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                       onMarkRead={markRead}
                       onMarkAllRead={markAllRead}
                       onDeleteOne={deleteOne}
-                      onClearAll={clearAll}
+                      viewAllHref="/admin/notifications"
                       onClose={() => setNotifOpen(false)}
                     />
                   </div>

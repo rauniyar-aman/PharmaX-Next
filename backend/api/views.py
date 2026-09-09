@@ -65,10 +65,11 @@ from .serializers import (
     DeliveryFulfillmentSerializer, DeliveryActiveSerializer,
     AdminPharmacyPayoutSerializer, AdminDeliveryAgentEarningSerializer, AdminDeliveryAgentCodLiabilitySerializer,
     AdminCollectorEarningSerializer, AdminCollectorCodLiabilitySerializer,
+    AdminChannelOrderSerializer, AdminChannelLabBookingSerializer, AdminChannelAppointmentSerializer,
     AdminLabCollectorSerializer, AdminLabCollectorCreateSerializer,
     PharmacyIncentiveCampaignSerializer, PharmacyCampaignEnrollmentSerializer,
 )
-from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk
+from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
 from .throttles import AuthRateThrottle
 from .matching import (
@@ -1116,11 +1117,16 @@ def _user_has_purchased(user, medicine):
 
 
 def _notify_admins(permission_code, notif_type, title, message, link=None):
-    """Notifies every admin who holds `permission_code`, plus every super admin."""
+    """Notifies every admin who holds `permission_code`, plus every super admin — except those who
+    have muted this notification's category (see _admin_wants_notification). Muted admins are
+    filtered out *before* notify_users_bulk, so muting silences the in-app bell entry and the email
+    together, not just the email."""
     admins = User.objects.filter(role='ADMIN', is_active=True).filter(
         Q(is_super_admin=True) | Q(permissions__code=permission_code)
     ).distinct()
-    notify_users_bulk(admins, notif_type, title, message, link)
+    recipients = [a for a in admins if _admin_wants_notification(a, notif_type)]
+    if recipients:
+        notify_users_bulk(recipients, notif_type, title, message, link)
 
 
 def _validate_coupon(code, user, subtotal):
@@ -2125,6 +2131,38 @@ class AppointmentKhaltiInitiateView(APIView):
         return Response({'success': True, 'data': {'payment_url': khalti_res['payment_url']}})
 
 
+def _confirm_appointment(appt):
+    """The one idempotent place a doctor appointment moves PENDING -> CONFIRMED and both parties are
+    notified — mirrors _confirm_lab_test_booking(). Called at booking creation for a Plus-free
+    consultation (payment not required), or from the Khalti verify view once payment settles. The
+    `status != 'PENDING'` guard makes it fire exactly once. Nothing notifies at booking creation for
+    a paid consultation, so the admin is never emailed about an appointment whose payment may never
+    complete."""
+    if appt.status != 'PENDING':
+        return
+    appt.status = 'CONFIRMED'
+    appt.save(update_fields=['status'])
+
+    date_label = appt.scheduled_date.strftime('%b %d, %Y')
+    plus_free = appt.payment_status == 'NOT_REQUIRED'
+    customer_payment_line = (
+        'This consultation is included with your PharmaX Plus membership — no charge.'
+        if plus_free else f'Payment received. Fee: NPR {appt.fee_charged}.'
+    )
+    notify_user(
+        appt.user, 'APPOINTMENT_UPDATE', 'Appointment Confirmed',
+        f'Your appointment with Dr. {appt.doctor.name} is confirmed for {date_label}, '
+        f'{appt.time_slot}. {customer_payment_line}',
+        link=f'/doctor-consult/appointments/{appt.id}',
+    )
+    _notify_admins(
+        'manage_doctors', 'NEW_APPOINTMENT', 'New Doctor Appointment',
+        f'{appt.user.full_name} booked an appointment with Dr. {appt.doctor.name} for {date_label} '
+        f'({appt.time_slot}). {"Plus-free consultation" if plus_free else f"Paid online — NPR {appt.fee_charged}"}.',
+        link='/admin/doctor-consult',
+    )
+
+
 def _cancel_unpaid_appointment(appt):
     # payment_status has no FAILED state (Stage 1: PENDING/PAID/NOT_REQUIRED only) — cancelling the
     # appointment itself is what frees the slot back up via get_available_slots(); payment_status
@@ -2168,18 +2206,8 @@ class AppointmentKhaltiVerifyView(APIView):
 
         if appt.payment_status != 'PAID':
             appt.payment_status = 'PAID'
-            appt.status = 'CONFIRMED'
-            appt.save(update_fields=['payment_status', 'status'])
-            notify_user(
-                user=appt.user, type='PAYMENT_UPDATE', title='Payment Received',
-                message=f'Payment for your consultation with Dr. {appt.doctor.name} was received — your appointment is confirmed.',
-                link=f'/doctor-consult/appointments/{appt.id}',
-            )
-            _notify_admins(
-                'manage_doctors', 'PAYMENT_UPDATE', 'Appointment Payment Received',
-                f'Payment received for {appt.user.full_name}\'s appointment with Dr. {appt.doctor.name} (NPR {appt.fee_charged}).',
-                link='/admin/doctor-consult',
-            )
+            appt.save(update_fields=['payment_status'])
+            _confirm_appointment(appt)
         return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-confirmation?appointmentId={appt.id}')
 
 
@@ -2323,12 +2351,10 @@ class LabTestBookingListCreateView(APIView):
                 id=prescription_item_id, prescription__user=request.user, lab_test=lab_test, booking__isnull=True,
             ).update(booking=booking)
 
-        _notify_admins(
-            'manage_lab_tests', 'NEW_LAB_BOOKING', 'New Lab Test Booking',
-            f'{request.user.full_name} booked {lab_test.name} for {booking.scheduled_date}.',
-            link='/admin/lab-tests',
-        )
-
+        # No notification here: admins (and the customer) are notified only from
+        # _confirm_lab_test_booking(), i.e. once the booking actually reaches CONFIRMED — at
+        # creation for COD, or after gateway verify for Khalti/eSewa. This is what stops the admin
+        # being emailed about a booking whose online payment may never complete.
         return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Lab test booked!'}, status=status.HTTP_201_CREATED)
 
 
@@ -2379,6 +2405,26 @@ def _confirm_lab_test_booking(booking):
         return
     booking.status = 'CONFIRMED'
     booking.save(update_fields=['status'])
+
+    # Single, idempotent notification point (the guard above ensures it fires exactly once):
+    # notify the customer and the admins here, never at booking creation. For COD this runs at
+    # creation with payment still PENDING (-> "pay at collection"); for Khalti/eSewa it runs from
+    # the gateway verify view once payment_status is already PAID (-> "payment received").
+    date_label = booking.scheduled_date.strftime('%b %d, %Y')
+    paid = booking.payment_status == 'PAID'
+    customer_payment_line = 'Payment received.' if paid else 'Please pay by cash at the time of sample collection.'
+    notify_user(
+        booking.user, 'LAB_BOOKING_UPDATE', 'Lab Test Booking Confirmed',
+        f'{booking.lab_test.name} is booked for {date_label}, {booking.time_slot}. '
+        f'{customer_payment_line} Amount: NPR {booking.total_amount}.',
+        link='/lab-test-bookings',
+    )
+    _notify_admins(
+        'manage_lab_tests', 'NEW_LAB_BOOKING', 'New Lab Test Booking',
+        f'{booking.user.full_name} booked {booking.lab_test.name} for {date_label} '
+        f'({booking.time_slot}). {"Paid online" if paid else "Cash on collection"} — NPR {booking.total_amount}.',
+        link='/admin/lab-tests',
+    )
 
 
 def _cancel_unpaid_lab_test_booking(booking):
@@ -2491,16 +2537,6 @@ class LabTestKhaltiVerifyView(APIView):
             booking.payment_status = 'PAID'
             booking.save(update_fields=['payment_status'])
             _confirm_lab_test_booking(booking)
-            notify_user(
-                user=booking.user, type='PAYMENT_UPDATE', title='Payment Received',
-                message=f'Payment for your {booking.lab_test.name} booking was received — it\'s confirmed.',
-                link='/lab-test-bookings',
-            )
-            _notify_admins(
-                'manage_lab_tests', 'PAYMENT_UPDATE', 'Lab Test Payment Received',
-                f'Payment received for {booking.user.full_name}\'s {booking.lab_test.name} booking (NPR {booking.total_amount}).',
-                link='/admin/lab-tests',
-            )
         return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-confirmation?bookingId={booking.id}')
 
 
@@ -2585,16 +2621,6 @@ class LabTestEsewaSuccessView(APIView):
             booking.payment_status = 'PAID'
             booking.save(update_fields=['payment_status'])
             _confirm_lab_test_booking(booking)
-            notify_user(
-                user=booking.user, type='PAYMENT_UPDATE', title='Payment Received',
-                message=f'Payment for your {booking.lab_test.name} booking was received — it\'s confirmed.',
-                link='/lab-test-bookings',
-            )
-            _notify_admins(
-                'manage_lab_tests', 'PAYMENT_UPDATE', 'Lab Test Payment Received',
-                f'Payment received for {booking.user.full_name}\'s {booking.lab_test.name} booking (NPR {booking.total_amount}).',
-                link='/admin/lab-tests',
-            )
         return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-confirmation?bookingId={booking.id}')
 
 
@@ -2835,16 +2861,16 @@ class AppointmentListCreateView(APIView):
         # PENDING (not yet confirmed) until payment clears.
         is_plus_free = _user_has_plus_benefit(request.user, 'FREE_DOCTOR_CONSULTATION')
         if is_plus_free:
-            fee_charged, payment_status_value, initial_status = Decimal('0'), 'NOT_REQUIRED', 'CONFIRMED'
+            fee_charged, payment_status_value = Decimal('0'), 'NOT_REQUIRED'
         else:
-            fee_charged, payment_status_value, initial_status = doctor.consultation_fee, 'PENDING', 'PENDING'
+            fee_charged, payment_status_value = doctor.consultation_fee, 'PENDING'
 
         appt = DoctorAppointment.objects.create(
             user=request.user,
             doctor=doctor,
             scheduled_date=scheduled_date,
             time_slot=time_slot,
-            status=initial_status,
+            status='PENDING',
             fee_amount=doctor.consultation_fee,
             fee_charged=fee_charged,
             is_plus_free=is_plus_free,
@@ -2855,11 +2881,12 @@ class AppointmentListCreateView(APIView):
         # DoctorAppointmentCompleteView, alongside DoctorPayout) — not booking attempts, which
         # would inflate it with cancellations/no-shows/unpaid appointments that never happened.
 
-        _notify_admins(
-            'manage_doctors', 'NEW_APPOINTMENT', 'New Doctor Appointment',
-            f'{request.user.full_name} booked an appointment with Dr. {doctor.name} for {appt.scheduled_date}.',
-            link='/admin/doctor-consult',
-        )
+        # Created PENDING above regardless of path; _confirm_appointment() is the single place an
+        # appointment moves to CONFIRMED and notifies the patient + admins. A Plus-free consultation
+        # confirms right here; a paid one stays PENDING until its Khalti payment verifies, so the
+        # admin is no longer notified at creation about a booking whose payment may never complete.
+        if is_plus_free:
+            _confirm_appointment(appt)
 
         return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment booked!'}, status=status.HTTP_201_CREATED)
 
@@ -3713,7 +3740,12 @@ class AdminDashboardView(APIView):
 
     def get(self, request):
         total_orders = Order.objects.count()
-        total_revenue = Order.objects.filter(payment_status='PAID').aggregate(s=Sum('total_amount'))['s'] or 0
+        # Total revenue spans all three paid channels — medicine orders, lab-test bookings and
+        # doctor appointments — not just Order, so a Khalti lab payment actually shows up here.
+        order_revenue = Order.objects.filter(payment_status='PAID').aggregate(s=Sum('total_amount'))['s'] or 0
+        lab_revenue = LabTestBooking.objects.filter(payment_status='PAID').aggregate(s=Sum('total_amount'))['s'] or 0
+        appt_revenue = DoctorAppointment.objects.filter(payment_status='PAID').aggregate(s=Sum('fee_charged'))['s'] or 0
+        total_revenue = order_revenue + lab_revenue + appt_revenue
         total_customers = User.objects.filter(role='CUSTOMER', is_deleted=False).count()
         total_medicines = Medicine.objects.count()
         pending_prescriptions = Prescription.objects.filter(status='PENDING').count()
@@ -3763,8 +3795,18 @@ class AdminReportsView(APIView):
         # a sale (or a failure) until they're released or cancelled.
         FAILED_STATUSES = ['CANCELLED', 'NO_PHARMACY_FOUND', 'AWAITING_PRESCRIPTION', 'PRESCRIPTION_REJECTED']
 
-        total_revenue = Order.objects.filter(payment_status='PAID').aggregate(s=Sum('total_amount'))['s'] or 0
-        monthly_revenue = Order.objects.filter(payment_status='PAID', placed_at__gte=start_of_month).aggregate(s=Sum('total_amount'))['s'] or 0
+        # Revenue spans all three paid channels. Orders bucket by placed_at; lab bookings and
+        # appointments have no paid_at, so they bucket by booked_at (online payment ≈ booking time;
+        # a COD lab amount only flips to PAID once the collector confirms it, so it's real revenue).
+        order_revenue = Order.objects.filter(payment_status='PAID').aggregate(s=Sum('total_amount'))['s'] or 0
+        lab_test_revenue = LabTestBooking.objects.filter(payment_status='PAID').aggregate(s=Sum('total_amount'))['s'] or 0
+        appointment_revenue = DoctorAppointment.objects.filter(payment_status='PAID').aggregate(s=Sum('fee_charged'))['s'] or 0
+        total_revenue = order_revenue + lab_test_revenue + appointment_revenue
+        monthly_revenue = (
+            (Order.objects.filter(payment_status='PAID', placed_at__gte=start_of_month).aggregate(s=Sum('total_amount'))['s'] or 0)
+            + (LabTestBooking.objects.filter(payment_status='PAID', booked_at__gte=start_of_month).aggregate(s=Sum('total_amount'))['s'] or 0)
+            + (DoctorAppointment.objects.filter(payment_status='PAID', booked_at__gte=start_of_month).aggregate(s=Sum('fee_charged'))['s'] or 0)
+        )
         total_orders = Order.objects.exclude(status__in=FAILED_STATUSES).count()
         cancelled_count = Order.objects.filter(status='CANCELLED').count()
         total_customers = User.objects.filter(role='CUSTOMER', is_deleted=False).count()
@@ -3773,10 +3815,20 @@ class AdminReportsView(APIView):
         order_status_counts = list(
             Order.objects.exclude(status='CANCELLED').values('status').annotate(count=Count('id')).order_by('-count')
         )
-        payment_method_counts = list(
-            Order.objects.exclude(status='CANCELLED').exclude(payment_method__isnull=True)
-            .values('payment_method').annotate(count=Count('id')).order_by('-count')
-        )
+        # Payment-method mix across all three channels, so a Khalti/eSewa lab or appointment payment
+        # is visible here — not just medicine orders. Non-cancelled records with a chosen method,
+        # merged by method (Plus-free appointments have no method and are excluded).
+        method_counts = {}
+        for qs in (
+            Order.objects.exclude(status='CANCELLED').exclude(payment_method__isnull=True).values('payment_method').annotate(count=Count('id')),
+            LabTestBooking.objects.exclude(status='CANCELLED').exclude(payment_method__isnull=True).values('payment_method').annotate(count=Count('id')),
+            DoctorAppointment.objects.exclude(status='CANCELLED').exclude(payment_method__isnull=True).values('payment_method').annotate(count=Count('id')),
+        ):
+            for row in qs:
+                method_counts[row['payment_method']] = method_counts.get(row['payment_method'], 0) + row['count']
+        payment_method_counts = [
+            {'payment_method': k, 'count': v} for k, v in sorted(method_counts.items(), key=lambda kv: -kv[1])
+        ]
 
         top_items = (
             OrderItem.objects.exclude(order__status__in=FAILED_STATUSES)
@@ -3802,12 +3854,23 @@ class AdminReportsView(APIView):
             entry['orders'] += 1
             if o['payment_status'] == 'PAID':
                 entry['revenue'] += float(o['total_amount'])
+        # Fold paid lab bookings + appointments into the same monthly revenue buckets (by booked_at).
+        # 'orders' stays a medicine-order count; only 'revenue' gains the services.
+        for b in LabTestBooking.objects.filter(payment_status='PAID', booked_at__gte=six_months_ago).values('booked_at', 'total_amount'):
+            key = b['booked_at'].strftime('%Y-%m')
+            monthly_map.setdefault(key, {'month': key, 'orders': 0, 'revenue': 0.0})['revenue'] += float(b['total_amount'])
+        for a in DoctorAppointment.objects.filter(payment_status='PAID', booked_at__gte=six_months_ago).values('booked_at', 'fee_charged'):
+            key = a['booked_at'].strftime('%Y-%m')
+            monthly_map.setdefault(key, {'month': key, 'orders': 0, 'revenue': 0.0})['revenue'] += float(a['fee_charged'])
         monthly_trend = [monthly_map[k] for k in sorted(monthly_map.keys())]
 
         return Response({
             'success': True,
             'data': {
                 'total_revenue': float(total_revenue),
+                'order_revenue': float(order_revenue),
+                'lab_test_revenue': float(lab_test_revenue),
+                'appointment_revenue': float(appointment_revenue),
                 'monthly_revenue': float(monthly_revenue),
                 'total_orders': total_orders,
                 'cancelled_count': cancelled_count,
@@ -7238,6 +7301,11 @@ class AdminFinanceSummaryView(APIView):
         month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         coupon_cost_this_month = CouponUsage.objects.filter(used_at__gte=month_start).aggregate(t=Sum('discount_amount'))['t'] or Decimal('0')
 
+        # Gross revenue collected on the two service channels (PAID only). Surfaced here so the lab
+        # Khalti payment the super admin was missing actually appears in Finance, alongside orders.
+        lab_test_revenue = LabTestBooking.objects.filter(payment_status='PAID').aggregate(t=Sum('total_amount'))['t'] or Decimal('0')
+        appointment_revenue = DoctorAppointment.objects.filter(payment_status='PAID').aggregate(t=Sum('fee_charged'))['t'] or Decimal('0')
+
         return Response({
             'success': True,
             'data': {
@@ -7252,5 +7320,116 @@ class AdminFinanceSummaryView(APIView):
                     'by_agent': outstanding_cod_by_agent,
                 },
                 'coupon_cost_this_month': str(coupon_cost_this_month),
+                'lab_test_revenue': str(lab_test_revenue),
+                'appointment_revenue': str(appointment_revenue),
+            },
+        })
+
+
+# --- Revenue by business line (Medicine / Lab / Appointments) ---------------
+# Gross uses PAID rows (matches AdminReportsView.order_revenue exactly: payment_status='PAID',
+# no lifecycle-status filter). Costs are summed in full with NO payout-status filter and NO
+# order join — the same accrual basis as total_commission_earned above: a PharmacyPayout /
+# DeliveryAgentEarning / CollectorEarning / DoctorPayout row exists once the work is settled,
+# and in practice that lines up with the revenue flipping to PAID (COD flips to PAID at the
+# same moment its payout is created; online was already PAID). Timing caveat by design: an
+# online order paid but not yet delivered shows gross with no matching cost yet, and a Plus-free
+# appointment (fee_charged=0, NOT_REQUIRED) contributes zero gross but a real DoctorPayout —
+# a deliberate loss captured by summing all payouts. No coupon/wallet re-subtraction: Order
+# .total_amount is already net of both.
+
+def _medicine_channel_totals():
+    gross = Order.objects.filter(payment_status='PAID').aggregate(t=Sum('total_amount'))['t'] or Decimal('0')
+    pharmacy_cost = PharmacyPayout.objects.aggregate(t=Sum('net_payable'))['t'] or Decimal('0')
+    agent_cost = DeliveryAgentEarning.objects.aggregate(t=Sum('amount'))['t'] or Decimal('0')
+    cost_total = pharmacy_cost + agent_cost
+    count = Order.objects.filter(payment_status='PAID').count()
+    return {
+        'key': 'medicine', 'label': 'Medicine Orders',
+        'gross': str(gross),
+        'cost_breakdown': {'pharmacy_payouts': str(pharmacy_cost), 'delivery_earnings': str(agent_cost)},
+        'cost_total': str(cost_total), 'net': str(gross - cost_total), 'count': count,
+    }
+
+
+def _lab_channel_totals():
+    gross = LabTestBooking.objects.filter(payment_status='PAID').aggregate(t=Sum('total_amount'))['t'] or Decimal('0')
+    collector_cost = CollectorEarning.objects.aggregate(t=Sum('amount'))['t'] or Decimal('0')
+    count = LabTestBooking.objects.filter(payment_status='PAID').count()
+    return {
+        'key': 'lab-tests', 'label': 'Lab Tests',
+        'gross': str(gross),
+        'cost_breakdown': {'collector_earnings': str(collector_cost)},
+        'cost_total': str(collector_cost), 'net': str(gross - collector_cost), 'count': count,
+    }
+
+
+def _appointment_channel_totals():
+    gross = DoctorAppointment.objects.filter(payment_status='PAID').aggregate(t=Sum('fee_charged'))['t'] or Decimal('0')
+    doctor_cost = DoctorPayout.objects.aggregate(t=Sum('net_payable'))['t'] or Decimal('0')
+    count = DoctorAppointment.objects.filter(payment_status='PAID').count()
+    return {
+        'key': 'appointments', 'label': 'Doctor Appointments',
+        'gross': str(gross),
+        'cost_breakdown': {'doctor_payouts': str(doctor_cost)},
+        'cost_total': str(doctor_cost), 'net': str(gross - doctor_cost), 'count': count,
+    }
+
+
+class AdminFinanceChannelsView(APIView):
+    """Gross + net-after-costs for each business line. Powers the Finance dashboard breakdown."""
+    permission_classes = [require_permission('manage_finance')]
+
+    def get(self, request):
+        channels = [_medicine_channel_totals(), _lab_channel_totals(), _appointment_channel_totals()]
+        totals = {
+            'gross': str(sum((Decimal(c['gross']) for c in channels), Decimal('0'))),
+            'cost_total': str(sum((Decimal(c['cost_total']) for c in channels), Decimal('0'))),
+            'net': str(sum((Decimal(c['net']) for c in channels), Decimal('0'))),
+        }
+        return Response({'success': True, 'data': {'channels': channels, 'totals': totals}})
+
+
+class AdminFinanceChannelDetailView(APIView):
+    """One business line: its P&L header + a paginated list of the PAID revenue rows behind it."""
+    permission_classes = [require_permission('manage_finance')]
+
+    def get(self, request, channel):
+        page = max(1, int(request.query_params.get('page', 1)))
+        limit = min(50, int(request.query_params.get('limit', 20)))
+        status_filter = request.query_params.get('status')  # lifecycle status, per channel; optional
+
+        if channel == 'medicine':
+            header = _medicine_channel_totals()
+            qs = (Order.objects.filter(payment_status='PAID')
+                  .select_related('user').prefetch_related('items__medicine').order_by('-placed_at'))
+            if status_filter:
+                qs = qs.filter(status=status_filter)
+            serializer_cls = AdminChannelOrderSerializer
+        elif channel == 'lab-tests':
+            header = _lab_channel_totals()
+            qs = (LabTestBooking.objects.filter(payment_status='PAID')
+                  .select_related('user', 'lab_test').order_by('-booked_at'))
+            if status_filter:
+                qs = qs.filter(status=status_filter)
+            serializer_cls = AdminChannelLabBookingSerializer
+        elif channel == 'appointments':
+            header = _appointment_channel_totals()
+            qs = (DoctorAppointment.objects.filter(payment_status='PAID')
+                  .select_related('user', 'doctor').order_by('-booked_at'))
+            if status_filter:
+                qs = qs.filter(status=status_filter)
+            serializer_cls = AdminChannelAppointmentSerializer
+        else:
+            return Response({'success': False, 'message': 'Unknown revenue channel.'}, status=status.HTTP_404_NOT_FOUND)
+
+        total = qs.count()
+        rows = serializer_cls(qs[(page - 1) * limit: page * limit], many=True).data
+        return Response({
+            'success': True,
+            'data': {
+                'channel': header,
+                'transactions': rows,
+                'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
             },
         })

@@ -53,7 +53,7 @@ export default function PublicHeader() {
   const { user, logout } = useAuthStore()
   const cartCount = useCartStore((s) => s.count)
   const { dark, toggle: toggleDark } = useThemeStore()
-  const { notifs, loading: notifLoading, unread, markRead, markAllRead, deleteOne, clearAll } = useNotifications()
+  const { notifs, loading: notifLoading, unread, markRead, markAllRead, deleteOne } = useNotifications()
   const [query, setQuery] = useState('')
   const [notifOpen, setNotifOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -137,7 +137,7 @@ export default function PublicHeader() {
                         onMarkRead={markRead}
                         onMarkAllRead={markAllRead}
                         onDeleteOne={deleteOne}
-                        onClearAll={clearAll}
+                        viewAllHref="/notifications"
                         onClose={() => setNotifOpen(false)}
                       />
                     </div>

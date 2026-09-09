@@ -37,10 +37,5 @@ export function useNotifications() {
     try { await api.delete(`/notifications/${id}/`) } catch {}
   }
 
-  const clearAll = async () => {
-    setNotifs([])
-    try { await api.delete('/notifications/clear-all/') } catch {}
-  }
-
-  return { notifs, loading, unread, markRead, markAllRead, deleteOne, clearAll, refetch: fetch }
+  return { notifs, loading, unread, markRead, markAllRead, deleteOne, refetch: fetch }
 }

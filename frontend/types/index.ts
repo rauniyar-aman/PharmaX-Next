@@ -21,6 +21,12 @@ export interface User {
   notif_doctor_updates?: boolean
   notif_lab_test_updates?: boolean
   notif_reminders?: boolean
+  // Admin-only: per-category mute for _notify_admins() fan-outs (email + in-app bell together).
+  notif_admin_orders?: boolean
+  notif_admin_lab_bookings?: boolean
+  notif_admin_appointments?: boolean
+  notif_admin_prescriptions?: boolean
+  notif_admin_business?: boolean
   created_at: string
   updated_at: string
 }
@@ -1061,4 +1067,49 @@ export interface FinanceSummary {
   pending_agent_earnings: string
   outstanding_cod: { total: string; by_agent: { agent_id: string; agent_name: string; amount: string }[] }
   coupon_cost_this_month: string
+  lab_test_revenue: string
+  appointment_revenue: string
+}
+
+export type RevenueChannelKey = 'medicine' | 'lab-tests' | 'appointments'
+
+export interface RevenueChannel {
+  key: RevenueChannelKey
+  label: string
+  gross: string
+  cost_breakdown: Record<string, string>
+  cost_total: string
+  net: string
+  count: number
+}
+
+export interface ChannelsSummary {
+  channels: RevenueChannel[]
+  totals: { gross: string; cost_total: string; net: string }
+}
+
+export interface ChannelTransaction {
+  id: string
+  payment_status: string
+  status: string
+  payment_method?: string | null
+  // medicine
+  customer_name?: string
+  item_summary?: string
+  total_amount?: string
+  placed_at?: string
+  // lab-tests (also uses customer_name + total_amount)
+  lab_test_name?: string
+  booked_at?: string
+  // appointments
+  patient_name?: string
+  doctor_name?: string
+  fee_charged?: string
+  is_plus_free?: boolean
+}
+
+export interface ChannelDetail {
+  channel: RevenueChannel
+  transactions: ChannelTransaction[]
+  pagination: { total: number; page: number; limit: number; totalPages: number }
 }

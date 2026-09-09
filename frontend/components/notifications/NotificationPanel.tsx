@@ -1,4 +1,5 @@
 'use client'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { getNotificationCfg, notificationTimeAgo } from '@/lib/notificationDisplay'
 import type { Notification } from '@/types'
@@ -10,13 +11,13 @@ interface Props {
   onMarkRead: (id: string) => void
   onMarkAllRead: () => void
   onDeleteOne: (id: string) => void
-  onClearAll: () => void
+  viewAllHref: string
   onClose?: () => void
 }
 
 export default function NotificationPanel({
   notifs, loading, unread,
-  onMarkRead, onMarkAllRead, onDeleteOne, onClearAll, onClose,
+  onMarkRead, onMarkAllRead, onDeleteOne, viewAllHref, onClose,
 }: Props) {
   const router = useRouter()
 
@@ -38,11 +39,6 @@ export default function NotificationPanel({
           {unread > 0 && (
             <button onClick={onMarkAllRead} className="text-[11px] text-secondary font-semibold hover:underline">
               Mark all read
-            </button>
-          )}
-          {notifs.length > 0 && (
-            <button onClick={onClearAll} className="text-[11px] text-on-surface-variant hover:text-error transition-colors">
-              Clear all
             </button>
           )}
         </div>
@@ -103,6 +99,14 @@ export default function NotificationPanel({
           </div>
         )}
       </div>
+
+      <Link
+        href={viewAllHref}
+        onClick={onClose}
+        className="block flex-shrink-0 px-4 py-2.5 text-center text-[12px] font-semibold text-secondary border-t border-outline-variant hover:bg-surface-container-low transition-colors"
+      >
+        View all notifications
+      </Link>
     </div>
   )
 }

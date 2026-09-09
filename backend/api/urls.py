@@ -274,5 +274,7 @@ urlpatterns = [
     path('admin/finance/collector-cod-liabilities/',                    views.AdminCollectorCodLiabilityListView.as_view(),           name='admin-finance-collector-cod-liabilities'),
     path('admin/finance/collector-cod-liabilities/<uuid:pk>/confirm-remittance/', views.AdminCollectorCodLiabilityConfirmRemittanceView.as_view(), name='admin-finance-collector-cod-liability-confirm-remittance'),
     path('admin/finance/agents/<uuid:pk>/',                   views.AdminAgentFinanceProfileView.as_view(),        name='admin-finance-agent-profile'),
+    path('admin/finance/channels/',                           views.AdminFinanceChannelsView.as_view(),            name='admin-finance-channels'),
+    path('admin/finance/channels/<str:channel>/',             views.AdminFinanceChannelDetailView.as_view(),       name='admin-finance-channel-detail'),
     path('admin/finance/summary/',                            views.AdminFinanceSummaryView.as_view(),             name='admin-finance-summary'),
 ]

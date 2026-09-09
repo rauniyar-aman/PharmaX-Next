@@ -52,6 +52,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     notif_doctor_updates = models.BooleanField(default=True)
     notif_lab_test_updates = models.BooleanField(default=True)
     notif_reminders = models.BooleanField(default=True)
+    # Admin-only notification categories — gate both the email and the in-app bell entry for
+    # _notify_admins() fan-outs, so a super admin isn't buried under every operational alert.
+    # default=True: existing admins keep receiving everything until they explicitly opt out.
+    notif_admin_orders = models.BooleanField(default=True)
+    notif_admin_lab_bookings = models.BooleanField(default=True)
+    notif_admin_appointments = models.BooleanField(default=True)
+    notif_admin_prescriptions = models.BooleanField(default=True)
+    notif_admin_business = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
