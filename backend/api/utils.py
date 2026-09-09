@@ -185,6 +185,41 @@ def send_otp_email_async(to_email, full_name, otp, subject=None):
     threading.Thread(target=_run, daemon=True).start()
 
 
+def send_collector_welcome_email(user, raw_password):
+    """One-time onboarding email for an admin-created lab collector, sent from
+    AdminLabCollectorListView.post(). This is the ONLY place the admin-set password is ever put in
+    front of the collector — deliberately by email, never in the persistent in-app Notification row
+    (which lives in the DB and is shown on every future login). Fire-and-forget via
+    _send_email_async, exactly like every other outbound email in this module."""
+    store_name = get_store_name()
+    subject = f'Your {store_name} collector account is ready'
+    signin_url = f'{FRONTEND_URL}/signin'
+    text_body = (
+        f'Hi {user.full_name},\n\n'
+        f'A lab collector account has been created for you on {store_name}. You can sign in with:\n\n'
+        f'Email: {user.email}\n'
+        f'Temporary password: {raw_password}\n\n'
+        f'Please change your password after signing in. Sign in here: {signin_url}\n\n'
+        f'— {store_name} Team'
+    )
+    body_html = f'''
+      Hi {user.full_name},<br><br>
+      A lab collector account has been created for you on <strong>{store_name}</strong>.
+      Use the temporary credentials below to sign in, then change your password from your account settings.
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;">
+        <tr>
+          <td style="background:#f2f4f3; border-radius:12px; padding:18px; font-size:14px; color:#1a1c1a;">
+            <strong>Email:</strong> {user.email}<br>
+            <strong>Temporary password:</strong>
+            <span style="font-family:monospace; letter-spacing:0.5px;">{raw_password}</span>
+          </td>
+        </tr>
+      </table>
+      For your security, please change this password after your first sign-in.'''
+    html_body = _render_email_html(store_name, 'Your collector account is ready', body_html, cta_text='Sign In', cta_url=signin_url)
+    _send_email_async(user.email, subject, html_body, text_body)
+
+
 def _admin_wants_notification(user, notif_type):
     """Per-admin category opt-out for _notify_admins() fan-outs. Maps the notif_type an admin
     alert is sent under to the User boolean that governs it; unknown/miscellaneous admin types

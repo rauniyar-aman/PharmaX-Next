@@ -1,16 +1,20 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/auth'
 import { useThemeStore } from '@/store/theme'
+import { useNotifications } from '@/hooks/useNotifications'
+import NotificationPanel from '@/components/notifications/NotificationPanel'
 import Logo from '@/components/common/Logo'
 import api from '@/lib/api'
+import { playNotificationChime, installAudioUnlockOnFirstInteraction } from '@/lib/notificationSound'
 
 const NAV_ITEMS = [
-  { label: 'Active',  href: '/lab-collector/active',  icon: 'science' },
-  { label: 'Finance', href: '/lab-collector/finance', icon: 'account_balance_wallet' },
+  { label: 'Home',    href: '/lab-collector',         icon: 'home',    exact: true },
+  { label: 'Active',  href: '/lab-collector/active',  icon: 'science', exact: false },
+  { label: 'Finance', href: '/lab-collector/finance', icon: 'account_balance_wallet', exact: false },
 ]
 
 /** Same pattern as (delivery)/layout.tsx's own online/offline switch. */
@@ -29,13 +33,66 @@ function OnlineToggle({ isOnline, toggling, onToggle }: { isOnline: boolean; tog
   )
 }
 
+/** One-time opt-in for OS-level alerts, gated once per account (localStorage) — same reasoning as
+ * the delivery layout's banner: the "keep me posted" chime can only be unlocked by a real gesture,
+ * and a genuine OS Notification only fires once the collector has granted permission. Simpler than
+ * delivery's (no repeating ring) since a collector isn't racing others to accept a broadcast — an
+ * assignment is already theirs. */
+function NotificationOptInBanner({ userId, onDismiss }: { userId: string; onDismiss: () => void }) {
+  const [requesting, setRequesting] = useState(false)
+
+  const enable = async () => {
+    setRequesting(true)
+    playNotificationChime() // doubles as the audio-unlock gesture
+    try {
+      await Notification.requestPermission()
+    } catch {
+      // permission API unavailable/blocked — the banner still dismisses, in-app bell still works
+    } finally {
+      localStorage.setItem(`pharmax-collector-notif-banner-dismissed:${userId}`, '1')
+      setRequesting(false)
+      onDismiss()
+    }
+  }
+
+  const dismiss = () => {
+    localStorage.setItem(`pharmax-collector-notif-banner-dismissed:${userId}`, '1')
+    onDismiss()
+  }
+
+  return (
+    <div className="bg-primary/5 border-b border-primary/20 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex items-center gap-2.5">
+        <span className="material-symbols-outlined text-primary" style={{ fontSize: '18px' }}>notifications</span>
+        <p className="text-xs sm:text-sm text-on-surface">Get an alert when a collection is assigned to you?</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={enable} disabled={requesting}
+          className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60">
+          {requesting ? 'Enabling...' : 'Enable'}
+        </button>
+        <button onClick={dismiss} className="px-3 py-1.5 text-xs font-semibold text-on-surface-variant hover:bg-surface-container rounded-lg transition-colors">
+          No thanks
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function LabCollectorLayout({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)
   const [togglingOnline, setTogglingOnline] = useState(false)
+  const [notifOpen, setNotifOpen] = useState(false)
+  const [showOptIn, setShowOptIn] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
   const { user, logout } = useAuthStore()
   const { dark, toggle: toggleDark } = useThemeStore()
+  const { notifs, loading: notifLoading, unread, markRead, markAllRead, deleteOne, refetch } = useNotifications()
+  // Baseline for detecting an unread *rise*; sawLoading gates out the initial pre-fetch render so a
+  // collector who logs in to existing unread notifications doesn't get chimed at on page load.
+  const prevUnreadRef = useRef<number | null>(null)
+  const sawLoadingRef = useRef(false)
 
   const handleToggleOnline = async () => {
     if (!user) return
@@ -55,6 +112,9 @@ export default function LabCollectorLayout({ children }: { children: React.React
   useEffect(() => {
     useAuthStore.persist.rehydrate()
     setHydrated(true)
+    // Unlock the chime's AudioContext on the first interaction anywhere — a poll-driven chime can
+    // never unlock it on its own (see notificationSound.ts).
+    installAudioUnlockOnFirstInteraction()
   }, [])
 
   useEffect(() => {
@@ -71,6 +131,45 @@ export default function LabCollectorLayout({ children }: { children: React.React
       .then((r) => useAuthStore.getState().setUser(r.data.data.user))
       .catch(() => {})
   }, [hydrated, pathname])
+
+  // Poll for new notifications so an assignment reaches a collector who isn't clicking around.
+  useEffect(() => {
+    if (!hydrated || !user || user.role !== 'LAB_COLLECTOR') return
+    const t = setInterval(() => { refetch() }, 30000)
+    return () => clearInterval(t)
+  }, [hydrated, user, refetch])
+
+  // When the unread count genuinely rises (a new assignment/account notification landed), chime and
+  // — if the collector granted OS notifications — fire a real desktop/phone notification. The first
+  // settled fetch only establishes the baseline; it never chimes.
+  useEffect(() => {
+    if (notifLoading) { sawLoadingRef.current = true; return }
+    if (!sawLoadingRef.current) return // still the initial pre-fetch render
+    if (prevUnreadRef.current === null) { prevUnreadRef.current = unread; return } // baseline
+    if (unread > prevUnreadRef.current) {
+      playNotificationChime()
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        const latest = notifs[0]
+        const n = new Notification(latest?.title || 'New notification — PharmaX', {
+          body: latest?.message || 'You have a new collection update.',
+          icon: '/PharmaX_Icon.png',
+          tag: 'pharmax-collector-notif',
+        })
+        n.onclick = () => { window.focus(); router.push('/lab-collector/notifications'); n.close() }
+      }
+    }
+    prevUnreadRef.current = unread
+  }, [notifLoading, unread, notifs, router])
+
+  // Show the opt-in banner once per collector account, unless already dismissed or the browser has
+  // no Notification support / already recorded a permission decision — same gating as delivery.
+  useEffect(() => {
+    if (!hydrated || !user || user.role !== 'LAB_COLLECTOR') return
+    if (typeof window === 'undefined' || !('Notification' in window)) return
+    if (Notification.permission !== 'default') return
+    const dismissed = localStorage.getItem(`pharmax-collector-notif-banner-dismissed:${user.id}`)
+    setShowOptIn(!dismissed)
+  }, [hydrated, user])
 
   if (!hydrated || !user) {
     return (
@@ -100,13 +199,13 @@ export default function LabCollectorLayout({ children }: { children: React.React
       <header className="sticky top-0 z-40 bg-surface-container-lowest border-b border-outline-variant">
         <div className="w-full px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8">
-            <Link href="/lab-collector/active">
+            <Link href="/lab-collector">
               <Logo iconSize={32} textClassName="text-lg" />
             </Link>
             {!pendingVerification && (
               <nav className="hidden sm:flex items-center gap-1">
                 {NAV_ITEMS.map((item) => {
-                  const active = pathname.startsWith(item.href)
+                  const active = item.exact ? pathname === item.href : pathname.startsWith(item.href)
                   return (
                     <Link key={item.href} href={item.href}
                       className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-colors ${active ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container'}`}>
@@ -123,6 +222,37 @@ export default function LabCollectorLayout({ children }: { children: React.React
             {!pendingVerification && (
               <OnlineToggle isOnline={!!user.lab_collector_online} toggling={togglingOnline} onToggle={handleToggleOnline} />
             )}
+
+            <div className="relative">
+              <button
+                onClick={() => setNotifOpen((o) => !o)}
+                className="relative p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors" title="Notifications">
+                <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>notifications</span>
+                {unread > 0 && (
+                  <span className="absolute top-1 right-1 min-w-[16px] h-4 bg-error text-white text-[9px] font-bold rounded-full flex items-center justify-center px-1 leading-none border-2 border-surface-container-lowest">
+                    {unread > 9 ? '9+' : unread}
+                  </span>
+                )}
+              </button>
+              {notifOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
+                  <div className="absolute right-0 top-12 w-80 bg-surface border border-outline-variant rounded-2xl shadow-xl z-50 overflow-hidden">
+                    <NotificationPanel
+                      notifs={notifs}
+                      loading={notifLoading && notifs.length === 0}
+                      unread={unread}
+                      onMarkRead={markRead}
+                      onMarkAllRead={markAllRead}
+                      onDeleteOne={deleteOne}
+                      viewAllHref="/lab-collector/notifications"
+                      onClose={() => setNotifOpen(false)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
             <button onClick={toggleDark}
               className="p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"
               title={dark ? 'Switch to light mode' : 'Switch to dark mode'}>
@@ -141,7 +271,7 @@ export default function LabCollectorLayout({ children }: { children: React.React
         {!pendingVerification && (
           <nav className="sm:hidden flex items-center gap-1 px-4 pb-2 -mt-1">
             {NAV_ITEMS.map((item) => {
-              const active = pathname.startsWith(item.href)
+              const active = item.exact ? pathname === item.href : pathname.startsWith(item.href)
               return (
                 <Link key={item.href} href={item.href}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${active ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container'}`}>
@@ -152,6 +282,7 @@ export default function LabCollectorLayout({ children }: { children: React.React
             })}
           </nav>
         )}
+        {showOptIn && <NotificationOptInBanner userId={user.id} onDismiss={() => setShowOptIn(false)} />}
       </header>
 
       <main className="w-full px-4 sm:px-6 py-6">

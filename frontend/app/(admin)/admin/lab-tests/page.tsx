@@ -11,11 +11,14 @@ type Tab = typeof TABS[number]
 
 const ICONS = ['biotech', 'water_drop', 'monitor_heart', 'favorite', 'bloodtype', 'vaccines', 'health_and_safety', 'science']
 
-const BOOKING_STATUSES: LabTestBookingStatus[] = ['PENDING', 'CONFIRMED', 'SAMPLE_COLLECTED', 'REPORT_READY', 'CANCELLED']
+const BOOKING_STATUSES: LabTestBookingStatus[] = ['PENDING', 'CONFIRMED', 'EN_ROUTE', 'ARRIVED', 'SAMPLE_COLLECTED', 'SUBMITTED_TO_LAB', 'REPORT_READY', 'CANCELLED']
 const STATUS_COLORS: Record<string, string> = {
   PENDING: 'bg-amber-50 text-amber-600',
   CONFIRMED: 'bg-secondary/10 text-secondary',
+  EN_ROUTE: 'bg-indigo-50 text-indigo-600',
+  ARRIVED: 'bg-blue-50 text-blue-600',
   SAMPLE_COLLECTED: 'bg-primary/10 text-primary',
+  SUBMITTED_TO_LAB: 'bg-purple-50 text-purple-600',
   REPORT_READY: 'bg-emerald-50 text-emerald-600',
   CANCELLED: 'bg-error/10 text-error',
 }
@@ -240,10 +243,10 @@ function ReportCell({ booking, uploading, onUpload }: {
     )
   }
 
-  const eligible = booking.status === 'SAMPLE_COLLECTED' && booking.payment_status === 'PAID'
+  const eligible = (booking.status === 'SAMPLE_COLLECTED' || booking.status === 'SUBMITTED_TO_LAB') && booking.payment_status === 'PAID'
   if (!eligible) {
     return (
-      <span className="text-xs text-on-surface-variant" title="Needs SAMPLE_COLLECTED status and settled payment before a report can be uploaded.">—</span>
+      <span className="text-xs text-on-surface-variant" title="Needs the sample collected (or submitted to the lab) and settled payment before a report can be uploaded.">—</span>
     )
   }
 

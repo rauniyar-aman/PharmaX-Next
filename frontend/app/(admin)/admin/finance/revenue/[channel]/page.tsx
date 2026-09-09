@@ -63,7 +63,7 @@ const CONFIG: Record<string, ChannelConfig> = {
   'lab-tests': {
     label: 'Lab Tests',
     icon: 'biotech',
-    statuses: ['PENDING', 'CONFIRMED', 'SAMPLE_COLLECTED', 'REPORT_READY', 'CANCELLED'],
+    statuses: ['PENDING', 'CONFIRMED', 'EN_ROUTE', 'ARRIVED', 'SAMPLE_COLLECTED', 'SUBMITTED_TO_LAB', 'REPORT_READY', 'CANCELLED'],
     columns: ['Customer', 'Test', 'Amount', 'Method', 'Status', 'Booked'],
     row: (t) => (
       <>

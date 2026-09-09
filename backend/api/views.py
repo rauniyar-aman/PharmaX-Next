@@ -69,7 +69,7 @@ from .serializers import (
     AdminLabCollectorSerializer, AdminLabCollectorCreateSerializer,
     PharmacyIncentiveCampaignSerializer, PharmacyCampaignEnrollmentSerializer,
 )
-from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification
+from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification, send_collector_welcome_email
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
 from .throttles import AuthRateThrottle
 from .matching import (
@@ -80,7 +80,10 @@ from .matching import (
     annotate_medicine_availability, _broadcast_radius_km,
 )
 from .scheduling import get_available_slots
-from .lab_collection import collector_confirm_sample_collected
+from .lab_collection import (
+    collector_confirm_sample_collected, collector_mark_en_route,
+    collector_mark_arrived, collector_mark_submitted_to_lab,
+)
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
@@ -2375,7 +2378,7 @@ class LabTestBookingDetailView(APIView):
             return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
         if request.data.get('status') != 'CANCELLED':
             return Response({'success': False, 'message': 'You can only cancel a booking.'}, status=status.HTTP_400_BAD_REQUEST)
-        if booking.status in ('SAMPLE_COLLECTED', 'REPORT_READY', 'CANCELLED'):
+        if booking.status in ('SAMPLE_COLLECTED', 'SUBMITTED_TO_LAB', 'REPORT_READY', 'CANCELLED'):
             return Response({'success': False, 'message': f'Cannot cancel a booking that is {booking.status.replace("_", " ").lower()}.'}, status=status.HTTP_400_BAD_REQUEST)
         booking.status = 'CANCELLED'
         booking.save(update_fields=['status'])
@@ -2438,8 +2441,10 @@ def _upload_lab_report(booking, file):
     by the admin and collector-facing upload endpoints so neither can bypass the other's rules.
     Requires SAMPLE_COLLECTED (a real person actually collected the sample) AND payment_status ==
     PAID (settled online, or the COD amount was confirmed and recorded as a CollectorCodLiability
-    by collector_confirm_sample_collected()) — both must already be true, not fixed up here."""
-    if booking.status != 'SAMPLE_COLLECTED':
+    by collector_confirm_sample_collected()) — both must already be true, not fixed up here.
+    SUBMITTED_TO_LAB is also accepted (it's a post-collection progress step, not a reset): a report
+    can attach whether or not the collector marked the sample handed off to the lab first."""
+    if booking.status not in ('SAMPLE_COLLECTED', 'SUBMITTED_TO_LAB'):
         return False, f'Cannot upload a report for a booking that is {booking.status.replace("_", " ").lower()} — the sample must be collected first.'
     if booking.payment_status != 'PAID':
         return False, 'Cannot upload a report until payment is settled.'
@@ -4194,12 +4199,13 @@ class AdminLabTestBookingListView(APIView):
 
 class AdminLabTestBookingDetailView(APIView):
     """Free-form admin override — kept for genuine edge cases (e.g. manually cancelling a stuck
-    booking), but SAMPLE_COLLECTED and REPORT_READY are deliberately excluded from what this can
-    set directly: both have dedicated gated actions (collector_confirm_sample_collected() and
-    _upload_lab_report(), reached via AdminLabTestReportUploadView) that enforce real prerequisites
-    — an assigned collector confirming a COD amount, an actual file being attached — this endpoint
-    has no business faking. The normal path for those two transitions is the dedicated actions, not
-    this one."""
+    booking), but the collector-driven statuses (EN_ROUTE, ARRIVED, SAMPLE_COLLECTED,
+    SUBMITTED_TO_LAB, REPORT_READY) are deliberately excluded from what this can set directly: each
+    has a dedicated gated action (the collector_mark_* / collector_confirm_sample_collected() /
+    _upload_lab_report() transitions) that enforces real prerequisites — an assigned collector
+    physically progressing the job, confirming a COD amount, an actual file being attached — this
+    endpoint has no business faking. The normal path for those transitions is the dedicated actions,
+    not this one; admin free-form is limited to PENDING / CONFIRMED / CANCELLED."""
     permission_classes = [require_permission('manage_lab_tests')]
 
     def put(self, request, pk):
@@ -4210,7 +4216,7 @@ class AdminLabTestBookingDetailView(APIView):
         new_status = request.data.get('status')
         if new_status and new_status not in dict(LabTestBooking.STATUS):
             return Response({'success': False, 'message': 'Invalid status.'}, status=status.HTTP_400_BAD_REQUEST)
-        if new_status in ('SAMPLE_COLLECTED', 'REPORT_READY'):
+        if new_status in ('EN_ROUTE', 'ARRIVED', 'SAMPLE_COLLECTED', 'SUBMITTED_TO_LAB', 'REPORT_READY'):
             return Response({'success': False, 'message': f'{new_status.replace("_", " ").title()} can only be set through its dedicated action, not this general update.'}, status=status.HTTP_400_BAD_REQUEST)
         if new_status:
             booking.status = new_status
@@ -4244,8 +4250,24 @@ class AdminLabTestBookingAssignCollectorView(APIView):
         if not collector.is_verified:
             return Response({'success': False, 'message': 'This collector is not verified yet.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        previous = booking.collector  # capture before overwrite so a reassignment can notify the old collector
         booking.collector = collector
         booking.save(update_fields=['collector'])
+
+        date_label = booking.scheduled_date.strftime('%b %d, %Y')
+        addr = booking.address
+        address_label = f'{addr.address}, {addr.city}' if addr else 'the address on file'
+        notify_user(
+            collector.user, 'COLLECTION_ASSIGNED', 'New Collection Assigned',
+            f'{booking.lab_test.name} for {booking.user.full_name} on {date_label}, {booking.time_slot} — {address_label}.',
+            link='/lab-collector/active',
+        )
+        if previous and previous.id != collector.id:
+            notify_user(
+                previous.user, 'COLLECTION_ASSIGNED', 'Collection Reassigned',
+                f'{booking.lab_test.name} for {booking.user.full_name} on {date_label} has been reassigned to another collector and is no longer in your queue.',
+                link='/lab-collector/active',
+            )
         return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': f'{collector.user.full_name} assigned to this booking.'})
 
 
@@ -5414,6 +5436,17 @@ class AdminLabCollectorListView(APIView):
                 role='LAB_COLLECTOR', is_active=True, is_email_verified=True,
             )
             collector = LabCollector.objects.create(user=user, phone=d['phone'])
+
+        # Two channels, deliberately split: the in-app bell entry never carries the password (a
+        # Notification row persists in the DB and is visible on every future login), while the
+        # one-time welcome email does — so the collector can sign in immediately, with a nudge to
+        # change it afterward. Both run post-commit so we never announce a user a rollback undid.
+        Notification.objects.create(
+            user=user, type='ACCOUNT_UPDATE', title='Your collector account is ready',
+            message='You can now sign in to see and manage the collections assigned to you.',
+            link='/lab-collector',
+        )
+        send_collector_welcome_email(user, d['password'])
 
         return Response({'success': True, 'data': {'collector': AdminLabCollectorSerializer(collector).data}, 'message': 'Lab collector account created — remember to verify it before they can accept collections.'}, status=status.HTTP_201_CREATED)
 
@@ -6761,14 +6794,16 @@ class DeliveryOnlineToggleView(APIView):
 # already assigned them (AdminLabTestBookingAssignCollectorView).
 
 class LabCollectorActiveListView(APIView):
-    """This collector's own active collections — accepted but not yet reported. Once REPORT_READY
-    there's nothing further for the collector to do, so that's excluded here (still visible via the
-    booking's own history)."""
+    """This collector's own active collections — assigned but not yet reported. The booking stays
+    in this list through every in-progress status (en route, arrived, sample collected, submitted to
+    lab); once REPORT_READY there's nothing further for the collector to do, so that's excluded here
+    (still visible via the booking's own history), as is CANCELLED."""
     permission_classes = [IsCollector]
 
     def get(self, request):
         bookings = LabTestBooking.objects.filter(
-            collector=request.user.lab_collector, status__in=('CONFIRMED', 'SAMPLE_COLLECTED'),
+            collector=request.user.lab_collector,
+            status__in=('CONFIRMED', 'EN_ROUTE', 'ARRIVED', 'SAMPLE_COLLECTED', 'SUBMITTED_TO_LAB'),
         ).select_related('lab_test__category', 'address', 'user', 'collector__user').order_by('scheduled_date')
         return Response({'success': True, 'data': {'collections': LabTestBookingSerializer(bookings, many=True).data}})
 
@@ -6788,6 +6823,60 @@ class LabCollectorConfirmCollectedView(APIView):
         if not ok:
             return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'success': True, 'message': 'Sample collection confirmed.'})
+
+
+# The three progress steps below share the shape of LabCollectorConfirmCollectedView: the
+# collector=request.user.lab_collector filter on the lookup IS the ownership boundary (a mismatched
+# id 404s), then the transition helper enforces the source-status guard. They refresh_from_db before
+# serializing because the helpers mutate a separate select_for_update() row, leaving the fetched
+# instance stale — so the response reflects the real new status the frontend can reconcile against.
+
+class LabCollectorEnRouteView(APIView):
+    permission_classes = [IsCollector]
+
+    def post(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.get(pk=pk, collector=request.user.lab_collector)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ok, err = collector_mark_en_route(request.user.lab_collector, booking)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        booking.refresh_from_db()
+        return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Marked on the way.'})
+
+
+class LabCollectorArrivedView(APIView):
+    permission_classes = [IsCollector]
+
+    def post(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.get(pk=pk, collector=request.user.lab_collector)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ok, err = collector_mark_arrived(request.user.lab_collector, booking)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        booking.refresh_from_db()
+        return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Marked arrived.'})
+
+
+class LabCollectorSubmittedToLabView(APIView):
+    permission_classes = [IsCollector]
+
+    def post(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.get(pk=pk, collector=request.user.lab_collector)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ok, err = collector_mark_submitted_to_lab(request.user.lab_collector, booking)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+        booking.refresh_from_db()
+        return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Marked submitted to lab.'})
 
 
 class LabCollectorReportUploadView(APIView):
@@ -6886,6 +6975,54 @@ class LabCollectorFinanceView(APIView):
                     'total_pending': str(total_pending_earnings),
                     'total_paid': str(total_paid_earnings),
                 },
+            },
+        })
+
+
+class LabCollectorDashboardView(APIView):
+    """At-a-glance landing for a collector — the counts and money figures that drive their day,
+    scoped to request.user.lab_collector. Same aggregation approach as LabCollectorFinanceView
+    (Count/Sum over the collector's own rows); no money is computed here that isn't already recorded
+    elsewhere — this only surfaces it."""
+    permission_classes = [IsCollector]
+
+    def get(self, request):
+        collector = request.user.lab_collector
+        bookings = LabTestBooking.objects.filter(collector=collector)
+
+        to_collect = bookings.filter(status__in=('CONFIRMED', 'EN_ROUTE', 'ARRIVED')).count()
+        awaiting_report = bookings.filter(status__in=('SAMPLE_COLLECTED', 'SUBMITTED_TO_LAB')).count()
+        completed = bookings.filter(status='REPORT_READY').count()
+        today_count = bookings.filter(
+            scheduled_date=timezone.localdate(),
+        ).exclude(status__in=('CANCELLED', 'REPORT_READY')).count()
+
+        earnings_pending = CollectorEarning.objects.filter(
+            collector=collector, status='PENDING',
+        ).aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        cod_outstanding = CollectorCodLiability.objects.filter(
+            collector=collector, status='PENDING',
+        ).aggregate(t=Sum('amount_collected'))['t'] or Decimal('0')
+
+        # The still-actionable bookings, soonest first — the same set the active list shows.
+        upcoming = bookings.filter(
+            status__in=('CONFIRMED', 'EN_ROUTE', 'ARRIVED', 'SAMPLE_COLLECTED', 'SUBMITTED_TO_LAB'),
+        ).select_related('lab_test__category', 'address', 'user', 'collector__user').order_by('scheduled_date')[:3]
+
+        return Response({
+            'success': True,
+            'data': {
+                'is_online': collector.is_online,
+                'is_verified': collector.is_verified,
+                'stats': {
+                    'to_collect': to_collect,
+                    'awaiting_report': awaiting_report,
+                    'completed': completed,
+                    'today_count': today_count,
+                    'earnings_pending': str(earnings_pending),
+                    'cod_outstanding': str(cod_outstanding),
+                },
+                'upcoming': LabTestBookingSerializer(upcoming, many=True, context={'request': request}).data,
             },
         })
 

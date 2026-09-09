@@ -646,7 +646,7 @@ export interface LabTest {
   updated_at: string
 }
 
-export type LabTestBookingStatus = 'PENDING' | 'CONFIRMED' | 'SAMPLE_COLLECTED' | 'REPORT_READY' | 'CANCELLED'
+export type LabTestBookingStatus = 'PENDING' | 'CONFIRMED' | 'EN_ROUTE' | 'ARRIVED' | 'SAMPLE_COLLECTED' | 'SUBMITTED_TO_LAB' | 'REPORT_READY' | 'CANCELLED'
 
 export type LabTestPaymentStatus = 'PENDING' | 'PAID'
 export type LabTestPaymentMethod = 'KHALTI' | 'ESEWA' | 'CASH_ON_DELIVERY'

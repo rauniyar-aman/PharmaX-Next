@@ -243,9 +243,13 @@ urlpatterns = [
     path('delivery/agent/online/',              views.DeliveryOnlineToggleView.as_view(), name='delivery-online'),
 
     # Lab collector dashboard
+    path('lab-collector/dashboard/',            views.LabCollectorDashboardView.as_view(),      name='lab-collector-dashboard'),
     path('lab-collector/finance/',              views.LabCollectorFinanceView.as_view(),        name='lab-collector-finance'),
     path('lab-collector/active/',               views.LabCollectorActiveListView.as_view(),     name='lab-collector-active'),
+    path('lab-collector/active/<uuid:pk>/en-route/', views.LabCollectorEnRouteView.as_view(), name='lab-collector-en-route'),
+    path('lab-collector/active/<uuid:pk>/arrived/', views.LabCollectorArrivedView.as_view(), name='lab-collector-arrived'),
     path('lab-collector/active/<uuid:pk>/confirm-collected/', views.LabCollectorConfirmCollectedView.as_view(), name='lab-collector-confirm-collected'),
+    path('lab-collector/active/<uuid:pk>/submitted-to-lab/', views.LabCollectorSubmittedToLabView.as_view(), name='lab-collector-submitted-to-lab'),
     path('lab-collector/active/<uuid:pk>/upload-report/', views.LabCollectorReportUploadView.as_view(), name='lab-collector-upload-report'),
     path('lab-collector/location/',             views.LabCollectorLocationUpdateView.as_view(), name='lab-collector-location'),
     path('lab-collector/online/',               views.LabCollectorOnlineToggleView.as_view(),   name='lab-collector-online'),
