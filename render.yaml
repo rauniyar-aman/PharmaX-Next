@@ -9,7 +9,10 @@ services:
     rootDir: backend
     plan: free
     buildCommand: "./build.sh"
-    startCommand: "gunicorn backend.wsgi:application --bind 0.0.0.0:$PORT"
+    # 1 worker + threads (gthread) keeps memory to a single process on the 512MB free tier
+    # while still handling concurrent requests, so one slow Neon query doesn't block others
+    # into a 502. --max-requests recycles the worker periodically to bound memory growth.
+    startCommand: "gunicorn backend.wsgi:application --bind 0.0.0.0:$PORT --threads 4 --timeout 60 --max-requests 500 --max-requests-jitter 50"
     envVars:
       - key: DEBUG
         value: "False"

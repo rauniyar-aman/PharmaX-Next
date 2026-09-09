@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { InternalAxiosRequestConfig } from 'axios'
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001/api',
@@ -50,6 +51,23 @@ api.interceptors.response.use(
         window.location.href = '/signin'
       }
     }
+
+    // Retry transient failures on idempotent GETs. The free-tier backend (Render worker +
+    // Neon) intermittently returns 5xx / drops the connection; without this a single blip
+    // blanks a page ("Failed to load..."). Only GETs are retried, so no double-writes.
+    const cfg = err.config as (InternalAxiosRequestConfig & { _retryCount?: number }) | undefined
+    const method = (cfg?.method || 'get').toLowerCase()
+    const status = err.response?.status ?? 0
+    const isTransient = !err.response || (status >= 500 && status <= 599)
+    if (cfg && method === 'get' && isTransient) {
+      const count = cfg._retryCount ?? 0
+      if (count < 2) {
+        cfg._retryCount = count + 1
+        await new Promise((resolve) => setTimeout(resolve, 400 * (count + 1)))
+        return api(cfg)
+      }
+    }
+
     return Promise.reject(err)
   }
 )

@@ -65,6 +65,10 @@ if os.getenv('DATABASE_URL'):
         'default': dj_database_url.parse(
             os.getenv('DATABASE_URL'),
             conn_max_age=600,
+            # Neon's free tier auto-suspends and drops idle connections; without a health
+            # check Django reuses a dead cached connection and the request 500s. This pings
+            # (and transparently reconnects) at the start of each request. Django 4.1+.
+            conn_health_checks=True,
             ssl_require=True,
         )
     }
