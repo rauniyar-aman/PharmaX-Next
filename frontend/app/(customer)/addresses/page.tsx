@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { useAuthStore } from '@/store/auth'
 import type { Address } from '@/types'
 import type { PickedLocation } from '@/components/map/MapPicker'
 
@@ -18,6 +19,7 @@ const MapPicker = dynamic(() => import('@/components/map/MapPicker'), {
 const EMPTY_FORM = { label: 'Home', full_name: '', phone: '', address_line1: '', city: '', state: '', zip_code: '', is_default: false }
 
 export default function AddressesPage() {
+  const { user } = useAuthStore()
   const [addresses, setAddresses] = useState<Address[]>([])
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -37,7 +39,9 @@ export default function AddressesPage() {
 
   const openAddForm = () => {
     setEditingId(null)
-    setForm(EMPTY_FORM)
+    // Autofill the recipient phone from the signed-in user's account (still fully editable), so a
+    // customer adding an address doesn't have to re-type their own mobile.
+    setForm({ ...EMPTY_FORM, phone: ((user as any)?.phone || '').replace(/\D/g, '').slice(-10) })
     setCoords(null)
     setShowMap(false)
     setShowForm(true)
