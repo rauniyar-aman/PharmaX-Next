@@ -36,7 +36,7 @@ export default function PlusMembershipPage() {
     try {
       const r = await api.post('/plus/membership/', { plan_id: planId })
       setMembership(r.data.data.membership)
-      toast.success('Welcome to PharmaX Plus!')
+      toast.success('Welcome to Swasthaya Plus!')
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Could not activate membership.')
     } finally {
@@ -50,7 +50,7 @@ export default function PlusMembershipPage() {
     <div className="space-y-8">
       <div className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-2xl p-8 text-white text-center space-y-2">
         <span className="material-symbols-outlined ms-filled" style={{ fontSize: '48px' }}>workspace_premium</span>
-        <h1 className="text-3xl font-bold">PharmaX Plus</h1>
+        <h1 className="text-3xl font-bold">Swasthaya Plus</h1>
         <p className="text-sm opacity-90 max-w-lg mx-auto">Unlock free delivery, exclusive discounts and priority support on every order.</p>
       </div>
 
@@ -58,7 +58,7 @@ export default function PlusMembershipPage() {
         <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 flex items-center gap-3">
           <span className="material-symbols-outlined ms-filled text-emerald-600" style={{ fontSize: '28px' }}>verified</span>
           <div>
-            <p className="text-sm font-bold text-emerald-700">You're a PharmaX Plus member!</p>
+            <p className="text-sm font-bold text-emerald-700">You're a Swasthaya Plus member!</p>
             <p className="text-xs text-emerald-600">Your {membership.plan.name} plan is active until {new Date(membership.expires_at).toLocaleDateString()}.</p>
           </div>
         </div>

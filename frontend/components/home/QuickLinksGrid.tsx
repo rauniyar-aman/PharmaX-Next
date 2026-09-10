@@ -7,7 +7,7 @@ import Link from 'next/link'
 const ITEMS = [
   { label: 'Upload Rx', tagline: 'Order fast', icon: 'upload_file', href: '/prescriptions' },
   { label: 'My Orders', tagline: 'Track & reorder', icon: 'receipt_long', href: '/orders' },
-  { label: 'Wallet', tagline: 'PharmaX Cash', icon: 'account_balance_wallet', href: '/wallet' },
+  { label: 'Wallet', tagline: 'Swasthaya Cash', icon: 'account_balance_wallet', href: '/wallet' },
   { label: 'Refer & Earn', tagline: 'Get rewards', icon: 'redeem', href: '/referrals' },
   { label: 'Reminders', tagline: 'Never miss a dose', icon: 'alarm', href: '/reminders' },
   { label: 'Subscribe', tagline: 'Auto-refill', icon: 'autorenew', href: '/subscriptions' },

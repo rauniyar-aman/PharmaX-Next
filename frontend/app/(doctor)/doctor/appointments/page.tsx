@@ -97,7 +97,7 @@ export default function DoctorAppointmentsPage() {
               <div className="flex flex-col items-end gap-1">
                 <span className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${STATUS_COLORS[a.status]}`}>{a.status}</span>
                 {a.is_plus_free ? (
-                  <span className="text-[10px] text-on-surface-variant">PharmaX Plus — free</span>
+                  <span className="text-[10px] text-on-surface-variant">Swasthaya Plus — free</span>
                 ) : (
                   <span className="text-[10px] text-on-surface-variant">
                     NPR {Number(a.fee_amount).toFixed(0)} · {a.payment_status === 'PAID' ? 'Paid' : 'Payment pending'}

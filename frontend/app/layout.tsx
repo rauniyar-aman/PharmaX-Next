@@ -1,19 +1,21 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import { Inter, Outfit } from 'next/font/google'
 import './globals.css'
 import Providers from './providers'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
+// Outfit — the brand wordmark/display face (Swasthaya Brand Guidelines: "Outfit Bold").
+const outfit = Outfit({ subsets: ['latin'], weight: ['500', '600', '700', '800'], variable: '--font-outfit' })
 
 export const metadata: Metadata = {
-  title: { default: 'PharmaX', template: '%s | PharmaX' },
-  description: 'Your trusted online pharmacy',
-  icons: { icon: '/PharmaX_Icon.png' },
+  title: { default: 'Swasthaya', template: '%s | Swasthaya' },
+  description: 'Healthcare, Simplified.',
+  icons: { icon: '/swasthaya-logo_cut.jpg' },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={inter.variable} suppressHydrationWarning>
+    <html lang="en" className={`${inter.variable} ${outfit.variable}`} suppressHydrationWarning>
       <head>
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
       </head>

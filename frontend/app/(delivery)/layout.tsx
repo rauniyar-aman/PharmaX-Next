@@ -17,7 +17,7 @@ const NAV_ITEMS = [
   { label: 'Finance',  href: '/delivery/finance',  icon: 'account_balance_wallet' },
 ]
 
-const ALERT_TITLE = '🔴 New Delivery — PharmaX'
+const ALERT_TITLE = '🔴 New Delivery — Swasthaya'
 // Rider dispatch happens as soon as an order is PLACED — well before a pharmacy has necessarily
 // finished packing — so a pending request can be genuinely ready for pickup or still mid-prep.
 // Same set the standalone Requests page uses for its "Ready now" vs "Still preparing" badge.
@@ -366,7 +366,7 @@ export default function DeliveryLayout({ children }: { children: React.ReactNode
       const body = lastArrival.items.length > 1
         ? `${lastArrival.items.length} new deliveries available, including ${first.pharmacy_name}`
         : `${first.pharmacy_name} — ${first.items.map((i) => i.medicine_name).join(', ')}`
-      const n = new Notification('New Delivery Request — PharmaX', { body, icon: '/PharmaX_Icon.png', tag: 'pharmax-new-delivery' })
+      const n = new Notification('New Delivery Request — Swasthaya', { body, icon: '/swasthaya-logo_cut.jpg', tag: 'pharmax-new-delivery' })
       n.onclick = () => {
         window.focus()
         router.push('/delivery/requests')

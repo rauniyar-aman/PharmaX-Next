@@ -23,7 +23,7 @@ const NAV_ITEMS = [
   { label: 'Settings',  href: '/pharmacy/settings',  icon: 'settings' },
 ]
 
-const ALERT_TITLE = '🔴 New Request — PharmaX Pharmacy'
+const ALERT_TITLE = '🔴 New Request — Swasthaya Pharmacy'
 
 /** Large, centered, blocking-by-default alert — replaces the old small top-right toast. Shows
  * every currently-pending request (not just the newest arrival) with direct Accept/Decline, so
@@ -309,7 +309,7 @@ export default function PharmacyLayout({ children }: { children: React.ReactNode
       const body = lastArrival.items.length > 1
         ? `${lastArrival.items.length} new requests, including ${first.medicine_name}`
         : `${first.medicine_name} × ${first.quantity}`
-      const n = new Notification('New Order Request — PharmaX', { body, icon: '/PharmaX_Icon.png', tag: 'pharmax-new-request' })
+      const n = new Notification('New Order Request — Swasthaya', { body, icon: '/swasthaya-logo_cut.jpg', tag: 'pharmax-new-request' })
       n.onclick = () => {
         window.focus()
         router.push('/pharmacy/requests')

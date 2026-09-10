@@ -612,7 +612,7 @@ class BlogPost(models.Model):
     cover_image_url = models.CharField(max_length=500, null=True, blank=True)
     excerpt = models.TextField(null=True, blank=True)
     content = models.TextField()
-    author = models.CharField(max_length=255, default='PharmaX Team')
+    author = models.CharField(max_length=255, default='Swasthaya Team')
     is_published = models.BooleanField(default=True)
     published_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

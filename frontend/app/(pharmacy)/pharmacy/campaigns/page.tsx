@@ -18,7 +18,7 @@ export default function PharmacyCampaignsPage() {
     <div className="space-y-4 max-w-3xl">
       <div>
         <h1 className="text-xl font-bold text-on-surface">My Campaigns</h1>
-        <p className="text-sm text-on-surface-variant mt-1">Incentive campaigns PharmaX has enrolled you in — a reduced commission rate or a cash bonus for a limited time.</p>
+        <p className="text-sm text-on-surface-variant mt-1">Incentive campaigns Swasthaya has enrolled you in — a reduced commission rate or a cash bonus for a limited time.</p>
       </div>
 
       {loading ? (

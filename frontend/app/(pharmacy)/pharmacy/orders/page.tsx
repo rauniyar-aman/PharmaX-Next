@@ -199,7 +199,7 @@ export default function PharmacyOrdersPage() {
         <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
           <span className="material-symbols-outlined ms-filled text-amber-600" style={{ fontSize: '22px' }}>account_balance_wallet</span>
           <p className="text-sm text-amber-800">
-            <span className="font-bold">NPR {pendingPayoutTotal.toFixed(0)}</span> across delivered orders is still awaiting payout from PharmaX.
+            <span className="font-bold">NPR {pendingPayoutTotal.toFixed(0)}</span> across delivered orders is still awaiting payout from Swasthaya.
           </p>
         </div>
       )}

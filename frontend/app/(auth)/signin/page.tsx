@@ -70,7 +70,7 @@ export default function SignIn() {
 
           <div className="text-center mb-8">
             <h1 className="text-2xl font-semibold text-on-surface">Sign In</h1>
-            <p className="text-sm text-on-surface-variant mt-2">Use your PharmaX credentials to access the secure portal.</p>
+            <p className="text-sm text-on-surface-variant mt-2">Use your Swasthaya credentials to access the secure portal.</p>
           </div>
 
           <form className="space-y-5" onSubmit={handleSubmit}>

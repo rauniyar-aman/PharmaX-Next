@@ -67,7 +67,7 @@ export default function DoctorEarningsPage() {
       <div>
         <h1 className="text-2xl font-bold text-on-surface">Earnings</h1>
         <p className="text-sm text-on-surface-variant mt-1">
-          What you've earned per consultation, PharmaX's commission, and what's been paid out.
+          What you've earned per consultation, Swasthaya's commission, and what's been paid out.
         </p>
       </div>
 

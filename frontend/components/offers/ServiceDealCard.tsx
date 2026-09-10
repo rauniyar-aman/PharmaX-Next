@@ -15,7 +15,7 @@ export function targetHref(deal: FeaturedDeal) {
 export function targetTitle(deal: FeaturedDeal) {
   if (deal.target_type === 'DOCTOR') return deal.doctor ? `Dr. ${deal.doctor.name}` : 'Doctor Consult'
   if (deal.target_type === 'LAB_TEST') return deal.lab_test?.name || 'Lab Test'
-  if (deal.target_type === 'PLUS_PLAN') return deal.plus_plan?.name || 'PharmaX Plus'
+  if (deal.target_type === 'PLUS_PLAN') return deal.plus_plan?.name || 'Swasthaya Plus'
   return ''
 }
 

@@ -35,11 +35,10 @@ export default function AboutPage() {
 
         {/* Hero */}
         <section className="text-center space-y-6">
-          <Image src="/PharmaX_Logo.png" alt="PharmaX" width={112} height={112} className="h-28 w-auto mx-auto" />
+          <Image src="/swasthaya-logo.jpg" alt="Swasthaya — Healthcare, Simplified." width={520} height={237} className="w-auto max-h-40 mx-auto rounded-2xl" priority />
           <div>
-            <h1 className="text-4xl font-bold text-on-surface">PharmaX</h1>
             <p className="mt-3 text-lg text-on-surface-variant max-w-xl mx-auto">
-              Your trusted online pharmacy — order medicines, upload prescriptions, and track deliveries, all in one place.
+              Healthcare, simplified — order medicines, upload prescriptions, book lab tests and consult doctors, all in one place.
             </p>
           </div>
           <div className="flex items-center justify-center gap-4 flex-wrap">
@@ -107,7 +106,7 @@ export default function AboutPage() {
           <Link href="/" className="hover:text-on-surface transition-colors">Home</Link>
           <Link href="/privacy" className="hover:text-on-surface transition-colors">Privacy Policy</Link>
         </div>
-        <p>© {new Date().getFullYear()} PharmaX. All rights reserved.</p>
+        <p>© {new Date().getFullYear()} Swasthaya. All rights reserved.</p>
       </footer>
     </div>
   )

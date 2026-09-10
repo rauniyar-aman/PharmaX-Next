@@ -147,7 +147,7 @@ function Footer() {
         <div className="col-span-2 sm:col-span-1">
           <Logo iconSize={36} textClassName="text-lg" className="mb-2" />
           <p className="text-xs text-on-surface-variant leading-relaxed">
-            {support.store_name || 'PharmaX'} — your trusted online pharmacy for medicines and wellness essentials.
+            {support.store_name || 'Swasthaya'} — your trusted online pharmacy for medicines and wellness essentials.
           </p>
         </div>
         <div>
@@ -182,7 +182,7 @@ function Footer() {
         </div>
       </div>
       <div className="border-t border-outline-variant py-4 text-center text-xs text-on-surface-variant">
-        © {new Date().getFullYear()} {support.store_name || 'PharmaX'}. All rights reserved.
+        © {new Date().getFullYear()} {support.store_name || 'Swasthaya'}. All rights reserved.
       </div>
     </footer>
   )

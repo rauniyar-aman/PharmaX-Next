@@ -114,7 +114,7 @@ export default function DoctorDetailPage() {
       // nothing left to pay, while everyone else still owes the consultation fee and has to go
       // through the Khalti step before their appointment is confirmed.
       if (appt.is_plus_free) {
-        toast.success('Appointment confirmed — it\'s free with your PharmaX Plus membership!')
+        toast.success('Appointment confirmed — it\'s free with your Swasthaya Plus membership!')
         router.push('/appointments')
       } else {
         toast.success('Appointment booked — complete payment to confirm it.')
