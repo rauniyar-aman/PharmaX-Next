@@ -82,6 +82,7 @@ export default function PharmacyOrdersPage() {
   const [advancingId, setAdvancingId] = useState<string | null>(null)
   const [pickupCodes, setPickupCodes] = useState<Record<string, string>>({})
   const [verifyingId, setVerifyingId] = useState<string | null>(null)
+  const [rxBusyId, setRxBusyId] = useState<string | null>(null)
   const [trackingByFulfillmentId, setTrackingByFulfillmentId] = useState<Record<string, TrackingFulfillment>>({})
   const [mapExpandedId, setMapExpandedId] = useState<string | null>(null)
   const trackingPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -149,6 +150,25 @@ export default function PharmacyOrdersPage() {
       toast.error(err.response?.data?.message || 'Could not verify code.')
     } finally {
       setVerifyingId(null)
+    }
+  }
+
+  // A pharmacy can verify (or reject) a prescription for its OWN slice of an order, unblocking prep
+  // without waiting on an admin. Keyed on prescription id so a shared file de-dupes to one control.
+  const reviewPrescription = async (fulfillmentId: string, prescriptionId: string, action: 'VERIFIED' | 'REJECTED') => {
+    let reason = ''
+    if (action === 'REJECTED') {
+      reason = (window.prompt('Reason for rejecting this prescription (optional):') || '').trim()
+    }
+    setRxBusyId(prescriptionId)
+    try {
+      const res = await api.post(`/pharmacy/orders/${fulfillmentId}/verify-prescription/`, { prescription_id: prescriptionId, action, reason })
+      setOrders((prev) => prev.map((o) => (o.id === fulfillmentId ? res.data.data.order : o)))
+      toast.success(action === 'VERIFIED' ? 'Prescription verified — you can prepare this order.' : 'Prescription rejected.')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Could not update the prescription.')
+    } finally {
+      setRxBusyId(null)
     }
   }
 
@@ -258,6 +278,60 @@ export default function PharmacyOrdersPage() {
                   ))}
                 </div>
 
+                {(() => {
+                  // Distinct prescriptions attached to THIS pharmacy's Rx items — de-duped so a
+                  // single uploaded file shared by two items shows one control, not two.
+                  const seen = new Set<string>()
+                  const rxLines = o.items.filter((it) => {
+                    if (!it.is_rx || !it.prescription) return false
+                    if (seen.has(it.prescription.id)) return false
+                    seen.add(it.prescription.id)
+                    return true
+                  })
+                  if (rxLines.length === 0) return null
+                  return (
+                    <div className="mt-3 space-y-2 border-t border-outline-variant pt-3">
+                      <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wide">Prescriptions</p>
+                      {rxLines.map((it) => {
+                        const p = it.prescription!
+                        return (
+                          <div key={p.id} className="flex items-center justify-between gap-2 flex-wrap bg-surface-container-low rounded-xl px-3 py-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="material-symbols-outlined text-primary" style={{ fontSize: '18px' }}>description</span>
+                              {p.file_url ? (
+                                <a href={p.file_url} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-primary hover:underline truncate">
+                                  {p.file_name || 'View prescription'}
+                                </a>
+                              ) : (
+                                <span className="text-xs text-on-surface-variant">No file attached</span>
+                              )}
+                            </div>
+                            {p.cleared ? (
+                              <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 whitespace-nowrap">
+                                <span className="material-symbols-outlined ms-filled" style={{ fontSize: '12px' }}>verified</span>
+                                {p.pharmacy_status === 'VERIFIED' ? 'Verified by you' : 'Verified by admin'}
+                              </span>
+                            ) : p.pharmacy_status === 'REJECTED' || p.admin_status === 'REJECTED' ? (
+                              <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-error/10 text-error whitespace-nowrap">Rejected</span>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <button onClick={() => reviewPrescription(o.id, p.id, 'REJECTED')} disabled={rxBusyId === p.id}
+                                  className="px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-outline-variant text-on-surface-variant hover:bg-surface-container disabled:opacity-50">
+                                  Reject
+                                </button>
+                                <button onClick={() => reviewPrescription(o.id, p.id, 'VERIFIED')} disabled={rxBusyId === p.id}
+                                  className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-primary text-on-primary hover:opacity-90 disabled:opacity-50">
+                                  {rxBusyId === p.id ? 'Saving…' : 'Verify'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
+
                 {ADVANCE_ACTION[o.status] ? (
                   <div className="mt-2 flex items-center gap-2 flex-wrap">
                     <button onClick={() => advanceStatus(o.id)} disabled={advancingId === o.id || awaitingPayment || awaitingPrescription}
@@ -273,7 +347,7 @@ export default function PharmacyOrdersPage() {
                     {awaitingPrescription && (
                       <p className="text-[11px] text-amber-600 flex items-center gap-1">
                         <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>pending_actions</span>
-                        Waiting for a prescription to be verified
+                        Verify the prescription above to start preparing this order
                       </p>
                     )}
                   </div>

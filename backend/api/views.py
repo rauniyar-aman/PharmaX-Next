@@ -16,6 +16,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db.models import Q, Avg, Count, Sum, F, Max, Min, ProtectedError
+from django.db.models.functions import TruncDate
 from django.db import transaction, IntegrityError
 from django.http import HttpResponseRedirect
 from django.conf import settings
@@ -25,7 +26,7 @@ from .models import (
     User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, PrescriptionFile,
     Cart, CartItem, Order, OrderItem, Review, WishlistItem,
     Notification, SystemSetting, StockLog,
-    LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout,
+    LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout,
     PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
     Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, DeliveryDecline,
@@ -43,7 +44,7 @@ from .serializers import (
     AddressSerializer, PrescriptionSerializer, PrescriptionMedicineItemSerializer, PrescriptionLabTestItemSerializer, CartSerializer,
     CartItemSerializer, OrderSerializer, ReviewSerializer, MyReviewSerializer,
     NotificationSerializer, StockLogSerializer, SystemSettingSerializer,
-    LabTestCategorySerializer, LabTestListSerializer, LabTestDetailSerializer, LabTestBookingSerializer,
+    LabTestCategorySerializer, LabTestListSerializer, LabTestDetailSerializer, LabTestBookingSerializer, LabBookingGroupSerializer,
     BlogPostListSerializer, BlogPostDetailSerializer, MedicineSubscriptionSerializer,
     DoctorSerializer, DoctorAvailabilitySerializer, DoctorAppointmentSerializer,
     DoctorPayoutSerializer, AdminDoctorPayoutSerializer,
@@ -69,12 +70,13 @@ from .serializers import (
     AdminLabCollectorSerializer, AdminLabCollectorCreateSerializer,
     PharmacyIncentiveCampaignSerializer, PharmacyCampaignEnrollmentSerializer,
 )
-from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification, send_collector_welcome_email
+from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification, send_collector_welcome_email, send_pharmacy_welcome_email, send_lab_report_ready_email
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
 from .throttles import AuthRateThrottle
 from .matching import (
     broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts,
     pharmacy_accept_item, pharmacy_decline_item, pharmacy_advance_fulfillment, pharmacy_verify_pickup_code,
+    pharmacy_review_prescription,
     delivery_agent_accept, update_agent_location, collect_cash, mark_delivered, _agent_eligible_for,
     _tracking_payload, widen_stale_priority_broadcasts, _fulfillment_prescription_ready, broadcast_delivery,
     annotate_medicine_availability, _broadcast_radius_km,
@@ -2278,13 +2280,40 @@ class LabTestDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            test = LabTest.objects.select_related('category').get(id=pk, is_active=True)
+            test = LabTest.objects.select_related('category').prefetch_related('included_tests__category').get(id=pk, is_active=True)
         except LabTest.DoesNotExist:
             return Response({'success': False, 'message': 'Lab test not found.'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'success': True, 'data': {'labTest': LabTestDetailSerializer(test).data}})
 
 
 TIME_SLOTS = ['6:00 AM - 8:00 AM', '8:00 AM - 10:00 AM', '10:00 AM - 12:00 PM', '4:00 PM - 6:00 PM', '6:00 PM - 8:00 PM']
+
+
+def _clean_patient_fields(data):
+    """Normalize the inline "who is this collection for" fields off a request body or a single cart
+    item into LabTestBooking kwargs. All-empty -> all None -> the booking is for the account holder
+    (the default, and every pre-existing booking). Lenient by design: a bad age or unknown gender is
+    dropped to None rather than failing the booking, since these are convenience fields on top of an
+    account that already identifies the payer. Writes are handled here (not via the serializer) so
+    both create paths — single and per-cart-line — share one definition."""
+    if not isinstance(data, dict):
+        data = {}
+    name = (data.get('patient_name') or '').strip()
+    phone = (data.get('patient_phone') or '').strip()
+    gender = (data.get('patient_gender') or '').strip().upper()
+    age_raw = data.get('patient_age')
+    try:
+        age = int(age_raw) if age_raw not in (None, '') else None
+    except (ValueError, TypeError):
+        age = None
+    if age is not None and not (0 < age < 150):
+        age = None
+    return {
+        'patient_name': name[:255] or None,
+        'patient_phone': phone[:20] or None,
+        'patient_age': age,
+        'patient_gender': gender if gender in ('MALE', 'FEMALE', 'OTHER') else None,
+    }
 
 
 class LabTestBookingListCreateView(APIView):
@@ -2330,6 +2359,7 @@ class LabTestBookingListCreateView(APIView):
             total_amount=lab_test.price,
             notes=s.validated_data.get('notes'),
             payment_method=payment_method,
+            **_clean_patient_fields(request.data),
         )
         if payment_method == 'CASH_ON_DELIVERY':
             _confirm_lab_test_booking(booking)
@@ -2392,7 +2422,7 @@ class LabTestBookingDetailView(APIView):
 # wallet/delivery-charge here, same reasoning as the appointment payment views: a lab test booking
 # is a single already-priced item, not a multi-item checkout.
 
-def _confirm_lab_test_booking(booking):
+def _confirm_lab_test_booking(booking, notify=True):
     """The one place a booking moves PENDING -> CONFIRMED — called either the moment
     CASH_ON_DELIVERY is selected at booking time, or the moment a Khalti/eSewa payment is verified.
     Decision: auto-confirm, no admin review step. This matches every other marketplace flow already
@@ -2403,11 +2433,18 @@ def _confirm_lab_test_booking(booking):
     fact. CONFIRMED is the state a booking needs to reach before admin can assign it a collector
     (AdminLabTestBookingAssignCollectorView) — assignment itself is a separate, manual admin step,
     not triggered from here.
+
+    notify=False suppresses the per-booking customer + admin notifications. A cart checkout confirms
+    several bookings at once and sends a single aggregated summary instead (see the cart/group flow),
+    so it passes notify=False here to avoid fanning out N customer emails + N×admins emails.
     """
     if booking.status != 'PENDING':
         return
     booking.status = 'CONFIRMED'
     booking.save(update_fields=['status'])
+
+    if not notify:
+        return
 
     # Single, idempotent notification point (the guard above ensures it fires exactly once):
     # notify the customer and the admins here, never at booking creation. For COD this runs at
@@ -2454,11 +2491,15 @@ def _upload_lab_report(booking, file):
     booking.status = 'REPORT_READY'
     booking.save(update_fields=['report_file', 'report_uploaded_at', 'status'])
 
-    notify_user(
+    # In-app row links to the bookings page (report is viewable/downloadable there — notification
+    # clicks route internally); the email carries the report itself as an attachment. Split like the
+    # account-welcome flows so the file-bearing email doesn't ALSO fire the generic notify email.
+    Notification.objects.create(
         user=booking.user, type='LAB_BOOKING_UPDATE', title='Report Ready',
-        message=f'Your {booking.lab_test.name} report is ready to view.',
+        message=f'Your {booking.lab_test.name} report is ready — view or download it from your bookings.',
         link='/lab-test-bookings',
     )
+    send_lab_report_ready_email(booking)
     return True, None
 
 
@@ -2642,6 +2683,339 @@ class LabTestEsewaFailureView(APIView):
             except Exception:
                 pass
         return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=esewa_cancelled')
+
+
+# ─── Lab Test Cart: multi-test checkout + combined group payment ────────────────
+#
+# A cart checkout creates one LabTestBooking per selected test (each keeps its own status/collector/
+# report) but ties them to a single LabBookingGroup that owns the one shared payment — mirroring how
+# a medicine Order owns many OrderItems with the payment identifiers on the Order. COD confirms every
+# booking at once; Khalti/eSewa settle the summed total in one gateway round trip against the group.
+# The single-test flow above is untouched (those bookings have group=NULL and pay individually).
+
+def _notify_lab_group_confirmed(group):
+    """One aggregated customer + admin notification for a whole cart, in place of the per-booking
+    notification _confirm_lab_test_booking() would otherwise send once per booking (which for a cart
+    of N tests would be N customer emails + N×admins emails)."""
+    bookings = list(group.bookings.select_related('lab_test').all())
+    if not bookings:
+        return
+    first = bookings[0]
+    n = len(bookings)
+    plural = 's' if n != 1 else ''
+    date_label = first.scheduled_date.strftime('%b %d, %Y')
+    paid = group.payment_status == 'PAID'
+    test_names = ', '.join(b.lab_test.name for b in bookings)
+    customer_line = 'Payment received.' if paid else 'Please pay by cash at the time of sample collection.'
+    notify_user(
+        group.user, 'LAB_BOOKING_UPDATE', 'Lab Tests Booked',
+        f'{n} lab test{plural} booked for {date_label}, {first.time_slot}: {test_names}. '
+        f'{customer_line} Total: NPR {group.total_amount}.',
+        link='/lab-test-bookings',
+    )
+    _notify_admins(
+        'manage_lab_tests', 'NEW_LAB_BOOKING', 'New Lab Test Booking',
+        f'{group.user.full_name} booked {n} lab test{plural} for {date_label} '
+        f'({first.time_slot}). {"Paid online" if paid else "Cash on collection"} — NPR {group.total_amount}.',
+        link='/admin/lab-tests',
+    )
+
+
+def _finalize_paid_lab_group(group):
+    """Idempotently settle a whole cart once its single shared payment verifies: mark the group and
+    every child booking PAID, confirm each (suppressing the per-booking notification), then fire one
+    aggregated summary. Mirrors _finalize_paid_order for medicine orders."""
+    if group.payment_status == 'PAID':
+        return
+    group.payment_status = 'PAID'
+    group.save(update_fields=['payment_status'])
+    for booking in group.bookings.all():
+        if booking.payment_status != 'PAID':
+            booking.payment_status = 'PAID'
+            booking.save(update_fields=['payment_status'])
+        _confirm_lab_test_booking(booking, notify=False)
+    _notify_lab_group_confirmed(group)
+
+
+def _cancel_unpaid_lab_group(group):
+    """Gateway cancelled/failed before settling: cancel each still-unpaid, still-pending child
+    booking (reuses the per-booking guard so a partially-progressed booking is never touched)."""
+    for booking in group.bookings.all():
+        _cancel_unpaid_lab_test_booking(booking)
+
+
+class LabTestCartCheckoutView(APIView):
+    """Multi-test cart checkout. One request -> one LabBookingGroup + one LabTestBooking per item,
+    all sharing the checkout's address/date/time-slot and one payment. Mirrors
+    LabTestBookingListCreateView.post per item (validate test/address/slot, price = lab_test.price,
+    bump total_bookings) but batches them. COD confirms them all immediately with a single aggregated
+    notification; Khalti/eSewa leave the bookings PENDING and return the group id for the client to
+    drive the group payment initiate + gateway round trip."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        items = request.data.get('items')
+        if not isinstance(items, list) or not items:
+            return Response({'success': False, 'message': 'items must be a non-empty list of lab test ids.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        scheduled_date = request.data.get('scheduled_date')
+        time_slot = request.data.get('time_slot')
+        notes = request.data.get('notes')
+        payment_method = request.data.get('payment_method')
+
+        if not scheduled_date:
+            return Response({'success': False, 'message': 'scheduled_date is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if time_slot not in TIME_SLOTS:
+            return Response({'success': False, 'message': 'Invalid time slot.'}, status=status.HTTP_400_BAD_REQUEST)
+        if payment_method not in ('KHALTI', 'ESEWA', 'CASH_ON_DELIVERY'):
+            return Response({'success': False, 'message': "payment_method must be one of: KHALTI, ESEWA, CASH_ON_DELIVERY."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            address = Address.objects.get(id=request.data.get('address_id'), user=request.user)
+        except (Address.DoesNotExist, ValueError, TypeError):
+            return Response({'success': False, 'message': 'Address not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Each item is one booking line. It may be a bare test id (books for the account holder) or
+        # an object {lab_test_id, patient_name, patient_phone, patient_age, patient_gender} naming who
+        # this line's collection is for. Duplicates are intentionally NOT collapsed: the same test can
+        # legitimately appear more than once — once per person it's booked for. Parse ids up front (a
+        # malformed UUID would otherwise 500 on the lookup); any id that doesn't resolve to an active
+        # test fails the whole checkout rather than silently dropping a paid-for line.
+        lines = []  # (uuid, patient_kwargs)
+        try:
+            for entry in items:
+                if isinstance(entry, dict):
+                    raw_id = entry.get('lab_test_id') or entry.get('id')
+                    patient = _clean_patient_fields(entry)
+                else:
+                    raw_id = entry
+                    patient = _clean_patient_fields({})
+                lines.append((uuid_lib.UUID(str(raw_id)), patient))
+        except (ValueError, TypeError, AttributeError):
+            return Response({'success': False, 'message': 'One or more selected tests are invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        unique_ids = list({tid for tid, _ in lines})
+        by_id = {t.id: t for t in LabTest.objects.filter(id__in=unique_ids, is_active=True)}
+        if len(by_id) != len(unique_ids):
+            return Response({'success': False, 'message': 'One or more selected tests are unavailable.'}, status=status.HTTP_404_NOT_FOUND)
+
+        total = sum((by_id[tid].price for tid, _ in lines), Decimal('0'))
+
+        with transaction.atomic():
+            group = LabBookingGroup.objects.create(user=request.user, total_amount=total, payment_method=payment_method)
+            bookings = [
+                LabTestBooking.objects.create(
+                    user=request.user, lab_test=by_id[tid], address=address, scheduled_date=scheduled_date,
+                    time_slot=time_slot, total_amount=by_id[tid].price, notes=notes, payment_method=payment_method,
+                    group=group, **patient,
+                )
+                for tid, patient in lines
+            ]
+            # Bump each test's booking counter now, for both online and COD — same as the single-test
+            # flow, which counts a booking at creation regardless of whether payment later settles. A
+            # test booked for two people is two bookings, so count per line (aggregated per test id).
+            per_test = {}
+            for tid, _ in lines:
+                per_test[tid] = per_test.get(tid, 0) + 1
+            for tid, n in per_test.items():
+                LabTest.objects.filter(id=tid).update(total_bookings=F('total_bookings') + n)
+            if payment_method == 'CASH_ON_DELIVERY':
+                for b in bookings:
+                    _confirm_lab_test_booking(b, notify=False)
+
+        # Notify outside the transaction (email/DB-write side effects shouldn't hold the row locks).
+        if payment_method == 'CASH_ON_DELIVERY':
+            _notify_lab_group_confirmed(group)
+
+        return Response({'success': True, 'data': {'group_id': str(group.id)}, 'message': 'Lab tests booked!'}, status=status.HTTP_201_CREATED)
+
+
+class PaymentKhaltiInitiateLabGroupView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        group_id = request.data.get('group_id')
+        if not group_id:
+            return Response({'success': False, 'message': 'group_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            group = LabBookingGroup.objects.get(id=group_id, user=request.user)
+        except (LabBookingGroup.DoesNotExist, ValueError, TypeError):
+            return Response({'success': False, 'message': 'Booking group not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if group.payment_status != 'PENDING':
+            return Response({'success': False, 'message': f'This checkout does not need payment (status: {group.payment_status}).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount_paisa = int(round(float(group.total_amount) * 100))
+        if amount_paisa < 1000:
+            return Response({'success': False, 'message': 'Khalti requires a minimum payable amount of NPR 10. Please choose another payment method.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            khalti_res = _khalti_post('/epayment/initiate/', {
+                'return_url': f'{BACKEND_URL}/api/payment/khalti/verify-lab-group/',
+                'website_url': FRONTEND_URL,
+                'amount': amount_paisa,
+                'purchase_order_id': str(group.id),
+                'purchase_order_name': f'PharmaX Lab Tests ({group.bookings.count()} tests)',
+                'customer_info': {
+                    'name': request.user.full_name,
+                    'email': request.user.email,
+                    'phone': request.user.phone or '9800000000',
+                },
+            })
+        except Exception:
+            return Response({'success': False, 'message': 'Failed to reach Khalti.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if not khalti_res.get('pidx'):
+            return Response({'success': False, 'message': khalti_res.get('detail') or khalti_res.get('message') or 'Khalti initiation failed.'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        group.khalti_pidx = khalti_res['pidx']
+        group.save(update_fields=['khalti_pidx'])
+        return Response({'success': True, 'data': {'payment_url': khalti_res['payment_url']}})
+
+
+class LabGroupKhaltiVerifyView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        pidx = request.query_params.get('pidx')
+        gateway_status = request.query_params.get('status')
+
+        if not pidx or gateway_status != 'Completed':
+            if pidx:
+                try:
+                    _cancel_unpaid_lab_group(LabBookingGroup.objects.get(khalti_pidx=pidx))
+                except LabBookingGroup.DoesNotExist:
+                    pass
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=khalti_cancelled')
+
+        try:
+            verification = _khalti_post('/epayment/lookup/', {'pidx': pidx})
+        except Exception:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=verify_error')
+
+        if verification.get('status') != 'Completed':
+            try:
+                _cancel_unpaid_lab_group(LabBookingGroup.objects.get(khalti_pidx=pidx))
+            except LabBookingGroup.DoesNotExist:
+                pass
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=not_verified')
+
+        try:
+            group = LabBookingGroup.objects.get(khalti_pidx=pidx)
+        except LabBookingGroup.DoesNotExist:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=booking_not_found')
+
+        _finalize_paid_lab_group(group)
+        return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/cart/confirmation?groupId={group.id}')
+
+
+class PaymentEsewaInitiateLabGroupView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        group_id = request.data.get('group_id')
+        if not group_id:
+            return Response({'success': False, 'message': 'group_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            group = LabBookingGroup.objects.get(id=group_id, user=request.user)
+        except (LabBookingGroup.DoesNotExist, ValueError, TypeError):
+            return Response({'success': False, 'message': 'Booking group not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if group.payment_status != 'PENDING':
+            return Response({'success': False, 'message': f'This checkout does not need payment (status: {group.payment_status}).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        transaction_uuid = f'{group.id}-{int(timezone.now().timestamp())}'
+        group.esewa_transaction_uuid = transaction_uuid
+        group.save(update_fields=['esewa_transaction_uuid'])
+
+        total_str = str(group.total_amount)
+        signature = _esewa_signature(total_str, transaction_uuid)
+
+        return Response({
+            'success': True,
+            'data': {
+                'formUrl': ESEWA_FORM_URL,
+                'params': {
+                    'amount': total_str,
+                    'tax_amount': '0',
+                    'total_amount': total_str,
+                    'transaction_uuid': transaction_uuid,
+                    'product_code': ESEWA_PRODUCT_CODE,
+                    'product_service_charge': '0',
+                    'product_delivery_charge': '0',
+                    'success_url': f'{BACKEND_URL}/api/payment/esewa/success-lab-group/',
+                    'failure_url': f'{BACKEND_URL}/api/payment/esewa/failure-lab-group/',
+                    'signed_field_names': 'total_amount,transaction_uuid,product_code',
+                    'signature': signature,
+                },
+            },
+        })
+
+
+class LabGroupEsewaSuccessView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        data = request.query_params.get('data')
+        if not data:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=missing_data')
+        try:
+            decoded = json.loads(base64.b64decode(data).decode('utf-8'))
+        except Exception:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=bad_data')
+
+        if decoded.get('status') != 'COMPLETE':
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=incomplete')
+
+        try:
+            resp = requests.get(ESEWA_VERIFY_URL, params={
+                'product_code': ESEWA_PRODUCT_CODE,
+                'total_amount': decoded.get('total_amount'),
+                'transaction_uuid': decoded.get('transaction_uuid'),
+            }, timeout=10)
+            verification = resp.json()
+        except Exception:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=verify_error')
+
+        if verification.get('status') != 'COMPLETE':
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=not_verified')
+
+        try:
+            group = LabBookingGroup.objects.get(esewa_transaction_uuid=decoded.get('transaction_uuid'))
+        except LabBookingGroup.DoesNotExist:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=booking_not_found')
+
+        _finalize_paid_lab_group(group)
+        return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/cart/confirmation?groupId={group.id}')
+
+
+class LabGroupEsewaFailureView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        data = request.query_params.get('data')
+        if data:
+            try:
+                decoded = json.loads(base64.b64decode(data).decode('utf-8'))
+                _cancel_unpaid_lab_group(LabBookingGroup.objects.get(esewa_transaction_uuid=decoded.get('transaction_uuid')))
+            except Exception:
+                pass
+        return HttpResponseRedirect(f'{FRONTEND_URL}/lab-tests/payment-failed?reason=esewa_cancelled')
+
+
+class LabBookingGroupDetailView(APIView):
+    """Owner-scoped read of a cart checkout and the bookings it produced — backs the cart
+    confirmation page (?groupId=...)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            group = LabBookingGroup.objects.prefetch_related(
+                'bookings__lab_test__category', 'bookings__address', 'bookings__collector__user',
+            ).get(id=pk, user=request.user)
+        except LabBookingGroup.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking group not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'group': LabBookingGroupSerializer(group, context={'request': request}).data}})
 
 
 # ─── Blog ─────────────────────────────────────────────────────────────────────
@@ -4119,7 +4493,7 @@ class AdminLabTestListView(APIView):
     permission_classes = [require_permission('manage_lab_tests')]
 
     def get(self, request):
-        qs = LabTest.objects.select_related('category').order_by('-created_at')
+        qs = LabTest.objects.select_related('category').prefetch_related('included_tests__category').order_by('-created_at')
         search = request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(name__icontains=search)
@@ -4148,7 +4522,7 @@ class AdminLabTestDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            test = LabTest.objects.select_related('category').get(id=pk)
+            test = LabTest.objects.select_related('category').prefetch_related('included_tests__category').get(id=pk)
         except LabTest.DoesNotExist:
             return Response({'success': False, 'message': 'Lab test not found.'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'success': True, 'data': {'labTest': LabTestDetailSerializer(test).data}})
@@ -4181,6 +4555,10 @@ class AdminLabTestBookingListView(APIView):
         status_filter = request.query_params.get('status', '').strip()
         if status_filter:
             qs = qs.filter(status=status_filter)
+        collector_filter = request.query_params.get('collector', '').strip()
+        if collector_filter:
+            # LabCollector id — lets an admin pull up one collector's full booking history/workload.
+            qs = qs.filter(collector_id=collector_filter)
         search = request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(Q(user__full_name__icontains=search) | Q(user__email__icontains=search) | Q(lab_test__name__icontains=search))
@@ -4781,10 +5159,8 @@ def _notify_prescription_order_outcome(prescription, new_status):
         if new_status == 'VERIFIED':
             # Only notify once every Rx item on the order is clear — a multi-prescription order
             # shouldn't get one "verified" ping per item while others are still pending review.
-            still_needs_review = any(
-                item.medicine.type == 'Rx' and (not item.prescription or item.prescription.status != 'VERIFIED')
-                for item in order.items.all()
-            )
+            # is_rx_cleared honours both admin's global verify and any pharmacy's own slice verify.
+            still_needs_review = not all(item.is_rx_cleared for item in order.items.all())
             if still_needs_review:
                 continue
             # If payment already cleared while this was still pending, the rider broadcast at
@@ -5184,6 +5560,17 @@ class AdminPharmacyListView(APIView):
                 user=user, name=d['name'], license_number=d['license_number'], phone=d['phone'],
                 address=d['address'], lat=d['lat'], lng=d['lng'],
             )
+
+        # Two channels, deliberately split (same as the lab-collector onboarding): the in-app bell
+        # entry never carries the password (a Notification row persists in the DB and is visible on
+        # every future login), while the one-time welcome email does — so the pharmacy can sign in
+        # immediately, with a nudge to change it afterward.
+        Notification.objects.create(
+            user=user, type='ACCOUNT_UPDATE', title='Your pharmacy account is ready',
+            message='You can now sign in to manage your storefront, incoming orders and payouts.',
+            link='/pharmacy',
+        )
+        send_pharmacy_welcome_email(user, d['password'], pharmacy_name=pharmacy.name)
 
         return Response({'success': True, 'data': {'pharmacy': AdminPharmacySerializer(pharmacy).data}, 'message': 'Pharmacy account created — remember to verify it before it can receive orders.'}, status=status.HTTP_201_CREATED)
 
@@ -6456,6 +6843,45 @@ class PharmacyVerifyPickupView(APIView):
         return Response({'success': True, 'data': {'order': serializer.data}, 'message': 'Pickup verified.'})
 
 
+class PharmacyVerifyPrescriptionView(APIView):
+    """Lets the pharmacy that won an order verify (or reject) a prescription for its OWN slice,
+    without waiting on an admin — see matching.pharmacy_review_prescription() for the per-pharmacy
+    semantics and what a verify unblocks. Admin's global verify (AdminPrescriptionDetailView) still
+    works in parallel and clears every pharmacy at once."""
+    permission_classes = [IsPharmacy]
+
+    def post(self, request, pk):
+        pharmacy = get_managed_pharmacy(request.user)
+        if not pharmacy:
+            return _pharmacy_not_found_response()
+
+        try:
+            fulfillment = OrderFulfillment.objects.select_related('order').prefetch_related(
+                'order_items__medicine', 'order_items__prescription',
+            ).get(pk=pk, pharmacy=pharmacy)
+        except OrderFulfillment.DoesNotExist:
+            return Response({'success': False, 'message': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        prescription_id = request.data.get('prescription_id')
+        action = request.data.get('action')
+        reason = (request.data.get('reason') or '').strip()
+        if not prescription_id:
+            return Response({'success': False, 'message': 'prescription_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, err = pharmacy_review_prescription(pharmacy, fulfillment, prescription_id, action, request.user, reason)
+        if not ok:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Re-fetch with prefetch (bulk_update + refresh_from_db dropped the cache) so the response's
+        # get_items()/get_prescription_ready() serialize in constant queries.
+        fulfillment = OrderFulfillment.objects.select_related(
+            'order__address', 'delivery_agent__user', 'pharmacy_payout',
+        ).prefetch_related('order_items__medicine', 'order_items__prescription').get(pk=pk)
+        show_finance = _can_view_finance(request.user, pharmacy)
+        serializer = PharmacyOrderFulfillmentSerializer(fulfillment, context={'show_finance': show_finance})
+        return Response({'success': True, 'data': {'order': serializer.data}, 'message': 'Prescription updated.'})
+
+
 class PharmacyOrderTrackingView(APIView):
     """Same shape as OrderTrackingView/AdminOrderTrackingView, but `pk` here is the ORDER id (not
     a fulfillment id, unlike PharmacyOrderAdvanceStatusView above) — filtered to only this
@@ -6523,6 +6949,15 @@ class PharmacyTeamListView(APIView):
             member = PharmacyTeamMember.objects.create(
                 pharmacy=pharmacy, user=user, can_view_finance=d.get('can_view_finance', False),
             )
+
+        # Same split as the owner onboarding above: password only in the one-time email, never in
+        # the persistent in-app notification. Links to the pharmacy dashboard they can now act in.
+        Notification.objects.create(
+            user=user, type='ACCOUNT_UPDATE', title=f'You’ve been added to {pharmacy.name}',
+            message=f'You can now sign in and help manage orders for {pharmacy.name}.',
+            link='/pharmacy',
+        )
+        send_pharmacy_welcome_email(user, d['password'], pharmacy_name=pharmacy.name)
 
         return Response(
             {'success': True, 'data': {'member': PharmacyTeamMemberSerializer(member).data}, 'message': 'Team member added.'},
@@ -6806,6 +7241,23 @@ class LabCollectorActiveListView(APIView):
             status__in=('CONFIRMED', 'EN_ROUTE', 'ARRIVED', 'SAMPLE_COLLECTED', 'SUBMITTED_TO_LAB'),
         ).select_related('lab_test__category', 'address', 'user', 'collector__user').order_by('scheduled_date')
         return Response({'success': True, 'data': {'collections': LabTestBookingSerializer(bookings, many=True).data}})
+
+
+class LabCollectorHistoryView(APIView):
+    """This collector's finished collections — the terminal counterpart to the active list: the jobs
+    that have dropped out of it because there's nothing left to do. REPORT_READY (completed — the
+    same set the dashboard's "Completed" stat counts) and CANCELLED. Same IsCollector +
+    collector=request.user.lab_collector ownership boundary; most-recent first so the latest work
+    sits at the top. context={'request': request} so report_file_url resolves to an absolute,
+    downloadable link (the active list omits it because in-progress bookings have no report yet)."""
+    permission_classes = [IsCollector]
+
+    def get(self, request):
+        bookings = LabTestBooking.objects.filter(
+            collector=request.user.lab_collector,
+            status__in=('REPORT_READY', 'CANCELLED'),
+        ).select_related('lab_test__category', 'address', 'user', 'collector__user').order_by('-scheduled_date', '-updated_at')
+        return Response({'success': True, 'data': {'collections': LabTestBookingSerializer(bookings, many=True, context={'request': request}).data}})
 
 
 class LabCollectorConfirmCollectedView(APIView):
@@ -7568,5 +8020,97 @@ class AdminFinanceChannelDetailView(APIView):
                 'channel': header,
                 'transactions': rows,
                 'pagination': {'total': total, 'page': page, 'limit': limit, 'totalPages': (total + limit - 1) // limit},
+            },
+        })
+
+
+class AdminFinanceDailyView(APIView):
+    """Day-wise gross revenue (PAID rows) across the three channels, with an optional
+    payment-method filter (COD / Khalti / eSewa) and a date range — the "track day-wise
+    finance, see the total for all the days, filter by COD/Khalti/eSewa" view.
+
+    Grain is a single day; rows are grouped by each transaction's own placed/booked date
+    (Order.placed_at, LabTestBooking.booked_at, DoctorAppointment.booked_at) in the server's
+    local timezone. These revenue rows carry no separate paid_at, so "finance per day" means
+    the day the (paid) transaction was booked — the same date basis the channel drill-downs
+    order by. Gross is defined exactly as the Revenue-by-Channel cards: PAID rows only, summing
+    Order/Lab total_amount and Appointment fee_charged.
+
+    COD spans BOTH spellings — 'CASH_ON_DELIVERY' (main order/lab flows) and the bare 'COD' the
+    subscription auto-refill writes. Doctor appointments have no COD option (KHALTI/ESEWA/WALLET),
+    so a COD filter naturally contributes nothing from that channel; a WALLET appointment counts
+    only under the unfiltered (all-methods) view.
+    """
+    permission_classes = [require_permission('manage_finance')]
+
+    # (key, model, amount field summed for gross, timestamp field, label)
+    CHANNELS = [
+        ('medicine', Order, 'total_amount', 'placed_at', 'Medicine Orders'),
+        ('lab-tests', LabTestBooking, 'total_amount', 'booked_at', 'Lab Tests'),
+        ('appointments', DoctorAppointment, 'fee_charged', 'booked_at', 'Doctor Appointments'),
+    ]
+    # UI filter value -> the payment_method strings it matches. Absence => no method filter.
+    METHOD_FILTERS = {
+        'COD': ('CASH_ON_DELIVERY', 'COD'),
+        'KHALTI': ('KHALTI',),
+        'ESEWA': ('ESEWA',),
+    }
+
+    def get(self, request):
+        today = timezone.localdate()
+        date_from = parse_date(request.query_params.get('date_from') or '') or (today - timedelta(days=29))
+        date_to = parse_date(request.query_params.get('date_to') or '') or today
+        if date_from > date_to:
+            date_from, date_to = date_to, date_from
+
+        method = (request.query_params.get('payment_method') or '').strip().upper()
+        method_values = self.METHOD_FILTERS.get(method)  # None => every method
+
+        channel_filter = (request.query_params.get('channel') or '').strip()
+        channels = [c for c in self.CHANNELS if not channel_filter or c[0] == channel_filter]
+
+        by_day = {}          # date -> {'gross': Decimal, 'count': int, 'channels': {key: gross-str}}
+        channel_totals = {}  # key  -> {'key','label','gross','count'} for the whole range
+        for key, model, amount_field, ts_field, label in channels:
+            qs = model.objects.filter(**{
+                'payment_status': 'PAID',
+                f'{ts_field}__date__gte': date_from,
+                f'{ts_field}__date__lte': date_to,
+            })
+            if method_values is not None:
+                qs = qs.filter(payment_method__in=method_values)
+            rows = (qs.annotate(day=TruncDate(ts_field))
+                      .values('day')
+                      .annotate(gross=Sum(amount_field), count=Count('id')))
+            ch_gross, ch_count = Decimal('0'), 0
+            for r in rows:
+                gross = r['gross'] or Decimal('0')
+                slot = by_day.setdefault(r['day'], {'gross': Decimal('0'), 'count': 0, 'channels': {}})
+                slot['gross'] += gross
+                slot['count'] += r['count']
+                slot['channels'][key] = str(gross)
+                ch_gross += gross
+                ch_count += r['count']
+            channel_totals[key] = {'key': key, 'label': label, 'gross': str(ch_gross), 'count': ch_count}
+
+        days = [
+            {'date': d.isoformat(), 'gross': str(v['gross']), 'count': v['count'], 'channels': v['channels']}
+            for d, v in sorted(by_day.items(), reverse=True)
+        ]
+        total_gross = sum((v['gross'] for v in by_day.values()), Decimal('0'))
+        total_count = sum((v['count'] for v in by_day.values()), 0)
+
+        return Response({
+            'success': True,
+            'data': {
+                'days': days,
+                'total': {'gross': str(total_gross), 'count': total_count},
+                'channel_totals': [channel_totals[c[0]] for c in channels],
+                'filters': {
+                    'date_from': date_from.isoformat(),
+                    'date_to': date_to.isoformat(),
+                    'payment_method': method if method_values is not None else '',
+                    'channel': channel_filter if any(c[0] == channel_filter for c in self.CHANNELS) else '',
+                },
             },
         })

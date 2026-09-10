@@ -346,16 +346,25 @@ function BookingsTab() {
   const [bookings, setBookings] = useState<LabTestBooking[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('ALL')
+  const [collectorFilter, setCollectorFilter] = useState('')
+  const [collectors, setCollectors] = useState<AdminLabCollector[]>([])
   const [updating, setUpdating] = useState<string | null>(null)
   const [uploadingId, setUploadingId] = useState<string | null>(null)
   const [assigningBooking, setAssigningBooking] = useState<LabTestBooking | null>(null)
+
+  // Verified collectors populate the "by collector" filter — the same set that's assignable, so an
+  // admin can pull up one collector's whole booking history/workload straight from this list.
+  useEffect(() => {
+    api.get('/admin/lab-collectors/').then((r) => setCollectors(r.data.data.collectors || [])).catch(() => {})
+  }, [])
 
   const fetchBookings = useCallback(() => {
     setLoading(true)
     const params: any = {}
     if (statusFilter !== 'ALL') params.status = statusFilter
+    if (collectorFilter) params.collector = collectorFilter
     api.get('/admin/lab-test-bookings/', { params }).then((r) => setBookings(r.data.data.bookings || [])).catch(() => {}).finally(() => setLoading(false))
-  }, [statusFilter])
+  }, [statusFilter, collectorFilter])
   useEffect(() => { fetchBookings() }, [fetchBookings])
 
   const updateStatus = async (id: string, newStatus: string) => {
@@ -388,13 +397,23 @@ function BookingsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-1.5">
-        {['ALL', ...BOOKING_STATUSES].map((s) => (
-          <button key={s} onClick={() => setStatusFilter(s)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${statusFilter === s ? 'bg-primary text-on-primary' : 'border border-outline-variant text-on-surface-variant hover:bg-surface-container'}`}>
-            {s === 'ALL' ? 'All' : s.replace(/_/g, ' ')}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {['ALL', ...BOOKING_STATUSES].map((s) => (
+            <button key={s} onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${statusFilter === s ? 'bg-primary text-on-primary' : 'border border-outline-variant text-on-surface-variant hover:bg-surface-container'}`}>
+              {s === 'ALL' ? 'All' : s.replace(/_/g, ' ')}
+            </button>
+          ))}
+        </div>
+        <select value={collectorFilter} onChange={(e) => setCollectorFilter(e.target.value)}
+          title="Filter by assigned collector"
+          className="text-xs border border-outline-variant rounded-xl px-3 py-2 bg-surface text-on-surface focus:outline-none focus:border-secondary transition">
+          <option value="">All collectors</option>
+          {collectors.filter((c) => c.is_verified).map((c) => (
+            <option key={c.id} value={c.id}>{c.full_name}</option>
+          ))}
+        </select>
       </div>
       <div className="bg-surface rounded-2xl border border-outline-variant overflow-hidden">
         <div className="overflow-x-auto">
@@ -417,6 +436,7 @@ function BookingsTab() {
                   <td className="px-4 py-3">
                     <p className="text-sm text-on-surface">{b.user?.full_name}</p>
                     <p className="text-xs text-on-surface-variant">{b.user?.email}</p>
+                    {b.patient_name && <p className="text-xs font-medium text-secondary mt-0.5">For {b.patient_name}{b.patient_phone ? ` · ${b.patient_phone}` : ''}</p>}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     {b.collector ? (

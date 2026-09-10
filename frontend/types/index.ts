@@ -185,11 +185,26 @@ export interface PharmacyFulfillmentRequest {
   created_at: string
 }
 
+export interface PharmacyOrderItemPrescription {
+  id: string
+  file_url: string | null
+  file_name: string
+  admin_status: 'PENDING' | 'VERIFIED' | 'REJECTED' | 'EXPIRED'
+  // This pharmacy's own decision for its slice — null until it acts. Distinct from admin_status,
+  // which is the platform-wide decision. `cleared` is the effective gate (either one VERIFIED).
+  pharmacy_status: 'VERIFIED' | 'REJECTED' | null
+  cleared: boolean
+  reject_reason: string | null
+}
+
 export interface PharmacyOrderFulfillmentItem {
+  order_item_id: string
   medicine_id: string
   medicine_name: string
   quantity: number
   unit_price: string
+  is_rx: boolean
+  prescription: PharmacyOrderItemPrescription | null
 }
 
 export interface PharmacyOrderFulfillment {
@@ -638,6 +653,7 @@ export interface LabTest {
   fasting_required: boolean
   reporting_time?: string | null
   is_package: boolean
+  included_tests?: LabTest[]
   price: string
   original_price: string
   is_active: boolean
@@ -664,11 +680,29 @@ export interface LabTestBooking {
   payment_status?: LabTestPaymentStatus
   payment_method?: LabTestPaymentMethod | null
   collector?: { id: string; full_name: string; phone?: string | null } | null
+  // Whom this collection is FOR. All null/absent = the account holder booked it for themselves
+  // (the default). Set when booked on behalf of someone else — one named person per booking.
+  patient_name?: string | null
+  patient_phone?: string | null
+  patient_age?: number | null
+  patient_gender?: 'MALE' | 'FEMALE' | 'OTHER' | null
   report_url?: string | null
   report_file_url?: string | null
   report_uploaded_at?: string | null
   booked_at: string
   updated_at: string
+}
+
+// A multi-test cart checkout: the shared payment parent that owns the individual bookings it
+// produced. Each booking still tracks its own status/collector/report; the group only carries the
+// one payment that settled the whole cart. Backs the cart confirmation page.
+export interface LabBookingGroup {
+  id: string
+  total_amount: string
+  payment_method?: LabTestPaymentMethod | null
+  payment_status: LabTestPaymentStatus
+  booked_at: string
+  bookings: LabTestBooking[]
 }
 
 export interface CollectorEarning {
@@ -1112,4 +1146,19 @@ export interface ChannelDetail {
   channel: RevenueChannel
   transactions: ChannelTransaction[]
   pagination: { total: number; page: number; limit: number; totalPages: number }
+}
+
+export interface DailyFinanceRow {
+  date: string
+  gross: string
+  count: number
+  // Only channels with revenue that day are present; missing => 0.
+  channels: Partial<Record<RevenueChannelKey, string>>
+}
+
+export interface DailyFinance {
+  days: DailyFinanceRow[]
+  total: { gross: string; count: number }
+  channel_totals: { key: RevenueChannelKey; label: string; gross: string; count: number }[]
+  filters: { date_from: string; date_to: string; payment_method: string; channel: string }
 }

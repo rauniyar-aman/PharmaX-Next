@@ -4,7 +4,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner, PharmacyIncentiveCampaign, PharmacyCampaignEnrollment
+from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner, PharmacyIncentiveCampaign, PharmacyCampaignEnrollment
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -614,17 +614,17 @@ class OrderSerializer(serializers.ModelSerializer):
 
     def get_prescription_status(self, obj):
         """Rolls up every Rx item's prescription into one status for the order: None if it has no
-        Rx items, VERIFIED once every Rx item's prescription is admin-verified (so a pharmacy can
-        actually start preparing it — see pharmacy_advance_fulfillment()'s gate), REJECTED if any
-        is missing or rejected (customer needs to re-attach one), else PENDING — still awaiting
-        review, though searching for a pharmacy proceeds regardless of this status."""
-        rx_statuses = [i.prescription.status if i.prescription else None for i in obj.items.all() if i.medicine.type == 'Rx']
-        if not rx_statuses:
+        Rx items, VERIFIED once every Rx item is cleared (admin-verified globally or verified by the
+        fulfilling pharmacy — so a pharmacy can actually start preparing it), REJECTED if any is
+        missing/rejected (customer needs to re-attach one), else PENDING — still awaiting review,
+        though searching for a pharmacy proceeds regardless of this status."""
+        rx_items = [i for i in obj.items.all() if i.medicine.type == 'Rx']
+        if not rx_items:
             return None
-        if any(s in (None, 'REJECTED') for s in rx_statuses):
-            return 'REJECTED'
-        if all(s == 'VERIFIED' for s in rx_statuses):
+        if all(i.is_rx_cleared for i in rx_items):
             return 'VERIFIED'
+        if any(i.is_rx_rejected for i in rx_items):
+            return 'REJECTED'
         return 'PENDING'
 
 
@@ -656,12 +656,13 @@ class AdminOrderFulfillmentSerializer(serializers.ModelSerializer):
         ]
 
     def get_prescription_ready(self, obj):
-        """False if this leg includes an Rx item whose prescription isn't yet VERIFIED — admin's
-        status label needs this because a fulfillment sits at ACCEPTED (labeled "Preparing")
-        whether it's actively being prepped or just blocked by pharmacy_advance_fulfillment()'s
-        gate; without this the two look identical."""
-        return not any(
-            item.medicine.type == 'Rx' and (not item.prescription or item.prescription.status != 'VERIFIED')
+        """False if this leg includes an Rx item that isn't cleared yet — admin's status label needs
+        this because a fulfillment sits at ACCEPTED (labeled "Preparing") whether it's actively
+        being prepped or just blocked by pharmacy_advance_fulfillment()'s gate; without this the two
+        look identical. "Cleared" = admin-verified globally OR verified by the fulfilling pharmacy
+        for its own slice (see OrderItem.is_rx_cleared)."""
+        return all(
+            item.is_rx_cleared
             for item in obj.order_items.select_related('medicine', 'prescription').all()
         )
 
@@ -786,16 +787,41 @@ class LabTestListSerializer(serializers.ModelSerializer):
 class LabTestDetailSerializer(serializers.ModelSerializer):
     category = LabTestCategorySerializer(read_only=True)
     category_id = serializers.UUIDField(write_only=True)
+    included_tests = LabTestListSerializer(many=True, read_only=True)
+    included_test_ids = serializers.ListField(child=serializers.UUIDField(), write_only=True, required=False)
 
     class Meta:
         model = LabTest
         fields = [
             'id', 'name', 'category', 'category_id', 'description', 'parameters_included',
             'sample_type', 'fasting_required', 'reporting_time', 'is_package',
+            'included_tests', 'included_test_ids',
             'price', 'original_price', 'is_active', 'total_bookings',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'total_bookings', 'created_at', 'updated_at']
+
+    def _apply_included_tests(self, instance, ids):
+        # `ids is None` means the client omitted the field entirely (e.g. a partial edit that isn't
+        # touching membership) — leave the existing members alone. An explicit [] clears them. Only
+        # real, active, non-package tests other than this one qualify: no self-membership and no
+        # nested packages. Anything that doesn't resolve is silently dropped.
+        if ids is None:
+            return
+        members = LabTest.objects.filter(id__in=ids, is_active=True, is_package=False).exclude(id=instance.id)
+        instance.included_tests.set(members)
+
+    def create(self, validated_data):
+        ids = validated_data.pop('included_test_ids', None)
+        instance = super().create(validated_data)
+        self._apply_included_tests(instance, ids)
+        return instance
+
+    def update(self, instance, validated_data):
+        ids = validated_data.pop('included_test_ids', None)
+        instance = super().update(instance, validated_data)
+        self._apply_included_tests(instance, ids)
+        return instance
 
 
 class LabTestBookingSerializer(serializers.ModelSerializer):
@@ -813,10 +839,12 @@ class LabTestBookingSerializer(serializers.ModelSerializer):
             'id', 'user', 'lab_test', 'lab_test_id', 'address', 'address_id',
             'scheduled_date', 'time_slot', 'status', 'total_amount', 'notes',
             'payment_status', 'payment_method', 'collector',
+            'patient_name', 'patient_phone', 'patient_age', 'patient_gender',
             'report_url', 'report_file_url', 'report_uploaded_at', 'booked_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'status', 'total_amount', 'payment_status', 'payment_method', 'collector',
+            'patient_name', 'patient_phone', 'patient_age', 'patient_gender',
             'report_url', 'report_file_url', 'report_uploaded_at', 'booked_at', 'updated_at',
         ]
 
@@ -833,6 +861,17 @@ class LabTestBookingSerializer(serializers.ModelSerializer):
             return None
         request = self.context.get('request')
         return request.build_absolute_uri(obj.report_file.url) if request else obj.report_file.url
+
+
+class LabBookingGroupSerializer(serializers.ModelSerializer):
+    """A multi-test cart checkout and the individual bookings it produced — used by the cart
+    confirmation page to show everything settled by the one shared payment."""
+    bookings = LabTestBookingSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = LabBookingGroup
+        fields = ['id', 'total_amount', 'payment_method', 'payment_status', 'booked_at', 'bookings']
+        read_only_fields = fields
 
 
 class PrescriptionLabTestItemSerializer(serializers.ModelSerializer):
@@ -1261,13 +1300,11 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
         ]
 
     def get_prescription_ready(self, obj):
-        """False if any Rx item in THIS pharmacy's slice still needs a verified prescription —
-        mirrors pharmacy_advance_fulfillment()'s gate, so the dashboard can explain why "advance"
+        """True once every Rx item in THIS pharmacy's slice is cleared — either admin-verified
+        globally or verified by this pharmacy for its own slice (see OrderItem.is_rx_cleared) —
+        mirroring pharmacy_advance_fulfillment()'s gate, so the dashboard can explain why "advance"
         is blocked before the pharmacy even tries."""
-        return not any(
-            item.medicine.type == 'Rx' and (not item.prescription or item.prescription.status != 'VERIFIED')
-            for item in obj.order_items.all()
-        )
+        return all(item.is_rx_cleared for item in obj.order_items.all())
 
     def get_payment_status(self, obj):
         # context['show_finance'] is set by the view from _can_view_finance() — False for a team
@@ -1308,16 +1345,32 @@ class PharmacyOrderFulfillmentSerializer(serializers.ModelSerializer):
 
     def get_items(self, obj):
         # Plain .all() (no .select_related() chained on) so this reads from the
-        # prefetch_related('order_items__medicine') cache the view sets up — chaining
-        # .select_related() here builds a distinct queryset that bypasses that cache and fires
-        # one extra query per fulfillment instead of zero.
-        return [
-            {
+        # prefetch_related('order_items__medicine', 'order_items__prescription') cache the view sets
+        # up — chaining .select_related() here builds a distinct queryset that bypasses that cache
+        # and fires one extra query per fulfillment instead of zero.
+        items = []
+        for i in obj.order_items.all():
+            p = i.prescription
+            items.append({
+                'order_item_id': str(i.id),
                 'medicine_id': str(i.medicine_id), 'medicine_name': i.medicine.name,
                 'quantity': i.quantity, 'unit_price': str(i.unit_price),
-            }
-            for i in obj.order_items.all()
-        ]
+                'is_rx': i.medicine.type == 'Rx',
+                # The pharmacy that won this item sees the actual prescription (R2 files are
+                # public-read, so file_url is directly openable) and can verify/reject it for its
+                # own slice via PharmacyVerifyPrescriptionView: admin_status is the platform-wide
+                # decision, pharmacy_status this pharmacy's own, cleared the effective gate.
+                'prescription': None if not p else {
+                    'id': str(p.id),
+                    'file_url': (p.file.url if p.file else (p.file_url or None)),
+                    'file_name': p.file_name or (p.file.name if p.file else ''),
+                    'admin_status': p.status,
+                    'pharmacy_status': i.pharmacy_rx_status or None,
+                    'cleared': i.is_rx_cleared,
+                    'reject_reason': (i.pharmacy_rx_reject_reason or (p.rejection_reason if p.status == 'REJECTED' else '')) or None,
+                },
+            })
+        return items
 
     def get_delivery_agent_name(self, obj):
         return obj.delivery_agent.user.full_name if obj.delivery_agent else None

@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { useLabCartStore } from '@/store/labCart'
 import type { LabTest, LabTestCategory } from '@/types'
 
 function LabTestCardSkeleton() {
@@ -25,6 +26,20 @@ export default function LabTestsPage() {
   const [category, setCategory] = useState('')
   const [sortBy, setSortBy] = useState('popular')
   const [packagesOnly, setPackagesOnly] = useState(false)
+
+  const cartItems = useLabCartStore((s) => s.items)
+  const addToCart = useLabCartStore((s) => s.add)
+  // The cart is persisted in localStorage, so it's only known on the client. Gate every read of it
+  // behind `mounted` so the first client render matches the server's (empty) HTML and React doesn't
+  // flag a hydration mismatch; the effect flips it right after mount to show the real cart state.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  const isInCart = (id: string) => mounted && cartItems.some((i) => i.id === id)
+
+  const handleAdd = (t: LabTest) => {
+    addToCart({ id: t.id, name: t.name, price: t.price, is_package: t.is_package })
+    toast.success('Added to cart')
+  }
 
   useEffect(() => {
     api.get('/lab-tests/categories/').then((r) => setCategories(r.data.data.categories || [])).catch(() => {})
@@ -49,9 +64,19 @@ export default function LabTestsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="bg-gradient-to-r from-primary to-primary/80 rounded-2xl p-6 text-on-primary">
-        <h1 className="text-2xl font-bold">Lab Tests at Home</h1>
-        <p className="text-sm opacity-90 mt-1">Book a certified lab test with free home sample collection.</p>
+      <div className="bg-gradient-to-r from-primary to-primary/80 rounded-2xl p-6 text-on-primary flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">Lab Tests at Home</h1>
+          <p className="text-sm opacity-90 mt-1">Book a certified lab test with free home sample collection.</p>
+        </div>
+        <Link href="/lab-tests/cart"
+          className="relative shrink-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-on-primary/15 hover:bg-on-primary/25 text-on-primary text-sm font-semibold transition-colors">
+          <span className="material-symbols-outlined ms-filled" style={{ fontSize: '18px' }}>shopping_cart</span>
+          Cart
+          {mounted && cartItems.length > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-error text-white text-[11px] font-bold flex items-center justify-center">{cartItems.length}</span>
+          )}
+        </Link>
       </div>
 
       <div className="bg-surface rounded-2xl border border-outline-variant p-4 space-y-3">
@@ -135,8 +160,20 @@ export default function LabTestsPage() {
                     </>
                   )}
                 </div>
-                <div className="mt-3 pt-3 border-t border-outline-variant text-center text-sm font-semibold text-primary">
-                  Book Now
+                <div className="mt-3 pt-3 border-t border-outline-variant flex items-center gap-2">
+                  <span className="flex-1 text-sm font-semibold text-primary">Book Now</span>
+                  {isInCart(t.id) ? (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-on-surface-variant">
+                      <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>check</span>In cart
+                    </span>
+                  ) : (
+                    <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleAdd(t) }}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-primary border border-primary/40 rounded-lg px-2.5 py-1.5 hover:bg-primary/5 transition-colors"
+                      aria-label={`Add ${t.name} to cart`}>
+                      <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add_shopping_cart</span>
+                      Add
+                    </button>
+                  )}
                 </div>
               </Link>
             )

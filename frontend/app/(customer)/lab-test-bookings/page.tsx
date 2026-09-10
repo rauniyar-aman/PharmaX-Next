@@ -128,6 +128,12 @@ export default function LabTestBookingsPage() {
               <div>
                 <p className="text-sm font-bold text-on-surface">{b.lab_test?.name}</p>
                 <p className="text-xs text-on-surface-variant mt-0.5">{b.lab_test?.category_name}</p>
+                {b.patient_name && (
+                  <p className="text-xs font-medium text-secondary mt-1 flex items-center gap-1">
+                    <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>person</span>
+                    For {b.patient_name}{b.patient_age ? `, ${b.patient_age}` : ''}{b.patient_gender ? `, ${b.patient_gender.charAt(0)}${b.patient_gender.slice(1).toLowerCase()}` : ''}
+                  </p>
+                )}
               </div>
               <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${STATUS_COLORS[b.status] || 'bg-surface-container text-on-surface-variant'}`}>
                 <span className="material-symbols-outlined ms-filled" style={{ fontSize: '14px' }}>{STATUS_ICONS[b.status]}</span>

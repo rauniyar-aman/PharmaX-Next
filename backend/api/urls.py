@@ -73,6 +73,11 @@ urlpatterns = [
     path('payment/esewa/initiate-lab-test/',     views.PaymentEsewaInitiateLabTestView.as_view(), name='payment-esewa-initiate-lab-test'),
     path('payment/esewa/success-lab-test/',      views.LabTestEsewaSuccessView.as_view(),        name='payment-esewa-success-lab-test'),
     path('payment/esewa/failure-lab-test/',      views.LabTestEsewaFailureView.as_view(),        name='payment-esewa-failure-lab-test'),
+    path('payment/khalti/initiate-lab-group/',   views.PaymentKhaltiInitiateLabGroupView.as_view(), name='payment-khalti-initiate-lab-group'),
+    path('payment/khalti/verify-lab-group/',     views.LabGroupKhaltiVerifyView.as_view(),       name='payment-khalti-verify-lab-group'),
+    path('payment/esewa/initiate-lab-group/',    views.PaymentEsewaInitiateLabGroupView.as_view(), name='payment-esewa-initiate-lab-group'),
+    path('payment/esewa/success-lab-group/',     views.LabGroupEsewaSuccessView.as_view(),       name='payment-esewa-success-lab-group'),
+    path('payment/esewa/failure-lab-group/',     views.LabGroupEsewaFailureView.as_view(),       name='payment-esewa-failure-lab-group'),
 
     # Notifications
     path('notifications/',            views.NotificationListView.as_view(),   name='notifications'),
@@ -83,6 +88,8 @@ urlpatterns = [
     # Lab Tests
     path('lab-tests/categories/',       views.LabTestCategoryListView.as_view(), name='lab-test-categories'),
     path('lab-tests/bookings/',         views.LabTestBookingListCreateView.as_view(), name='lab-test-bookings'),
+    path('lab-tests/bookings/batch/',   views.LabTestCartCheckoutView.as_view(), name='lab-test-bookings-batch'),
+    path('lab-tests/bookings/groups/<uuid:pk>/', views.LabBookingGroupDetailView.as_view(), name='lab-booking-group-detail'),
     path('lab-tests/bookings/<uuid:pk>/', views.LabTestBookingDetailView.as_view(), name='lab-test-booking-detail'),
     path('lab-tests/',                  views.LabTestListView.as_view(),      name='lab-tests'),
     path('lab-tests/<uuid:pk>/',        views.LabTestDetailView.as_view(),    name='lab-test-detail'),
@@ -226,6 +233,7 @@ urlpatterns = [
     path('pharmacy/orders/',                    views.PharmacyOrderListView.as_view(),      name='pharmacy-orders'),
     path('pharmacy/orders/<uuid:pk>/advance/',  views.PharmacyOrderAdvanceStatusView.as_view(), name='pharmacy-order-advance'),
     path('pharmacy/orders/<uuid:pk>/verify-pickup/', views.PharmacyVerifyPickupView.as_view(), name='pharmacy-verify-pickup'),
+    path('pharmacy/orders/<uuid:pk>/verify-prescription/', views.PharmacyVerifyPrescriptionView.as_view(), name='pharmacy-verify-prescription'),
     path('pharmacy/orders/<uuid:pk>/tracking/', views.PharmacyOrderTrackingView.as_view(), name='pharmacy-order-tracking'),
     path('pharmacy/team/',                      views.PharmacyTeamListView.as_view(),       name='pharmacy-team'),
     path('pharmacy/team/<uuid:pk>/',            views.PharmacyTeamMemberDetailView.as_view(), name='pharmacy-team-member-detail'),
@@ -246,6 +254,7 @@ urlpatterns = [
     path('lab-collector/dashboard/',            views.LabCollectorDashboardView.as_view(),      name='lab-collector-dashboard'),
     path('lab-collector/finance/',              views.LabCollectorFinanceView.as_view(),        name='lab-collector-finance'),
     path('lab-collector/active/',               views.LabCollectorActiveListView.as_view(),     name='lab-collector-active'),
+    path('lab-collector/history/',              views.LabCollectorHistoryView.as_view(),        name='lab-collector-history'),
     path('lab-collector/active/<uuid:pk>/en-route/', views.LabCollectorEnRouteView.as_view(), name='lab-collector-en-route'),
     path('lab-collector/active/<uuid:pk>/arrived/', views.LabCollectorArrivedView.as_view(), name='lab-collector-arrived'),
     path('lab-collector/active/<uuid:pk>/confirm-collected/', views.LabCollectorConfirmCollectedView.as_view(), name='lab-collector-confirm-collected'),
@@ -280,5 +289,6 @@ urlpatterns = [
     path('admin/finance/agents/<uuid:pk>/',                   views.AdminAgentFinanceProfileView.as_view(),        name='admin-finance-agent-profile'),
     path('admin/finance/channels/',                           views.AdminFinanceChannelsView.as_view(),            name='admin-finance-channels'),
     path('admin/finance/channels/<str:channel>/',             views.AdminFinanceChannelDetailView.as_view(),       name='admin-finance-channel-detail'),
+    path('admin/finance/daily/',                              views.AdminFinanceDailyView.as_view(),               name='admin-finance-daily'),
     path('admin/finance/summary/',                            views.AdminFinanceSummaryView.as_view(),             name='admin-finance-summary'),
 ]

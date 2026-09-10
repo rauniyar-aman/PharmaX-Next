@@ -90,7 +90,7 @@ export default function LabCollectorDashboardPage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <StatCard icon="pending_actions" label="To Collect" value={String(data?.stats.to_collect ?? 0)} href="/lab-collector/active" />
             <StatCard icon="hourglass_top" label="Awaiting Report" value={String(data?.stats.awaiting_report ?? 0)} tone="secondary" href="/lab-collector/active" />
-            <StatCard icon="task_alt" label="Completed" value={String(data?.stats.completed ?? 0)} tone="success" />
+            <StatCard icon="task_alt" label="Completed" value={String(data?.stats.completed ?? 0)} tone="success" href="/lab-collector/history" />
             <StatCard icon="today" label="Today" value={String(data?.stats.today_count ?? 0)} />
             <StatCard icon="account_balance_wallet" label="Earnings Pending" value={money(data?.stats.earnings_pending ?? '0')} tone={Number(data?.stats.earnings_pending || 0) > 0 ? 'warning' : 'default'} href="/lab-collector/finance" />
             <StatCard icon="payments" label="COD to Remit" value={money(data?.stats.cod_outstanding ?? '0')} tone={Number(data?.stats.cod_outstanding || 0) > 0 ? 'warning' : 'default'} href="/lab-collector/finance" />
@@ -115,7 +115,7 @@ export default function LabCollectorDashboardPage() {
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-on-surface truncate">{b.lab_test.name}</p>
                         <p className="text-xs text-on-surface-variant mt-0.5 truncate">
-                          {b.user?.full_name || 'Patient'} · {b.scheduled_date} · {b.time_slot}
+                          {b.patient_name || b.user?.full_name || 'Patient'} · {b.scheduled_date} · {b.time_slot}
                         </p>
                       </div>
                       <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap flex-shrink-0 ${pill.color}`}>{pill.label}</span>

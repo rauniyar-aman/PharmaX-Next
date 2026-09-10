@@ -341,12 +341,45 @@ class OrderItem(models.Model):
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
     prescription = models.ForeignKey(Prescription, on_delete=models.SET_NULL, null=True, blank=True, related_name='order_items')
     fulfillment = models.ForeignKey('OrderFulfillment', on_delete=models.SET_NULL, null=True, blank=True, related_name='order_items')
+    # Per-pharmacy prescription decision for THIS item's slice of the order. Lets the pharmacy that
+    # won the item verify (or reject) its prescription itself instead of waiting on an admin —
+    # distinct from the global Prescription.status (which an admin sets once for everyone). Because
+    # each item belongs to exactly one fulfillment, this is inherently per-pharmacy: a split order
+    # where two pharmacies share one uploaded prescription gets an independent decision from each.
+    # '' = no pharmacy decision yet (the item then falls back to the global Prescription.status).
+    PHARMACY_RX_STATUS = [('VERIFIED', 'Verified'), ('REJECTED', 'Rejected')]
+    pharmacy_rx_status = models.CharField(max_length=20, choices=PHARMACY_RX_STATUS, blank=True, default='')
+    pharmacy_rx_reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    pharmacy_rx_reviewed_at = models.DateTimeField(null=True, blank=True)
+    pharmacy_rx_reject_reason = models.TextField(blank=True, default='')
 
     class Meta:
         db_table = 'order_items'
 
     def __str__(self):
         return f'{self.medicine.name} x{self.quantity}'
+
+    @property
+    def is_rx_cleared(self):
+        """True if this item is cleared for the pharmacy to prepare: a non-Rx item always is; an Rx
+        item is cleared once its prescription is either globally admin-VERIFIED or verified by the
+        pharmacy fulfilling this item (pharmacy_rx_status). Assumes medicine/prescription are
+        prefetched — every caller selects them."""
+        if self.medicine.type != 'Rx':
+            return True
+        if not self.prescription_id:
+            return False
+        return self.prescription.status == 'VERIFIED' or self.pharmacy_rx_status == 'VERIFIED'
+
+    @property
+    def is_rx_rejected(self):
+        """True if this Rx item can't currently be fulfilled — its prescription is missing, globally
+        rejected, or rejected by this item's pharmacy. Non-Rx items are never 'rejected'."""
+        if self.medicine.type != 'Rx':
+            return False
+        if not self.prescription_id:
+            return True
+        return self.prescription.status == 'REJECTED' or self.pharmacy_rx_status == 'REJECTED'
 
 
 class Review(models.Model):
@@ -444,6 +477,12 @@ class LabTest(models.Model):
     fasting_required = models.BooleanField(default=False)
     reporting_time = models.CharField(max_length=100, null=True, blank=True)
     is_package = models.BooleanField(default=False)
+    # When is_package=True, the specific member tests this package bundles. Self-referential and
+    # asymmetric (a package contains members; membership isn't mutual) — the reverse accessor
+    # `included_in_packages` answers "which packages contain this test". Members are shown for
+    # reference on the package's detail page; booking a package still creates ONE booking at the
+    # package's own price (members are never expanded into separate bookings).
+    included_tests = models.ManyToManyField('self', symmetrical=False, blank=True, related_name='included_in_packages')
     price = models.DecimalField(max_digits=10, decimal_places=2)
     original_price = models.DecimalField(max_digits=10, decimal_places=2)
     is_active = models.BooleanField(default=True)
@@ -456,6 +495,33 @@ class LabTest(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class LabBookingGroup(models.Model):
+    """The checkout/payment parent for a multi-test cart. One group owns the single shared payment
+    for a cart of lab tests, exactly as one Order owns the payment for its many OrderItems — each
+    test still becomes its own LabTestBooking (its own status/collector/report), but they share one
+    Khalti pidx / eSewa transaction_uuid here so a single online payment can settle them all. The
+    existing single-test flow doesn't use a group at all: those bookings keep group=NULL and their
+    own per-booking payment identifiers. Address/date/time-slot live on each child booking, not here.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.PROTECT, related_name='lab_booking_groups')
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    payment_method = models.CharField(max_length=20, choices=[('KHALTI', 'Khalti'), ('ESEWA', 'eSewa'), ('CASH_ON_DELIVERY', 'Cash on Collection')], null=True, blank=True)
+    payment_status = models.CharField(max_length=20, choices=[('PENDING', 'Pending'), ('PAID', 'Paid')], default='PENDING')
+    # Mirror Order.khalti_pidx / Order.esewa_transaction_uuid exactly (unique): the gateway callback
+    # looks the group up by the single value this system generated for the whole cart.
+    khalti_pidx = models.CharField(max_length=100, null=True, blank=True, unique=True)
+    esewa_transaction_uuid = models.CharField(max_length=100, null=True, blank=True, unique=True)
+    booked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'lab_booking_groups'
+        ordering = ['-booked_at']
+
+    def __str__(self):
+        return f'LabBookingGroup {self.id} — {self.user.email}'
 
 
 class LabTestBooking(models.Model):
@@ -473,12 +539,26 @@ class LabTestBooking(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.PROTECT, related_name='lab_test_bookings')
     lab_test = models.ForeignKey(LabTest, on_delete=models.PROTECT, related_name='bookings')
+    # Set only for cart checkouts (multiple tests booked together share one payment via the group);
+    # a single-test booking leaves this NULL and carries its own payment identifiers below. SET_NULL
+    # so a booking — which may own PROTECT'd finance rows (CollectorEarning/CodLiability) — is never
+    # blocked or cascade-deleted by a group deletion.
+    group = models.ForeignKey('LabBookingGroup', on_delete=models.SET_NULL, null=True, blank=True, related_name='bookings')
     address = models.ForeignKey(Address, on_delete=models.SET_NULL, null=True, blank=True, related_name='lab_test_bookings')
     scheduled_date = models.DateField()
     time_slot = models.CharField(max_length=100)
     status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     notes = models.TextField(null=True, blank=True)
+    # Whom this collection is FOR. All null = the account holder (booking.user) is the patient —
+    # the default, and the only case that existed before per-person booking, so every pre-existing
+    # booking reads as "for myself". Set when a user books on behalf of someone else (e.g. a family
+    # member); each booking still names exactly one person. Deliberately inline fields, not a
+    # saved-profile FK — capturing name/phone/age/gender at booking time was the agreed scope.
+    patient_name = models.CharField(max_length=255, null=True, blank=True)
+    patient_phone = models.CharField(max_length=20, null=True, blank=True)
+    patient_age = models.PositiveIntegerField(null=True, blank=True)
+    patient_gender = models.CharField(max_length=10, choices=[('MALE', 'Male'), ('FEMALE', 'Female'), ('OTHER', 'Other')], null=True, blank=True)
     report_url = models.CharField(max_length=500, null=True, blank=True)  # kept for any pre-existing
     # bookings that already have a value here; new reports go through report_file below instead.
     payment_status = models.CharField(max_length=20, choices=[('PENDING', 'Pending'), ('PAID', 'Paid')], default='PENDING')
