@@ -28,6 +28,13 @@ interface Props {
   onChange: (loc: PickedLocation) => void
 }
 
+interface SearchResult {
+  lat: string
+  lon: string
+  display_name: string
+  address?: Record<string, string>
+}
+
 function ClickHandler({ onPick }: { onPick: (lat: number, lng: number) => void }) {
   useMapEvents({
     click(e) {
@@ -48,6 +55,13 @@ export default function MapPicker({ value, onChange }: Props) {
   const [flyTarget, setFlyTarget] = useState<[number, number] | null>(null)
   const [loadingAddress, setLoadingAddress] = useState(false)
   const requestId = useRef(0)
+
+  // Forward-geocode search (type an address → locate it), complementing click-to-pin and My
+  // Location. Nominatim asks for ≤1 req/sec, so we search on submit (Enter / button), never per keystroke.
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<SearchResult[]>([])
+  const [searching, setSearching] = useState(false)
+  const [searched, setSearched] = useState(false)
 
   const reverseGeocode = useCallback(async (lat: number, lng: number) => {
     const id = ++requestId.current
@@ -87,6 +101,41 @@ export default function MapPicker({ value, onChange }: Props) {
     })
   }
 
+  const runSearch = useCallback(async () => {
+    const q = query.trim()
+    if (!q) return
+    setSearching(true)
+    setSearched(true)
+    try {
+      // countrycodes=np keeps results relevant to this Nepal-only storefront (map defaults to Kathmandu).
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&countrycodes=np&limit=5&q=${encodeURIComponent(q)}`)
+      const data = await res.json()
+      setResults(Array.isArray(data) ? data : [])
+    } catch {
+      setResults([])
+    } finally {
+      setSearching(false)
+    }
+  }, [query])
+
+  const selectResult = (r: SearchResult) => {
+    const lat = parseFloat(r.lat)
+    const lng = parseFloat(r.lon)
+    setMarker([lat, lng])
+    setFlyTarget([lat, lng])
+    const addr = r.address || {}
+    onChange({
+      lat, lng,
+      address: r.display_name || `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+      city: addr.city || addr.town || addr.village || addr.municipality || '',
+      province: addr.state || addr.province || '',
+      zip: addr.postcode || '',
+    })
+    setResults([])
+    setSearched(false)
+    setQuery(r.display_name.split(',').slice(0, 2).join(',').trim())
+  }
+
   return (
     <div className="relative w-full h-full rounded-xl overflow-hidden">
       <MapContainer center={marker || DEFAULT_CENTER} zoom={marker ? 16 : 13} style={{ width: '100%', height: '100%' }}>
@@ -99,8 +148,49 @@ export default function MapPicker({ value, onChange }: Props) {
         {marker && <Marker position={marker} />}
       </MapContainer>
 
-      {!marker && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full backdrop-blur-sm pointer-events-none z-[1000]">
+      {/* Text address search (forward geocode) — pinned over the map, works in both address forms */}
+      <div className="absolute top-2 left-2 right-2 z-[1000]">
+        <div className="flex gap-1.5">
+          <div className="flex-1 relative">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); runSearch() } }}
+              placeholder="Search an address or place…"
+              className="w-full pl-8 pr-3 py-2 rounded-full bg-surface/95 backdrop-blur-sm border border-outline-variant text-xs text-on-surface placeholder:text-on-surface-variant shadow-sm focus:outline-none focus:border-primary"
+            />
+            <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant" style={{ fontSize: '16px' }}>search</span>
+          </div>
+          <button type="button" onClick={runSearch} disabled={searching || !query.trim()}
+            className="px-3 rounded-full bg-primary text-on-primary text-xs font-semibold shadow-sm disabled:opacity-60">
+            {searching ? '…' : 'Search'}
+          </button>
+        </div>
+
+        {searched && (
+          <div className="mt-1.5 bg-surface rounded-xl border border-outline-variant shadow-lg overflow-hidden max-h-44 overflow-y-auto">
+            {searching ? (
+              <div className="px-3 py-2 text-xs text-on-surface-variant flex items-center gap-1.5">
+                <span className="material-symbols-outlined animate-spin text-primary" style={{ fontSize: '14px' }}>progress_activity</span>
+                Searching…
+              </div>
+            ) : results.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-on-surface-variant">No matches. Try a different search, or drop a pin on the map.</div>
+            ) : (
+              results.map((r, i) => (
+                <button key={i} type="button" onClick={() => selectResult(r)}
+                  className="w-full text-left px-3 py-2 text-xs text-on-surface hover:bg-surface-container border-b border-outline-variant last:border-0 flex items-start gap-1.5">
+                  <span className="material-symbols-outlined text-primary flex-shrink-0" style={{ fontSize: '14px' }}>location_on</span>
+                  <span className="line-clamp-2">{r.display_name}</span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      {!marker && !searched && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full backdrop-blur-sm pointer-events-none z-[999]">
           Click anywhere on the map to drop a pin
         </div>
       )}
