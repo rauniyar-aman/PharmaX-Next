@@ -223,6 +223,22 @@ export default function LabCollectorActivePage() {
                   </span>
                 </div>
 
+                {b.patient_name && (
+                  <div className="border-t border-outline-variant pt-3">
+                    <p className="text-xs font-semibold text-secondary uppercase tracking-wide flex items-center gap-1">
+                      <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>person</span>Collect sample from
+                    </p>
+                    <p className="text-sm font-semibold text-on-surface mt-0.5">
+                      {b.patient_name}
+                      {(b.patient_age || b.patient_gender) && (
+                        <span className="font-normal text-on-surface-variant"> · {[b.patient_age ? `${b.patient_age} yrs` : null, b.patient_gender ? b.patient_gender.charAt(0) + b.patient_gender.slice(1).toLowerCase() : null].filter(Boolean).join(', ')}</span>
+                      )}
+                    </p>
+                    {b.patient_phone && <a href={`tel:${b.patient_phone}`} className="text-xs text-primary hover:underline">{b.patient_phone}</a>}
+                    <p className="text-[11px] text-on-surface-variant mt-0.5">Booked by {b.user?.full_name || 'account holder'}</p>
+                  </div>
+                )}
+
                 {b.address && (
                   <div className="border-t border-outline-variant pt-3">
                     <p className="text-xs font-semibold text-secondary uppercase tracking-wide flex items-center gap-1">

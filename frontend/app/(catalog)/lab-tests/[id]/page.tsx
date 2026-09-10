@@ -5,6 +5,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
+import { useLabCartStore } from '@/store/labCart'
 import type { LabTest, Address } from '@/types'
 
 const TIME_SLOTS = ['6:00 AM - 8:00 AM', '8:00 AM - 10:00 AM', '10:00 AM - 12:00 PM', '4:00 PM - 6:00 PM', '6:00 PM - 8:00 PM']
@@ -32,6 +33,8 @@ function LabTestDetailContent() {
   // the suggestion it fulfills. Never fails the booking if it doesn't resolve to anything.
   const prescriptionLabTestItemId = searchParams.get('prescription_lab_test_item_id')
   const user = useAuthStore((s) => s.user)
+  const addToCart = useLabCartStore((s) => s.add)
+  const inCart = useLabCartStore((s) => s.items.some((i) => i.id === id))
 
   const [test, setTest] = useState<LabTest | null>(null)
   const [addresses, setAddresses] = useState<Address[]>([])
@@ -42,6 +45,13 @@ function LabTestDetailContent() {
   const [notes, setNotes] = useState('')
   const [method, setMethod] = useState('CASH_ON_DELIVERY')
   const [booking, setBooking] = useState(false)
+  // #1: optionally book this single test on behalf of someone else. Off = the booking is for the
+  // account holder (the default, no patient fields sent). The cart flow handles the multi-person case.
+  const [forSomeoneElse, setForSomeoneElse] = useState(false)
+  const [patientName, setPatientName] = useState('')
+  const [patientPhone, setPatientPhone] = useState('')
+  const [patientAge, setPatientAge] = useState('')
+  const [patientGender, setPatientGender] = useState('')
 
   useEffect(() => {
     if (!id) return
@@ -77,12 +87,19 @@ function LabTestDetailContent() {
     if (!user) { router.push('/signin'); return }
     if (!addressId) { toast.error('Please select a sample collection address.'); return }
     if (!timeSlot) { toast.error('Please select a time slot.'); return }
+    if (forSomeoneElse && !patientName.trim()) { toast.error("Enter the patient's name, or turn off “booking for someone else”."); return }
     setBooking(true)
     try {
       const res = await api.post('/lab-tests/bookings/', {
         lab_test_id: id, address_id: addressId, scheduled_date: date, time_slot: timeSlot, notes: notes || undefined,
         prescription_lab_test_item_id: prescriptionLabTestItemId || undefined,
         payment_method: method,
+        ...(forSomeoneElse ? {
+          patient_name: patientName.trim(),
+          patient_phone: patientPhone.trim() || undefined,
+          patient_age: patientAge ? Number(patientAge) : undefined,
+          patient_gender: patientGender || undefined,
+        } : {}),
       })
       const bookingId = res.data.data.booking.id
 
@@ -108,6 +125,12 @@ function LabTestDetailContent() {
     } finally {
       setBooking(false)
     }
+  }
+
+  const handleAddToCart = () => {
+    if (!test) return
+    addToCart({ id: test.id, name: test.name, price: test.price, is_package: test.is_package })
+    toast.success('Added to cart')
   }
 
   if (loading) return <div className="flex items-center justify-center py-24"><div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
@@ -168,6 +191,24 @@ function LabTestDetailContent() {
                 <p className="text-sm text-on-surface-variant leading-relaxed">{test.parameters_included}</p>
               </div>
             )}
+            {test.is_package && (test.included_tests?.length ?? 0) > 0 && (
+              <div>
+                <h3 className="text-sm font-bold text-on-surface mb-2">Included Tests ({test.included_tests!.length})</h3>
+                <div className="space-y-1.5">
+                  {test.included_tests!.map((m) => (
+                    <Link key={m.id} href={`/lab-tests/${m.id}`}
+                      className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-outline-variant hover:border-primary/40 hover:bg-primary/5 transition-colors group">
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '16px' }}>labs</span>
+                        <span className="text-sm text-on-surface truncate group-hover:text-primary">{m.name}</span>
+                      </span>
+                      <span className="material-symbols-outlined text-on-surface-variant group-hover:text-primary shrink-0" style={{ fontSize: '16px' }}>chevron_right</span>
+                    </Link>
+                  ))}
+                </div>
+                <p className="text-[11px] text-on-surface-variant mt-2">Booking this package covers all included tests in a single booking at the package price.</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -181,6 +222,26 @@ function LabTestDetailContent() {
                   <span className="text-xs font-bold text-error">{discount}% OFF</span>
                 </>
               )}
+            </div>
+
+            {inCart ? (
+              <Link href="/lab-tests/cart"
+                className="w-full py-3 border border-primary text-primary text-sm font-bold rounded-2xl hover:bg-primary/5 transition-colors flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>shopping_cart_checkout</span>
+                In cart — View cart
+              </Link>
+            ) : (
+              <button onClick={handleAddToCart}
+                className="w-full py-3 border border-primary text-primary text-sm font-bold rounded-2xl hover:bg-primary/5 transition-colors flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add_shopping_cart</span>
+                Add to cart
+              </button>
+            )}
+
+            <div className="relative flex items-center gap-2">
+              <div className="flex-1 h-px bg-outline-variant" />
+              <span className="text-[11px] text-on-surface-variant">or book just this test</span>
+              <div className="flex-1 h-px bg-outline-variant" />
             </div>
 
             {user ? (
@@ -213,6 +274,29 @@ function LabTestDetailContent() {
                   <label className="text-xs font-medium text-on-surface-variant">Notes (optional)</label>
                   <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
                     className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface resize-none focus:outline-none focus:border-secondary transition" />
+                </div>
+                <div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={forSomeoneElse} onChange={(e) => setForSomeoneElse(e.target.checked)} className="accent-primary" />
+                    <span className="text-xs font-medium text-on-surface-variant">Booking for someone else</span>
+                  </label>
+                  {forSomeoneElse && (
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <input value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="Full name"
+                        className="col-span-2 px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
+                      <input value={patientPhone} onChange={(e) => setPatientPhone(e.target.value)} placeholder="Phone (optional)"
+                        className="px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
+                      <input type="number" min={0} value={patientAge} onChange={(e) => setPatientAge(e.target.value)} placeholder="Age (optional)"
+                        className="px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
+                      <select value={patientGender} onChange={(e) => setPatientGender(e.target.value)}
+                        className="col-span-2 px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
+                        <option value="">Gender (optional)</option>
+                        <option value="MALE">Male</option>
+                        <option value="FEMALE">Female</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-on-surface-variant">Payment Method</label>

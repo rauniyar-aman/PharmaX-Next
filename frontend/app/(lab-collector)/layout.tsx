@@ -14,6 +14,7 @@ import { playNotificationChime, installAudioUnlockOnFirstInteraction } from '@/l
 const NAV_ITEMS = [
   { label: 'Home',    href: '/lab-collector',         icon: 'home',    exact: true },
   { label: 'Active',  href: '/lab-collector/active',  icon: 'science', exact: false },
+  { label: 'History', href: '/lab-collector/history', icon: 'history', exact: false },
   { label: 'Finance', href: '/lab-collector/finance', icon: 'account_balance_wallet', exact: false },
 ]
 

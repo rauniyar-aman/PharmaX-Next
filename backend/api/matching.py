@@ -365,15 +365,16 @@ FULFILLMENT_PREP_SEQUENCE = ['ACCEPTED', 'PREPARED', 'PACKED', 'AWAITING_DELIVER
 
 
 def _fulfillment_prescription_ready(fulfillment):
-    """False if this fulfillment's slice of the order includes an Rx item whose prescription
-    isn't yet admin-VERIFIED. Gates both pharmacy_advance_fulfillment() (a pharmacy can't start
-    actually preparing it) and every rider-dispatch trigger below (a rider shouldn't be asked to
-    go fetch medicine that isn't legally dispensable yet) — riders are normally broadcast the
-    moment payment clears, well before the pharmacy finishes prepping, so without this check an
-    unverified Rx order's rider request would go out regardless of pharmacy_advance_fulfillment's
-    own gate."""
-    return not any(
-        item.medicine.type == 'Rx' and (not item.prescription or item.prescription.status != 'VERIFIED')
+    """False if this fulfillment's slice of the order includes an Rx item that isn't cleared yet —
+    i.e. whose prescription is neither admin-VERIFIED globally nor verified by this pharmacy for its
+    own slice (see OrderItem.is_rx_cleared / pharmacy_review_prescription). Gates both
+    pharmacy_advance_fulfillment() (a pharmacy can't start actually preparing it) and every
+    rider-dispatch trigger below (a rider shouldn't be asked to go fetch medicine that isn't legally
+    dispensable yet) — riders are normally broadcast the moment payment clears, well before the
+    pharmacy finishes prepping, so without this check an unverified Rx order's rider request would
+    go out regardless of pharmacy_advance_fulfillment's own gate."""
+    return all(
+        item.is_rx_cleared
         for item in fulfillment.order_items.select_related('medicine', 'prescription')
     )
 
@@ -431,6 +432,62 @@ def pharmacy_advance_fulfillment(pharmacy, fulfillment):
             link=f'/orders/{fulfillment.order_id}',
         )
 
+    return True, None
+
+
+def pharmacy_review_prescription(pharmacy, fulfillment, prescription_id, action, reviewer, reason=''):
+    """A pharmacy verifies or rejects a prescription for ITS OWN slice of an order — every item in
+    THIS fulfillment that references the given prescription — so it can start preparing without
+    waiting on an admin. Per-pharmacy by construction (each OrderItem belongs to exactly one
+    fulfillment) and never touches the global Prescription.status, so a split order where two
+    pharmacies share one uploaded prescription gets an independent decision from each; the admin's
+    own global verify (AdminPrescriptionDetailView) still works and clears every pharmacy at once.
+    A VERIFIED decision unblocks pharmacy_advance_fulfillment() and rider dispatch for this leg
+    exactly as an admin verify would."""
+    if fulfillment.pharmacy_id != pharmacy.id:
+        return False, 'This order does not belong to your pharmacy.'
+    if action not in ('VERIFIED', 'REJECTED'):
+        return False, 'Action must be VERIFIED or REJECTED.'
+    items = list(
+        fulfillment.order_items.filter(prescription_id=prescription_id).select_related('medicine', 'prescription')
+    )
+    rx_items = [i for i in items if i.medicine.type == 'Rx']
+    if not rx_items:
+        return False, 'That prescription is not attached to a prescription medicine on this order.'
+
+    now = timezone.now()
+    for i in rx_items:
+        i.pharmacy_rx_status = action
+        i.pharmacy_rx_reviewed_by = reviewer
+        i.pharmacy_rx_reviewed_at = now
+        i.pharmacy_rx_reject_reason = reason if action == 'REJECTED' else ''
+    OrderItem.objects.bulk_update(
+        rx_items, ['pharmacy_rx_status', 'pharmacy_rx_reviewed_by', 'pharmacy_rx_reviewed_at', 'pharmacy_rx_reject_reason'],
+    )
+
+    order = fulfillment.order
+    short_id = str(order.id)[:8].upper()
+    if action == 'VERIFIED':
+        # Rider dispatch for this leg is normally fired at PLACED, but is skipped there while the Rx
+        # isn't cleared (see _fulfillment_prescription_ready) — fire it now if this verify cleared
+        # the leg, mirroring the admin global-verify path in _notify_prescription_order_outcome.
+        fulfillment.refresh_from_db()
+        if order.status == 'PLACED' and fulfillment.delivery_broadcast_at is None and _fulfillment_prescription_ready(fulfillment):
+            broadcast_delivery(fulfillment)
+        # Only reassure the customer once EVERY Rx item on the order is cleared — a split order
+        # shouldn't claim it's ready to prepare while another pharmacy's slice is still pending.
+        if all(item.is_rx_cleared for item in order.items.select_related('medicine', 'prescription').all()):
+            notify_user(
+                user=order.user, type='ORDER', title='Prescription Verified',
+                message=f'Your prescription was verified — order #{short_id} can now be prepared.',
+                link=f'/orders/{order.id}',
+            )
+    else:
+        notify_user(
+            user=order.user, type='ORDER', title='Prescription Rejected',
+            message=f'A prescription for order #{short_id} was rejected. Please upload a new one so it can be prepared.',
+            link=f'/orders/{order.id}',
+        )
     return True, None
 
 

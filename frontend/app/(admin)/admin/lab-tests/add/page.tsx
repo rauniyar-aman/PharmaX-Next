@@ -4,25 +4,40 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import type { LabTestCategory } from '@/types'
+import type { LabTest, LabTestCategory } from '@/types'
 
 const EMPTY = {
   name: '', category_id: '', sample_type: 'BLOOD', fasting_required: false,
   reporting_time: '', is_package: false, price: '', original_price: '',
   parameters_included: '', description: '', is_active: true,
+  included_test_ids: [] as string[],
 }
 
 export default function AddLabTestPage() {
   const router = useRouter()
   const [form, setForm] = useState(EMPTY)
   const [categories, setCategories] = useState<LabTestCategory[]>([])
+  const [candidates, setCandidates] = useState<LabTest[]>([])
+  const [memberSearch, setMemberSearch] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     api.get('/lab-tests/categories/').then((r) => setCategories(r.data.data.categories || [])).catch(() => {})
+    // Only individual (non-package) active tests can be members — no nested packages. Capped at the
+    // list endpoint's max page size; the search below filters this pool client-side.
+    api.get('/admin/lab-tests/', { params: { limit: 50 } })
+      .then((r) => setCandidates((r.data.data.labTests || []).filter((t: LabTest) => !t.is_package)))
+      .catch(() => {})
   }, [])
 
   const set = (k: string, v: any) => setForm((p) => ({ ...p, [k]: v }))
+
+  const toggleMember = (id: string) => setForm((p) => ({
+    ...p,
+    included_test_ids: p.included_test_ids.includes(id) ? p.included_test_ids.filter((x) => x !== id) : [...p.included_test_ids, id],
+  }))
+  const filteredCandidates = candidates.filter((t) => t.name.toLowerCase().includes(memberSearch.toLowerCase()))
+  const selectedMembers = form.included_test_ids.map((id) => candidates.find((t) => t.id === id)).filter(Boolean) as LabTest[]
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -32,6 +47,9 @@ export default function AddLabTestPage() {
         ...form,
         price: Number(form.price),
         original_price: form.original_price ? Number(form.original_price) : Number(form.price),
+        // Members only mean anything for a package; clear them otherwise so toggling the box off can't
+        // leave orphaned membership behind.
+        included_test_ids: form.is_package ? form.included_test_ids : [],
       })
       toast.success('Lab test added!')
       router.push('/admin/lab-tests')
@@ -101,6 +119,40 @@ export default function AddLabTestPage() {
               Active
             </label>
           </div>
+
+          {form.is_package && (
+            <div className="border-t border-outline-variant pt-4">
+              <label className="text-xs font-medium text-on-surface-variant">Tests Included in This Package</label>
+              <p className="text-[11px] text-on-surface-variant mt-0.5 mb-2">
+                Pick the individual tests this package covers. Booking the package still creates one booking at the package price — these are shown to customers for reference.
+              </p>
+              {selectedMembers.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {selectedMembers.map((t) => (
+                    <span key={t.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium">
+                      {t.name}
+                      <button type="button" onClick={() => toggleMember(t.id)} aria-label={`Remove ${t.name}`} className="hover:text-error">
+                        <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>close</span>
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <input type="text" value={memberSearch} onChange={(e) => setMemberSearch(e.target.value)} placeholder="Search tests to add..."
+                className="w-full px-3 py-2 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary transition" />
+              <div className="mt-2 max-h-52 overflow-y-auto border border-outline-variant rounded-xl divide-y divide-outline-variant">
+                {filteredCandidates.length === 0 ? (
+                  <p className="text-xs text-on-surface-variant p-3">No individual tests found. Create some non-package tests first.</p>
+                ) : filteredCandidates.map((t) => (
+                  <label key={t.id} className="flex items-center gap-2 p-2.5 cursor-pointer hover:bg-surface-container transition-colors">
+                    <input type="checkbox" checked={form.included_test_ids.includes(t.id)} onChange={() => toggleMember(t.id)} className="accent-primary" />
+                    <span className="text-sm text-on-surface flex-1">{t.name}</span>
+                    <span className="text-xs text-on-surface-variant">{t.category?.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">

@@ -1,4 +1,5 @@
 import os
+import mimetypes
 import random
 import string
 import time
@@ -87,41 +88,50 @@ def _use_resend_http():
     return settings.EMAIL_HOST == 'smtp.resend.com' and bool(settings.EMAIL_HOST_PASSWORD)
 
 
-def _send_via_resend_http(to_email, subject, html_body, text_body):
+def _send_via_resend_http(to_email, subject, html_body, text_body, attachments=None):
     import requests
+    import base64
+    payload = {
+        'from': settings.EMAIL_FROM,
+        'to': [to_email],
+        'subject': subject,
+        'html': html_body,
+        'text': text_body,
+    }
+    if attachments:
+        payload['attachments'] = [
+            {'filename': fn, 'content': base64.b64encode(content).decode()}
+            for fn, content, _mime in attachments
+        ]
     resp = requests.post(
         'https://api.resend.com/emails',
         headers={
             'Authorization': f'Bearer {settings.EMAIL_HOST_PASSWORD}',
             'Content-Type': 'application/json',
         },
-        json={
-            'from': settings.EMAIL_FROM,
-            'to': [to_email],
-            'subject': subject,
-            'html': html_body,
-            'text': text_body,
-        },
+        json=payload,
         timeout=15,
     )
     if resp.status_code >= 400:
         raise RuntimeError(f'Resend API {resp.status_code}: {resp.text}')
 
 
-def _send_via_smtp(to_email, subject, html_body, text_body):
+def _send_via_smtp(to_email, subject, html_body, text_body, attachments=None):
     msg = EmailMultiAlternatives(
         subject=subject, body=text_body, from_email=settings.EMAIL_FROM, to=[to_email],
     )
     msg.attach_alternative(html_body, 'text/html')
+    for fn, content, mime in (attachments or []):
+        msg.attach(fn, content, mime)
     msg.send(fail_silently=False)
 
 
-def _send_email(to_email, subject, html_body, text_body, retries=2):
+def _send_email(to_email, subject, html_body, text_body, retries=2, attachments=None):
     send = _send_via_resend_http if _use_resend_http() else _send_via_smtp
     last_error = None
     for attempt in range(1, retries + 1):
         try:
-            send(to_email, subject, html_body, text_body)
+            send(to_email, subject, html_body, text_body, attachments)
             return
         except Exception as e:
             last_error = e
@@ -132,11 +142,11 @@ def _send_email(to_email, subject, html_body, text_body, retries=2):
     raise last_error
 
 
-def _send_email_async(to_email, subject, html_body, text_body):
+def _send_email_async(to_email, subject, html_body, text_body, attachments=None):
     def _run():
         from django.db import connections
         try:
-            _send_email(to_email, subject, html_body, text_body)
+            _send_email(to_email, subject, html_body, text_body, attachments=attachments)
         except Exception:
             pass  # already logged with traceback inside _send_email
         finally:
@@ -218,6 +228,87 @@ def send_collector_welcome_email(user, raw_password):
       For your security, please change this password after your first sign-in.'''
     html_body = _render_email_html(store_name, 'Your collector account is ready', body_html, cta_text='Sign In', cta_url=signin_url)
     _send_email_async(user.email, subject, html_body, text_body)
+
+
+def send_pharmacy_welcome_email(user, raw_password, pharmacy_name=None):
+    """One-time onboarding email for a newly created pharmacy login — both the admin-created
+    pharmacy owner (AdminPharmacyListView.post) and an owner-added team member
+    (PharmacyTeamListView.post). Same split as send_collector_welcome_email: the admin/owner-set
+    password is delivered ONLY here by email, never in the persistent in-app Notification row
+    (which lives in the DB and shows on every future login). Fire-and-forget via _send_email_async."""
+    store_name = get_store_name()
+    where = pharmacy_name or store_name
+    subject = f'Your {store_name} pharmacy account is ready'
+    signin_url = f'{FRONTEND_URL}/signin'
+    text_body = (
+        f'Hi {user.full_name},\n\n'
+        f'A pharmacy account for {where} has been created for you on {store_name}. You can sign in with:\n\n'
+        f'Email: {user.email}\n'
+        f'Temporary password: {raw_password}\n\n'
+        f'Please change your password after signing in. Sign in here: {signin_url}\n\n'
+        f'— {store_name} Team'
+    )
+    body_html = f'''
+      Hi {user.full_name},<br><br>
+      A pharmacy account for <strong>{where}</strong> has been created for you on <strong>{store_name}</strong>.
+      Use the temporary credentials below to sign in, then change your password from your account settings.
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;">
+        <tr>
+          <td style="background:#f2f4f3; border-radius:12px; padding:18px; font-size:14px; color:#1a1c1a;">
+            <strong>Email:</strong> {user.email}<br>
+            <strong>Temporary password:</strong>
+            <span style="font-family:monospace; letter-spacing:0.5px;">{raw_password}</span>
+          </td>
+        </tr>
+      </table>
+      For your security, please change this password after your first sign-in.'''
+    html_body = _render_email_html(store_name, 'Your pharmacy account is ready', body_html, cta_text='Sign In', cta_url=signin_url)
+    _send_email_async(user.email, subject, html_body, text_body)
+
+
+def send_lab_report_ready_email(booking):
+    """Report Ready email for a lab booking — the actual report file is ATTACHED, so the report
+    arrives with the notification rather than as a bare link. Respects the same customer
+    LAB_BOOKING_UPDATE email opt-out the generic notify path applies. Reads the report bytes here
+    (reports are small, and uploading one is an admin/collector action, not a customer hot path).
+    Fire-and-forget via _send_email_async, like every other outbound email here."""
+    user = booking.user
+    if not _should_email_notification(user, 'LAB_BOOKING_UPDATE'):
+        return
+    store_name = get_store_name()
+    test_name = booking.lab_test.name
+    view_url = f'{FRONTEND_URL}/lab-test-bookings'
+
+    attachments = None
+    if booking.report_file:
+        try:
+            booking.report_file.open('rb')
+            content = booking.report_file.read()
+        finally:
+            booking.report_file.close()
+        base = os.path.basename(booking.report_file.name) or 'report'
+        ext = os.path.splitext(base)[1]
+        filename = f'{test_name} Report{ext}' if ext else base
+        mime = mimetypes.guess_type(base)[0] or 'application/octet-stream'
+        attachments = [(filename, content, mime)]
+
+    has_file = bool(attachments)
+    subject = f'Your {test_name} report is ready'
+    text_body = (
+        f'Hi {user.full_name},\n\n'
+        f'Your {test_name} report is ready'
+        + (' — it is attached to this email.' if has_file else '.') + '\n\n'
+        f'You can also view or download it anytime here: {view_url}\n\n'
+        f'— {store_name} Team'
+    )
+    body_html = (
+        f'Hi {user.full_name},<br><br>'
+        f'Your <strong>{test_name}</strong> report is ready'
+        + (' — you’ll find it attached to this email.' if has_file else '.')
+        + '<br><br>You can also view or download it anytime from your bookings.'
+    )
+    html_body = _render_email_html(store_name, 'Your lab report is ready', body_html, cta_text='View Report', cta_url=view_url)
+    _send_email_async(user.email, subject, html_body, text_body, attachments=attachments)
 
 
 def _admin_wants_notification(user, notif_type):

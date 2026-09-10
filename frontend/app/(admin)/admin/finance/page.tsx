@@ -108,7 +108,13 @@ export default function AdminFinancePage() {
 
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <h2 className="text-sm font-bold text-on-surface">Revenue by Channel</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-bold text-on-surface">Revenue by Channel</h2>
+            <Link href="/admin/finance/daily" className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
+              <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>calendar_month</span>
+              Day-wise
+            </Link>
+          </div>
           {channels && (
             <span className="text-xs text-on-surface-variant">
               Net after costs, all channels:{' '}
@@ -143,6 +149,10 @@ export default function AdminFinancePage() {
 
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <Link href="/admin/finance/daily" className="flex items-center gap-3 px-4 py-3 bg-surface rounded-xl border border-outline-variant hover:border-primary/40 transition-colors">
+          <span className="material-symbols-outlined text-primary" style={{ fontSize: '20px' }}>calendar_month</span>
+          <span className="text-sm font-semibold text-on-surface">Day-wise Finance</span>
+        </Link>
         <Link href="/admin/finance/pharmacy-payouts" className="flex items-center gap-3 px-4 py-3 bg-surface rounded-xl border border-outline-variant hover:border-primary/40 transition-colors">
           <span className="material-symbols-outlined text-primary" style={{ fontSize: '20px' }}>storefront</span>
           <span className="text-sm font-semibold text-on-surface">Pharmacy Payouts</span>
