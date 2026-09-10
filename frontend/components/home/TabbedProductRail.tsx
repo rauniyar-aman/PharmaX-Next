@@ -5,6 +5,7 @@ import api from '@/lib/api'
 import { useLocationStore } from '@/store/location'
 import MedicineCard, { MedicineCardSkeleton } from '@/components/medicine/MedicineCard'
 import CountdownBadge from '@/components/home/CountdownBadge'
+import CarouselRow from '@/components/common/CarouselRow'
 import type { Medicine } from '@/types'
 
 // Same fetch shape ProductRail's four call sites on the homepage used to build independently
@@ -77,11 +78,12 @@ export default function TabbedProductRail({ wishlistIds, onToggleWishlist, onAdd
 
   return (
     <section>
-      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+      <div className="flex items-center mb-3 gap-3 flex-wrap">
         <div className="flex items-center gap-1 bg-surface-container-low rounded-xl p-1 overflow-x-auto scrollbar-hide">
           {TABS.map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${tab === t.key ? 'bg-surface text-primary shadow-sm' : 'text-on-surface-variant hover:text-on-surface'}`}>
+              aria-pressed={tab === t.key}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${tab === t.key ? 'bg-surface text-primary shadow-sm' : 'text-on-surface-variant hover:bg-surface/60 hover:text-on-surface'}`}>
               {t.label}
             </button>
           ))}
@@ -91,7 +93,7 @@ export default function TabbedProductRail({ wishlistIds, onToggleWishlist, onAdd
           <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
         </Link>
       </div>
-      <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
+      <CarouselRow className="gap-4 pb-1 -mx-1 px-1" ariaLabel="products">
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="w-44 sm:w-52 flex-shrink-0"><MedicineCardSkeleton /></div>
@@ -110,7 +112,7 @@ export default function TabbedProductRail({ wishlistIds, onToggleWishlist, onAdd
             />
           </div>
         ))}
-      </div>
+      </CarouselRow>
     </section>
   )
 }

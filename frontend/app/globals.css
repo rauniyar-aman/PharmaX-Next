@@ -48,6 +48,9 @@
   --c-warning-container:          255 243 224;
   --c-info:                       0 59 122;
   --c-info-container:             224 236 250;
+
+  /* Rating gold — the single defined star color (was ad-hoc text-amber-400) */
+  --c-rating:                     251 191 36;
 }
 
 /* ─── Dark palette — navy line work lifts to light blue; green accents unchanged (per brand) ─── */
@@ -93,6 +96,9 @@
   --c-warning-container:          58 26 0;
   --c-info:                       133 187 232;
   --c-info-container:             0 62 122;
+
+  /* Gold reads well on dark too — stars stay the same hue in both themes */
+  --c-rating:                     251 191 36;
 }
 
 /* ─── Tailwind 4 color tokens ─── */
@@ -149,6 +155,7 @@
   --color-warning-container:          rgb(var(--c-warning-container));
   --color-info:                       rgb(var(--c-info));
   --color-info-container:             rgb(var(--c-info-container));
+  --color-rating:                     rgb(var(--c-rating));
 
   --shadow-card:    0px 4px 6px -1px rgba(0,0,0,0.05), 0px 2px 4px -1px rgba(0,0,0,0.03);
   --shadow-card-md: 0px 10px 15px -3px rgba(0,0,0,0.08), 0px 4px 6px -2px rgba(0,0,0,0.04);
@@ -175,6 +182,21 @@
 
   input, textarea, select, button { font-family: inherit; }
   img { max-width: 100%; display: block; }
+}
+
+/* ─── Button primitives — one shared shape, three variants × two sizes.
+   Replaces the per-call-site button classes that had drifted into ~7 looks.
+   Compose: class="btn btn-sm btn-primary".  Adopt incrementally elsewhere. ─── */
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg font-medium
+           transition-colors disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+  .btn-sm { @apply px-3 py-1.5 text-xs; }
+  .btn-md { @apply px-4 py-2 text-sm; }
+  .btn-primary { @apply bg-primary text-on-primary hover:opacity-90; }
+  .btn-outline { @apply border border-outline-variant text-on-surface hover:border-primary hover:text-primary; }
+  .btn-ghost   { @apply text-on-surface-variant hover:bg-surface-container; }
 }
 
 .material-symbols-outlined {

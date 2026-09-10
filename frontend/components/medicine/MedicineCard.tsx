@@ -1,4 +1,5 @@
 'use client'
+import { useState } from 'react'
 import Link from 'next/link'
 import { resolveImg } from '@/lib/resolveImg'
 import DeliveryTierBadge from '@/components/medicine/DeliveryTierBadge'
@@ -30,30 +31,35 @@ interface Props {
 
 export default function MedicineCard({ medicine: med, inWishlist, cartLoading, onToggleWishlist, onAddToCart, badge, className = '' }: Props) {
   const isRx = med.type === 'Rx'
+  // Fall back to the placeholder if there's no image *or* the image URL fails to load, so a
+  // broken/missing source degrades to the clean icon instead of a cropped "sliver" of a dead image.
+  const [imgError, setImgError] = useState(false)
+  const imgSrc = imgError ? null : resolveImg(med.image_url)
   return (
     <div className={`bg-surface rounded-xl border border-outline-variant overflow-hidden hover:-translate-y-0.5 transition-all duration-200 flex flex-col group ${className}`}>
       <Link href={`/medicines/${med.id}`} className="relative block overflow-hidden">
-        {med.image_url ? (
-          <img src={resolveImg(med.image_url) || undefined} alt={med.name} className="h-24 w-full object-cover group-hover:scale-105 transition-transform duration-300" />
+        {imgSrc ? (
+          <img src={imgSrc} alt={med.name} onError={() => setImgError(true)} className="h-24 w-full object-cover group-hover:scale-105 transition-transform duration-300" />
         ) : (
-          <div className="h-24 w-full bg-surface-container-low flex flex-col items-center justify-center gap-1 text-on-surface-variant">
-            <span className="material-symbols-outlined text-3xl opacity-30">medication</span>
+          <div className="h-24 w-full bg-primary/5 flex items-center justify-center text-primary/30">
+            <span className="material-symbols-outlined text-4xl">medication</span>
           </div>
         )}
-        <div className="absolute top-1.5 left-1.5 flex flex-col items-start gap-1">
-          <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${isRx ? 'bg-primary text-on-primary' : 'bg-secondary text-on-secondary'}`}>
-            {med.type}
-          </span>
-          {med.promo_badge && (
-            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-500 text-white">
+        {/* One overlaid badge, not three: Rx status wins (safety), then promo, then delivery tier */}
+        <div className="absolute top-1.5 left-1.5">
+          {isRx ? (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-primary text-on-primary">Rx</span>
+          ) : med.promo_badge ? (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-white">
               {med.promo_badge}
             </span>
+          ) : (
+            <DeliveryTierBadge tier={med.delivery_tier} className="px-1.5 py-0.5 text-[10px]" />
           )}
-          <DeliveryTierBadge tier={med.delivery_tier} className="px-1.5 py-0.5 text-[9px]" />
         </div>
         <button onClick={(e) => onToggleWishlist(med.id, e)}
           className="absolute top-1.5 right-1.5 w-6 h-6 bg-surface rounded-full flex items-center justify-center shadow-sm hover:scale-110 transition-transform">
-          <span className={`material-symbols-outlined ${inWishlist ? 'ms-filled text-error' : 'text-on-surface-variant'}`} style={{ fontSize: '13px' }}>favorite</span>
+          <span className={`material-symbols-outlined ${inWishlist ? 'ms-filled text-error' : 'text-on-surface-variant'}`} style={{ fontSize: '12px' }}>favorite</span>
         </button>
         {badge && (
           <div className="absolute bottom-0 left-0 right-0">{badge}</div>
@@ -64,14 +70,14 @@ export default function MedicineCard({ medicine: med, inWishlist, cartLoading, o
           </div>
         )}
       </Link>
-      <div className="p-2.5 flex flex-col flex-1">
-        <p className="text-[9px] font-semibold text-on-surface-variant uppercase tracking-wide truncate">{(med as any).category_name || (med.category as any)?.name}</p>
+      <div className="p-2.5 pb-3 flex flex-col flex-1">
+        <p title={(med as any).category_name || (med.category as any)?.name}
+          className="text-[10px] font-semibold text-on-surface-variant tracking-wide truncate">{(med as any).category_name || (med.category as any)?.name}</p>
         <Link href={`/medicines/${med.id}`} className="text-xs font-semibold text-on-surface hover:text-primary transition-colors leading-snug line-clamp-2 min-h-[2rem]">{med.name}</Link>
-        <div className="flex items-center gap-0.5 mt-1">
-          {[...Array(5)].map((_, i) => (
-            <span key={i} className={`material-symbols-outlined ${i < Math.floor(Number(med.rating)) ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '11px' }}>star</span>
-          ))}
-          <span className="text-[10px] text-on-surface-variant ml-1">({med.total_reviews})</span>
+        <div className="flex items-center gap-1 mt-1">
+          <span className="material-symbols-outlined ms-filled text-rating" style={{ fontSize: '12px' }}>star</span>
+          <span className="text-xs font-medium text-on-surface">{Number(med.rating).toFixed(1)}</span>
+          <span className="text-[10px] text-on-surface-variant">({med.total_reviews})</span>
         </div>
         <div className="flex items-baseline gap-1.5 mt-1">
           <span className="text-sm font-bold text-on-surface">NPR {Number(med.price).toFixed(0)}</span>
@@ -79,19 +85,16 @@ export default function MedicineCard({ medicine: med, inWishlist, cartLoading, o
             <span className="text-[10px] text-on-surface-variant line-through">NPR {Number(med.original_price).toFixed(0)}</span>
           )}
         </div>
-        <div className="flex gap-1.5 mt-2 pt-2 border-t border-outline-variant">
-          <Link href={`/medicines/${med.id}`}
-            className="flex-1 py-1.5 border border-outline-variant rounded-lg text-[11px] font-medium text-on-surface text-center hover:border-primary hover:text-primary transition-colors">
-            Details
-          </Link>
-          <button disabled={!med.in_stock || cartLoading}
-            onClick={(e) => onAddToCart(med.id, e)}
-            className={`px-2 py-1.5 rounded-lg transition-colors flex items-center justify-center ${med.in_stock ? 'bg-primary text-on-primary hover:opacity-90' : 'bg-surface-container text-on-surface-variant cursor-not-allowed'} disabled:opacity-60`}>
-            <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>
-              {cartLoading ? 'hourglass_empty' : 'add_shopping_cart'}
-            </span>
-          </button>
-        </div>
+        {/* Whole card image + title already link to the detail page, so the footer is a single
+            clear action instead of a Details link competing with the cart button. */}
+        <button disabled={!med.in_stock || cartLoading}
+          onClick={(e) => onAddToCart(med.id, e)}
+          className={`btn btn-sm w-full mt-2.5 ${med.in_stock ? 'btn-primary' : 'bg-surface-container text-on-surface-variant cursor-not-allowed'}`}>
+          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+            {cartLoading ? 'hourglass_empty' : 'add_shopping_cart'}
+          </span>
+          {med.in_stock ? 'Add to cart' : 'Unavailable'}
+        </button>
       </div>
     </div>
   )

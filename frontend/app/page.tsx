@@ -96,6 +96,7 @@ export default function HomePage() {
       <PublicHeader />
 
       <main className="w-full px-4 sm:px-6 py-6 space-y-10">
+        <h1 className="sr-only">Swasthaya — Healthcare, Simplified.</h1>
         <PromoSlider slides={heroSlides} />
 
         <QuickLinksGrid />

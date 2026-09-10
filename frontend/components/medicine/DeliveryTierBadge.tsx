@@ -13,7 +13,7 @@ export default function DeliveryTierBadge({ tier, className = '' }: { tier?: Med
         express ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white'
       } ${className}`}
     >
-      <span className="material-symbols-outlined ms-filled" style={{ fontSize: '11px' }}>
+      <span className="material-symbols-outlined ms-filled" style={{ fontSize: '12px' }}>
         {express ? 'bolt' : 'schedule'}
       </span>
       {express ? 'Express' : 'Same-day'}

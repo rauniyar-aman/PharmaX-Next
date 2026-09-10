@@ -25,7 +25,7 @@ export default function Testimonials() {
           <div key={idx} className="bg-surface rounded-2xl border border-outline-variant p-5 flex flex-col gap-3">
             <div className="flex items-center gap-1">
               {[...Array(5)].map((_, i) => (
-                <span key={i} className={`material-symbols-outlined ${i < t.rating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '15px' }}>star</span>
+                <span key={i} className={`material-symbols-outlined ${i < t.rating ? 'ms-filled text-rating' : 'text-outline-variant'}`} style={{ fontSize: '16px' }}>star</span>
               ))}
             </div>
             <p className="text-sm text-on-surface-variant leading-relaxed flex-1">&ldquo;{t.comment}&rdquo;</p>

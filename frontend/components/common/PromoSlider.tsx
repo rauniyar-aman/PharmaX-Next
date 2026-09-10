@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { resolveImg } from '@/lib/resolveImg'
+import CarouselRow from '@/components/common/CarouselRow'
 
 export interface Slide {
   title: string
@@ -21,7 +22,7 @@ export default function PromoSlider({ slides }: Props) {
 
   return (
     <div className="max-w-[1120px] mx-auto">
-      <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
+      <CarouselRow className="gap-4 pb-1 -mx-1 px-1" ariaLabel="promotions">
         {slides.map((slide, i) => {
           const image = resolveImg(slide.image_url)
           return (
@@ -38,7 +39,7 @@ export default function PromoSlider({ slides }: Props) {
                 <p className="text-xs sm:text-sm text-white/85 mt-1 leading-relaxed line-clamp-2">{slide.subtitle}</p>
                 <span className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 bg-white text-gray-900 text-xs font-bold rounded-xl">
                   {slide.cta}
-                  <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>arrow_forward</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
                 </span>
               </div>
               {!image && (
@@ -49,7 +50,7 @@ export default function PromoSlider({ slides }: Props) {
             </Link>
           )
         })}
-      </div>
+      </CarouselRow>
     </div>
   )
 }

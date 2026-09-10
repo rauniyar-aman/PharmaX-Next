@@ -17,7 +17,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       <button onClick={toggleDark}
         className="absolute top-5 right-6 p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"
         title={dark ? 'Switch to light mode' : 'Switch to dark mode'}>
-        <span className="material-symbols-outlined ms-filled" style={{ fontSize: '22px' }}>
+        <span className="material-symbols-outlined ms-filled" style={{ fontSize: '20px' }}>
           {dark ? 'light_mode' : 'dark_mode'}
         </span>
       </button>

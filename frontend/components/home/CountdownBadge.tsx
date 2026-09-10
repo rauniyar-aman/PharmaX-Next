@@ -23,8 +23,8 @@ export default function CountdownBadge() {
   if (!label) return null
 
   return (
-    <div className="bg-error/90 text-on-error text-[11px] font-bold px-2.5 py-1.5 flex items-center justify-center gap-1">
-      <span className="material-symbols-outlined ms-filled" style={{ fontSize: '13px' }}>schedule</span>
+    <div className="bg-error/90 text-on-error text-xs font-bold px-2.5 py-1.5 flex items-center justify-center gap-1">
+      <span className="material-symbols-outlined ms-filled" style={{ fontSize: '12px' }}>schedule</span>
       Ends in {label}
     </div>
   )
