@@ -10,7 +10,13 @@ const outfit = Outfit({ subsets: ['latin'], weight: ['500', '600', '700', '800']
 export const metadata: Metadata = {
   title: { default: 'Swasthaya', template: '%s | Swasthaya' },
   description: 'Healthcare, Simplified.',
-  icons: { icon: '/swasthaya-logo_cut.jpg' },
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon-32.png', type: 'image/png', sizes: '32x32' },
+    ],
+    apple: '/favicon-180.png',
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
