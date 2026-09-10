@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { useAuthStore } from '@/store/auth'
 import type { Address } from '@/types'
 import type { PickedLocation } from '@/components/map/MapPicker'
 
@@ -18,6 +19,7 @@ const MapPicker = dynamic(() => import('@/components/map/MapPicker'), {
 
 export default function CheckoutShippingPage() {
   const router = useRouter()
+  const user = useAuthStore((s) => s.user)
   const [addresses, setAddresses] = useState<Address[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
@@ -28,6 +30,12 @@ export default function CheckoutShippingPage() {
   const [form, setForm] = useState({ full_name: '', phone: '', address_line1: '', address_line2: '', city: '', state: '', is_default: false })
   const [notes, setNotes] = useState('')
   const [detectingLocation, setDetectingLocation] = useState(false)
+
+  // Autofill the recipient phone from the signed-in user's account (editable) when the add form is
+  // opened, so the customer needn't re-type their own mobile.
+  const prefillOwnPhone = () =>
+    setForm((p) => ({ ...p, phone: p.phone || ((user as any)?.phone || '').replace(/\D/g, '').slice(-10) }))
+  const openAddressForm = () => { prefillOwnPhone(); setShowForm(true) }
 
   const handleMapPick = (loc: PickedLocation) => {
     setCoords({ lat: loc.lat, lng: loc.lng })
@@ -41,6 +49,7 @@ export default function CheckoutShippingPage() {
 
   const handleUseCurrentLocation = () => {
     if (!navigator.geolocation) { toast.error('Geolocation is not supported by your browser.'); return }
+    prefillOwnPhone()
     setShowForm(true)
     setShowMap(true)
     setDetectingLocation(true)
@@ -157,7 +166,7 @@ export default function CheckoutShippingPage() {
 
         {!showForm ? (
           <div className="flex flex-col sm:flex-row gap-3">
-            <button onClick={() => setShowForm(true)}
+            <button onClick={openAddressForm}
               className="flex-1 py-3 border-2 border-dashed border-outline-variant rounded-2xl text-sm font-medium text-on-surface-variant hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
               <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add_location_alt</span>
               Add New Address
