@@ -1,46 +1,19 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import type { DeliveryActiveFulfillment } from '@/types'
-
-type LocationStatus = 'idle' | 'requesting' | 'sharing' | 'denied' | 'unsupported'
 
 export default function DeliveryActivePage() {
   const [deliveries, setDeliveries] = useState<DeliveryActiveFulfillment[]>([])
   const [loading, setLoading] = useState(true)
   const [completingId, setCompletingId] = useState<string | null>(null)
-  const [locationStatus, setLocationStatus] = useState<LocationStatus>('idle')
-  const watchIdRef = useRef<number | null>(null)
 
   const load = () => {
     api.get('/delivery/active/').then((r) => setDeliveries(r.data.data.deliveries || [])).catch(() => toast.error('Failed to load active deliveries.')).finally(() => setLoading(false))
   }
 
   useEffect(() => { load() }, [])
-
-  // Share live location while there's an active delivery to track against. Ask clearly, and
-  // surface denial instead of failing silently — the customer relies on this to see the rider coming.
-  useEffect(() => {
-    if (deliveries.length === 0) return
-    if (!('geolocation' in navigator)) { setLocationStatus('unsupported'); return }
-
-    setLocationStatus('requesting')
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        setLocationStatus('sharing')
-        api.patch('/delivery/agent/location/', { lat: pos.coords.latitude, lng: pos.coords.longitude }).catch(() => {})
-      },
-      (err) => {
-        setLocationStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unsupported')
-      },
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 },
-    )
-
-    return () => {
-      if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current)
-    }
-  }, [deliveries.length])
 
   const complete = async (delivery: DeliveryActiveFulfillment) => {
     const isCod = delivery.payment_method === 'CASH_ON_DELIVERY'
@@ -57,25 +30,12 @@ export default function DeliveryActivePage() {
     }
   }
 
-  const LOCATION_BANNER: Record<LocationStatus, { text: string; color: string } | null> = {
-    idle: null,
-    requesting: { text: 'Requesting location permission...', color: 'bg-surface-container text-on-surface-variant' },
-    sharing: { text: 'Sharing your live location with the customer.', color: 'bg-emerald-50 text-emerald-700' },
-    denied: { text: 'Location permission denied — the customer won\'t see your live position. Enable location access for this site to share it.', color: 'bg-error/10 text-error' },
-    unsupported: { text: 'Live location isn\'t available on this device/browser.', color: 'bg-surface-container text-on-surface-variant' },
-  }
-  const banner = LOCATION_BANNER[locationStatus]
-
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-on-surface">Active Deliveries</h1>
         <p className="text-sm text-on-surface-variant mt-1">Your current pickups and drop-offs.</p>
       </div>
-
-      {banner && (
-        <div className={`rounded-xl px-4 py-2.5 text-xs font-medium ${banner.color}`}>{banner.text}</div>
-      )}
 
       {loading ? (
         <div className="space-y-3">{[...Array(2)].map((_, i) => <div key={i} className="h-56 bg-surface-container-low rounded-2xl animate-pulse" />)}</div>

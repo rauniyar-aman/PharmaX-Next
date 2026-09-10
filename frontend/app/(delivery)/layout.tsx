@@ -23,6 +23,20 @@ const ALERT_TITLE = '🔴 New Delivery — PharmaX'
 // Same set the standalone Requests page uses for its "Ready now" vs "Still preparing" badge.
 const READY_STATUSES = new Set(['AWAITING_DELIVERY'])
 
+type LocationStatus = 'idle' | 'requesting' | 'sharing' | 'denied' | 'unsupported'
+
+// A rider is only eligible for deliveries while sharing location (see _agent_eligible_for() on the
+// backend — a null lat/lng is rejected, and the available-requests poll uses the same gate). This
+// banner makes the location state — and the cost of denying it — explicit wherever the rider waits,
+// which is why capture lives here in the layout rather than only on the Active page.
+const LOCATION_BANNER: Record<LocationStatus, { text: string; color: string } | null> = {
+  idle: null,
+  requesting: { text: 'Requesting location permission…', color: 'bg-surface-container text-on-surface-variant' },
+  sharing: { text: "Sharing your location — you're discoverable for nearby deliveries.", color: 'bg-emerald-50 text-emerald-700' },
+  denied: { text: "Location permission denied — you won't receive delivery requests until you allow location access for this site.", color: 'bg-error/10 text-error' },
+  unsupported: { text: "Live location isn't available on this device/browser — you may not receive delivery requests.", color: 'bg-surface-container text-on-surface-variant' },
+}
+
 /** Large, centered, blocking-by-default alert — same pattern as the pharmacy app's
  * NewRequestModal. Shows every currently-pending delivery (not just the newest arrival) with
  * direct Accept/Decline, so the rider can clear their whole queue without hunting for the
@@ -186,6 +200,8 @@ export default function DeliveryLayout({ children }: { children: React.ReactNode
   const [showOptIn, setShowOptIn] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [respondingId, setRespondingId] = useState<string | null>(null)
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>('idle')
+  const watchIdRef = useRef<number | null>(null)
   const router = useRouter()
   const pathname = usePathname()
   const { user, logout } = useAuthStore()
@@ -196,6 +212,9 @@ export default function DeliveryLayout({ children }: { children: React.ReactNode
   const stopPolling = useDeliveryRequestsStore((s) => s.stopPolling)
   const removeRequest = useDeliveryRequestsStore((s) => s.removeRequest)
   const pendingCount = requests.length
+  // Verified + online is the rider-side half of eligibility (location is the other half, captured by
+  // the effect below). pendingVerification riders can't toggle online, so this is false for them.
+  const agentOnline = user?.role === 'DELIVERY_AGENT' && user?.delivery_agent_verified !== false && !!user?.delivery_agent_online
   const previousTitleRef = useRef<string | null>(null)
   const hasAutoOpenedRef = useRef(false)
 
@@ -258,6 +277,28 @@ export default function DeliveryLayout({ children }: { children: React.ReactNode
     startPolling()
     return () => stopPolling()
   }, [hydrated, user, startPolling, stopPolling])
+
+  // Share location the whole time the rider is online (on any delivery page), not only once they
+  // have an active delivery — otherwise a rider waiting on Requests has a null lat/lng and is
+  // filtered out of both the broadcast and the available-requests list, so they can never get a
+  // first job (which was the only thing that used to start location sharing). Stops on going offline.
+  useEffect(() => {
+    const clear = () => {
+      if (watchIdRef.current !== null) { navigator.geolocation.clearWatch(watchIdRef.current); watchIdRef.current = null }
+    }
+    if (!hydrated || !agentOnline) { clear(); setLocationStatus('idle'); return }
+    if (!('geolocation' in navigator)) { setLocationStatus('unsupported'); return }
+    setLocationStatus('requesting')
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        setLocationStatus('sharing')
+        api.patch('/delivery/agent/location/', { lat: pos.coords.latitude, lng: pos.coords.longitude }).catch(() => {})
+      },
+      (err) => { setLocationStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unsupported') },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 },
+    )
+    return clear
+  }, [hydrated, agentOnline])
 
   // Rings continuously — independent of which delivery page the rider is on — for as long as
   // there's at least one available, unclaimed pickup, same "keep ringing until reviewed" behavior
@@ -373,6 +414,7 @@ export default function DeliveryLayout({ children }: { children: React.ReactNode
   }
 
   const pendingVerification = user.delivery_agent_verified === false
+  const locationBanner = LOCATION_BANNER[locationStatus]
 
   return (
     <div className="min-h-screen bg-background">
@@ -445,7 +487,14 @@ export default function DeliveryLayout({ children }: { children: React.ReactNode
               </p>
             </div>
           </div>
-        ) : children}
+        ) : (
+          <>
+            {locationBanner && (
+              <div className={`rounded-xl px-4 py-2.5 text-xs font-medium mb-4 ${locationBanner.color}`}>{locationBanner.text}</div>
+            )}
+            {children}
+          </>
+        )}
       </main>
 
       {showModal && pendingCount > 0 && (
