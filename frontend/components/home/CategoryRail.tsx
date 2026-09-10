@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import api from '@/lib/api'
+import CarouselRow from '@/components/common/CarouselRow'
 import type { Category } from '@/types'
 
 const ICONS = ['medication', 'heart_plus', 'vaccines', 'medical_services', 'health_and_safety', 'science', 'healing', 'pediatrics', 'psychology', 'ophthalmology', 'dentistry', 'dermatology']
@@ -30,14 +31,14 @@ export default function CategoryRail() {
 
   return (
     <section>
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center gap-3 mb-3">
         <h2 className="text-lg font-bold text-on-surface">Shop by Category</h2>
         <Link href="/categories" className="text-xs font-semibold text-primary hover:underline flex items-center gap-0.5">
           View All
           <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
         </Link>
       </div>
-      <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
+      <CarouselRow className="gap-4 pb-1 -mx-1 px-1" ariaLabel="categories">
         {loading
           ? Array.from({ length: 8 }).map((_, i) => <TileSkeleton key={i} />)
           : categories.map((cat, i) => (
@@ -50,7 +51,7 @@ export default function CategoryRail() {
             </Link>
           ))
         }
-      </div>
+      </CarouselRow>
     </section>
   )
 }

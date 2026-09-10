@@ -94,7 +94,8 @@ export default function DeliveryLocationPicker() {
         <span className="material-symbols-outlined text-primary" style={{ fontSize: '20px' }}>location_on</span>
         <div className="hidden sm:block">
           <p className="text-[10px] text-on-surface-variant leading-none">Delivery to</p>
-          <p className="text-xs font-semibold text-on-surface leading-tight mt-0.5 max-w-[140px] truncate">
+          <p title={label || 'Select Location'}
+            className="text-xs font-semibold text-on-surface leading-tight mt-0.5 max-w-[140px] sm:max-w-[220px] truncate">
             {label || 'Select Location'}
           </p>
         </div>
@@ -109,14 +110,14 @@ export default function DeliveryLocationPicker() {
               <p className="text-sm font-bold text-on-surface">Choose your delivery location</p>
               <button onClick={handleUseMyLocation} disabled={detecting}
                 className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-primary/30 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors disabled:opacity-60">
-                <span className={`material-symbols-outlined ${detecting ? 'animate-spin' : ''}`} style={{ fontSize: '18px' }}>
+                <span className={`material-symbols-outlined ${detecting ? 'animate-spin' : ''}`} style={{ fontSize: '20px' }}>
                   {detecting ? 'progress_activity' : 'my_location'}
                 </span>
                 {detecting ? 'Detecting…' : 'Use my current location'}
               </button>
 
               <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" style={{ fontSize: '18px' }}>search</span>
+                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" style={{ fontSize: '20px' }}>search</span>
                 <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search area, city..."
                   className="w-full pl-9 pr-3 py-2 border border-outline-variant rounded-xl bg-surface-container-low text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary transition" />
               </div>
@@ -136,7 +137,7 @@ export default function DeliveryLocationPicker() {
 
               {user && addresses.length > 0 && (
                 <div className="pt-2 border-t border-outline-variant space-y-1">
-                  <p className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wide">Saved Addresses</p>
+                  <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wide">Saved Addresses</p>
                   {addresses.map((a) => (
                     <button key={a.id} onClick={() => pickAddress(a)}
                       className="w-full text-left px-3 py-2 rounded-lg text-sm text-on-surface hover:bg-surface-container-low transition-colors flex items-center gap-2">

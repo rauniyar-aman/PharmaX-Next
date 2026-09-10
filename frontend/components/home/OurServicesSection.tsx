@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
+import CarouselRow from '@/components/common/CarouselRow'
 import type { LabTest, Doctor, BlogPost } from '@/types'
 
 // Same card shell and accent for all three services — the whole point of this section is that Lab
@@ -10,6 +11,22 @@ import type { LabTest, Doctor, BlogPost } from '@/types'
 // styled rails, so every tile shares size, shape, and color regardless of which service it's for.
 const CARD_CLASS = 'w-48 flex-shrink-0 bg-surface rounded-2xl border border-outline-variant p-4 flex flex-col hover:-translate-y-1 hover:shadow-md transition-all duration-200'
 const ICON_BADGE = 'w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 overflow-hidden'
+// Doctors get a larger *circular* avatar (a face, not an abstract service glyph) so a real
+// headshot reads as a person and the consult card is visually distinct from the lab-test and
+// article tiles that share the squared ICON_BADGE.
+const DOCTOR_AVATAR = 'w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 overflow-hidden'
+
+// The whole card is a <Link>, so the action affordance is a styled span, not a nested <button>
+// (invalid inside an <a>). It reuses the site's .btn tokens for a full-width filled pill — a real
+// button-strength affordance rather than a small text link — and mt-auto pins it to the card foot.
+function CardCta({ label }: { label: string }) {
+  return (
+    <span className="btn btn-sm btn-primary w-full mt-auto">
+      {label}
+      <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
+    </span>
+  )
+}
 
 function ServiceCardSkeleton() {
   return (
@@ -66,20 +83,20 @@ function ServiceGroup({ title, viewAllHref, loading, empty, children }: {
 }) {
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center gap-3 mb-3">
         <h3 className="text-sm font-bold text-on-surface">{title}</h3>
         <Link href={viewAllHref} className="text-xs font-semibold text-primary hover:underline flex items-center gap-0.5">
           View All
-          <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>arrow_forward</span>
+          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
         </Link>
       </div>
-      <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
+      <CarouselRow className="gap-4 pb-1 -mx-1 px-1" ariaLabel={title}>
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => <ServiceCardSkeleton key={i} />)
         ) : empty ? (
           <p className="text-sm text-on-surface-variant py-4">Nothing here yet.</p>
         ) : children}
-      </div>
+      </CarouselRow>
     </div>
   )
 }
@@ -95,10 +112,7 @@ export default function OurServicesSection() {
   return (
     <section className="bg-primary/5 rounded-xl p-5 sm:p-6 space-y-6">
       <div>
-        <h2 className="text-lg font-bold text-on-surface flex items-center gap-2">
-          <span className="material-symbols-outlined ms-filled text-primary" style={{ fontSize: '22px' }}>health_and_safety</span>
-          Our Services
-        </h2>
+        <h2 className="text-lg font-bold text-on-surface">Our Services</h2>
         <p className="text-xs text-on-surface-variant mt-0.5">More than a medicine store — lab tests, doctor consults, and health guidance, all in one place.</p>
       </div>
 
@@ -118,6 +132,7 @@ export default function OurServicesSection() {
                 <span className="text-sm font-bold text-primary">NPR {Number(t.price).toFixed(0)}</span>
                 {discount > 0 && <span className="text-[10px] text-on-surface-variant line-through">NPR {Number(t.original_price).toFixed(0)}</span>}
               </div>
+              <CardCta label="Book test" />
             </Link>
           )
         })}
@@ -126,16 +141,17 @@ export default function OurServicesSection() {
       <ServiceGroup title="Consult a Doctor" viewAllHref="/doctor-consult" loading={doctorsLoading} empty={doctors.length === 0}>
         {doctors.map((d) => (
           <Link key={d.id} href={`/doctor-consult/${d.id}`} className={CARD_CLASS}>
-            <div className={ICON_BADGE}>
+            <div className={DOCTOR_AVATAR}>
               {d.photo_url ? (
-                <img src={resolveImg(d.photo_url) || undefined} alt={d.name} className="w-full h-full object-cover" />
+                <img src={resolveImg(d.photo_url) || undefined} alt={`Dr. ${d.name}`} className="w-full h-full object-cover" />
               ) : (
-                <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>stethoscope</span>
+                <span className="material-symbols-outlined" style={{ fontSize: '28px' }}>person</span>
               )}
             </div>
             <p className="text-sm font-semibold text-on-surface leading-snug mt-3">Dr. {d.name}</p>
             <p className="text-xs text-on-surface-variant mt-1">{d.specialty}</p>
             <p className="text-sm font-bold text-primary mt-2">NPR {Number(d.consultation_fee).toFixed(0)}</p>
+            <CardCta label="Consult" />
           </Link>
         ))}
       </ServiceGroup>
@@ -152,6 +168,7 @@ export default function OurServicesSection() {
             </div>
             {p.category && <p className="text-[10px] font-semibold text-primary uppercase tracking-wide mt-3">{p.category}</p>}
             <p className="text-sm font-semibold text-on-surface leading-snug mt-1 line-clamp-2">{p.title}</p>
+            <CardCta label="Read article" />
           </Link>
         ))}
       </ServiceGroup>

@@ -5,6 +5,7 @@ import api from '@/lib/api'
 import { useLocationStore } from '@/store/location'
 import MedicineCard, { MedicineCardSkeleton } from '@/components/medicine/MedicineCard'
 import ServiceDealCard from '@/components/offers/ServiceDealCard'
+import CarouselRow from '@/components/common/CarouselRow'
 import type { FeaturedDeal } from '@/types'
 
 interface Props {
@@ -38,14 +39,14 @@ export default function FeaturedDealsRail({ wishlistIds, onToggleWishlist, onAdd
 
   return (
     <section>
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center gap-3 mb-3">
         <h2 className="text-lg font-bold text-on-surface">Featured Deals</h2>
         <Link href="/offers" className="text-xs font-semibold text-primary hover:underline flex items-center gap-0.5">
           View All
           <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
         </Link>
       </div>
-      <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-1 -mx-1 px-1">
+      <CarouselRow className="gap-4 pb-1 -mx-1 px-1" ariaLabel="deals">
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="w-44 sm:w-52 flex-shrink-0"><MedicineCardSkeleton /></div>
@@ -73,7 +74,7 @@ export default function FeaturedDealsRail({ wishlistIds, onToggleWishlist, onAdd
             ))}
           </>
         )}
-      </div>
+      </CarouselRow>
     </section>
   )
 }
