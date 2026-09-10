@@ -458,7 +458,7 @@ class PublicSettingsView(APIView):
         rows = SystemSetting.objects.filter(key__in=['store_name', 'support_email', 'support_phone'])
         settings_map = {r.key: r.value for r in rows}
         return Response({'success': True, 'data': {
-            'store_name': settings_map.get('store_name') or 'PharmaX',
+            'store_name': settings_map.get('store_name') or 'Swasthaya',
             'support_email': settings_map.get('support_email'),
             'support_phone': settings_map.get('support_phone'),
         }})
@@ -2023,7 +2023,7 @@ class PaymentKhaltiInitiateView(APIView):
                 'website_url': FRONTEND_URL,
                 'amount': amount_paisa,
                 'purchase_order_id': str(order.id),
-                'purchase_order_name': f'PharmaX Order #{str(order.id)[-8:].upper()}',
+                'purchase_order_name': f'Swasthaya Order #{str(order.id)[-8:].upper()}',
                 'customer_info': {
                     'name': request.user.full_name,
                     'email': request.user.email,
@@ -2117,7 +2117,7 @@ class AppointmentKhaltiInitiateView(APIView):
                 'website_url': FRONTEND_URL,
                 'amount': amount_paisa,
                 'purchase_order_id': str(appt.id),
-                'purchase_order_name': f'PharmaX Consultation with Dr. {appt.doctor.name}',
+                'purchase_order_name': f'Swasthaya Consultation with Dr. {appt.doctor.name}',
                 'customer_info': {
                     'name': request.user.full_name,
                     'email': request.user.email,
@@ -2151,7 +2151,7 @@ def _confirm_appointment(appt):
     date_label = appt.scheduled_date.strftime('%b %d, %Y')
     plus_free = appt.payment_status == 'NOT_REQUIRED'
     customer_payment_line = (
-        'This consultation is included with your PharmaX Plus membership — no charge.'
+        'This consultation is included with your Swasthaya Plus membership — no charge.'
         if plus_free else f'Payment received. Fee: NPR {appt.fee_charged}.'
     )
     notify_user(
@@ -2528,7 +2528,7 @@ class PaymentKhaltiInitiateLabTestView(APIView):
                 'website_url': FRONTEND_URL,
                 'amount': amount_paisa,
                 'purchase_order_id': str(booking.id),
-                'purchase_order_name': f'PharmaX Lab Test: {booking.lab_test.name}',
+                'purchase_order_name': f'Swasthaya Lab Test: {booking.lab_test.name}',
                 'customer_info': {
                     'name': request.user.full_name,
                     'email': request.user.email,
@@ -2855,7 +2855,7 @@ class PaymentKhaltiInitiateLabGroupView(APIView):
                 'website_url': FRONTEND_URL,
                 'amount': amount_paisa,
                 'purchase_order_id': str(group.id),
-                'purchase_order_name': f'PharmaX Lab Tests ({group.bookings.count()} tests)',
+                'purchase_order_name': f'Swasthaya Lab Tests ({group.bookings.count()} tests)',
                 'customer_info': {
                     'name': request.user.full_name,
                     'email': request.user.email,
@@ -3453,7 +3453,7 @@ class PlusMembershipView(APIView):
         notify_user(
             user=request.user,
             type='PLUS',
-            title='Welcome to PharmaX Plus!',
+            title='Welcome to Swasthaya Plus!',
             message=f'Your {plan.name} membership is active until {membership.expires_at.date()}.',
             link='/plus-membership',
         )

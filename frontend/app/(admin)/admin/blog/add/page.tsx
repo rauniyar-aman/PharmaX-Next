@@ -12,7 +12,7 @@ export default function AddBlogPostPage() {
   const [coverImageUrl, setCoverImageUrl] = useState('')
   const [excerpt, setExcerpt] = useState('')
   const [content, setContent] = useState('')
-  const [author, setAuthor] = useState('PharmaX Team')
+  const [author, setAuthor] = useState('Swasthaya Team')
   const [isPublished, setIsPublished] = useState(true)
   const [saving, setSaving] = useState(false)
 

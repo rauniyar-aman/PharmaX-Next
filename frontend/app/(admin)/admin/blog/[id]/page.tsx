@@ -26,7 +26,7 @@ export default function EditBlogPostPage() {
       setCoverImageUrl(p.cover_image_url || '')
       setExcerpt(p.excerpt || '')
       setContent(p.content || '')
-      setAuthor(p.author || 'PharmaX Team')
+      setAuthor(p.author || 'Swasthaya Team')
       setIsPublished(p.is_published ?? true)
     }).catch(() => toast.error('Failed to load article.')).finally(() => setLoading(false))
   }, [id])

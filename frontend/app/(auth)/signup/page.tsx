@@ -74,7 +74,7 @@ function SignUpForm() {
 
           <div className="text-center mb-8">
             <h1 className="text-2xl font-semibold text-on-surface">Create Account</h1>
-            <p className="text-sm text-on-surface-variant mt-2">Join PharmaX to order medicines online.</p>
+            <p className="text-sm text-on-surface-variant mt-2">Join Swasthaya to order medicines online.</p>
           </div>
 
           <form className="space-y-4" onSubmit={handleSubmit}>

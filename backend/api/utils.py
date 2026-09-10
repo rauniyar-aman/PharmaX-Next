@@ -21,9 +21,9 @@ def generate_otp(length=6):
 def get_store_name():
     from .models import SystemSetting
     try:
-        return SystemSetting.objects.get(key='store_name').value or 'PharmaX'
+        return SystemSetting.objects.get(key='store_name').value or 'Swasthaya'
     except SystemSetting.DoesNotExist:
-        return 'PharmaX'
+        return 'Swasthaya'
 
 
 def _render_email_html(store_name, heading, body_html, cta_text=None, cta_url=None):

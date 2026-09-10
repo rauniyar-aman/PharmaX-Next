@@ -1,100 +1,104 @@
 @import "tailwindcss";
 
-/* ─── Light palette ─── */
+/* ─── Light palette — Swasthaya brand (navy primary / green accent) ─── */
 :root {
-  --c-primary:                    0 107 44;
-  --c-primary-dark:               0 82 32;
-  --c-primary-container:          0 135 58;
-  --c-inverse-primary:            98 223 125;
+  /* Primary Navy #003B7A — wordmark, house stroke, primary actions */
+  --c-primary:                    0 59 122;
+  --c-primary-dark:               0 44 92;
+  --c-primary-container:          0 81 155;
+  --c-inverse-primary:            133 187 232;
   --c-on-primary:                 255 255 255;
-  --c-on-primary-container:       247 255 242;
+  --c-on-primary-container:       224 236 250;
 
-  --c-secondary:                  0 81 213;
-  --c-secondary-container:        49 107 243;
+  /* Medical Green #00A86B / Leaf Green #2E9A66 — accent, cross, leaf */
+  --c-secondary:                  0 168 107;
+  --c-secondary-container:        46 154 102;
   --c-on-secondary:               255 255 255;
-  --c-on-secondary-container:     254 252 255;
+  --c-on-secondary-container:     240 253 246;
 
-  --c-background:                 249 249 255;
-  --c-on-background:              21 28 39;
+  /* Background Off-White #F9F5F0 */
+  --c-background:                 249 245 240;
+  --c-on-background:              23 33 43;
 
   --c-surface:                    255 255 255;
-  --c-surface-dim:                211 218 234;
-  --c-surface-bright:             249 249 255;
+  --c-surface-dim:                229 222 213;
+  --c-surface-bright:             252 250 247;
   --c-surface-container-lowest:   255 255 255;
-  --c-surface-container-low:      240 243 255;
-  --c-surface-container:          231 238 254;
-  --c-surface-container-high:     226 232 248;
-  --c-surface-container-highest:  220 226 243;
-  --c-on-surface:                 21 28 39;
-  --c-on-surface-variant:         62 74 61;
-  --c-inverse-surface:            42 49 61;
-  --c-inverse-on-surface:         235 241 255;
+  --c-surface-container-low:      249 245 240;
+  --c-surface-container:          244 238 231;
+  --c-surface-container-high:     238 231 222;
+  --c-surface-container-highest:  232 224 214;
+  --c-on-surface:                 23 33 43;
+  --c-on-surface-variant:         51 78 104;
+  --c-inverse-surface:            40 49 61;
+  --c-inverse-on-surface:         245 241 235;
 
-  --c-outline:                    110 123 108;
-  --c-outline-variant:            189 202 186;
-  --c-surface-variant:            220 226 243;
+  --c-outline:                    120 132 146;
+  --c-outline-variant:            206 213 221;
+  --c-surface-variant:            232 224 214;
 
   --c-error:                      186 26 26;
   --c-on-error:                   255 255 255;
   --c-error-container:            255 218 214;
   --c-on-error-container:         147 0 10;
 
-  --c-success:                    0 107 44;
-  --c-success-container:          214 245 224;
+  --c-success:                    0 168 107;
+  --c-success-container:          214 245 230;
   --c-warning:                    230 81 0;
   --c-warning-container:          255 243 224;
-  --c-info:                       0 81 213;
-  --c-info-container:             219 225 255;
+  --c-info:                       0 59 122;
+  --c-info-container:             224 236 250;
 }
 
-/* ─── Dark palette ─── */
+/* ─── Dark palette — navy line work lifts to light blue; green accents unchanged (per brand) ─── */
 .dark {
-  --c-primary:                    98 223 125;
-  --c-primary-dark:               62 170 85;
-  --c-on-primary:                 0 33 9;
-  --c-on-primary-container:       127 252 151;
+  --c-primary:                    133 187 232;
+  --c-primary-dark:               90 145 195;
+  --c-on-primary:                 0 33 66;
+  --c-on-primary-container:       224 236 250;
 
-  --c-secondary:                  180 197 255;
-  --c-secondary-container:        0 62 168;
-  --c-on-secondary:               0 23 75;
-  --c-on-secondary-container:     219 225 255;
+  --c-secondary:                  75 209 152;
+  --c-secondary-container:        0 120 76;
+  --c-on-secondary:               0 40 25;
+  --c-on-secondary-container:     214 245 230;
 
-  --c-background:                 15 17 23;
-  --c-on-background:              228 231 247;
+  --c-background:                 15 19 24;
+  --c-on-background:              230 234 239;
 
-  --c-surface:                    15 17 23;
-  --c-surface-dim:                10 13 20;
-  --c-surface-bright:             53 58 74;
-  --c-surface-container-lowest:   10 14 25;
-  --c-surface-container-low:      23 29 45;
-  --c-surface-container:          27 33 50;
-  --c-surface-container-high:     34 40 57;
-  --c-surface-container-highest:  45 51 66;
-  --c-on-surface:                 228 231 247;
-  --c-on-surface-variant:         184 196 188;
-  --c-inverse-surface:            228 231 247;
-  --c-inverse-on-surface:         42 49 61;
+  --c-surface:                    15 19 24;
+  --c-surface-dim:                10 13 18;
+  --c-surface-bright:             52 58 66;
+  --c-surface-container-lowest:   10 13 18;
+  --c-surface-container-low:      22 27 34;
+  --c-surface-container:          27 33 41;
+  --c-surface-container-high:     34 41 50;
+  --c-surface-container-highest:  44 52 62;
+  --c-on-surface:                 230 234 239;
+  --c-on-surface-variant:         180 190 201;
+  --c-inverse-surface:            230 234 239;
+  --c-inverse-on-surface:         40 49 61;
 
-  --c-outline:                    138 151 137;
-  --c-outline-variant:            62 74 61;
-  --c-surface-variant:            42 49 61;
+  --c-outline:                    138 148 160;
+  --c-outline-variant:            58 66 76;
+  --c-surface-variant:            44 52 62;
 
   --c-error:                      255 180 171;
   --c-on-error:                   105 0 5;
   --c-error-container:            147 0 10;
   --c-on-error-container:         255 218 214;
 
-  --c-success:                    98 223 125;
-  --c-success-container:          0 58 18;
+  --c-success:                    75 209 152;
+  --c-success-container:          0 58 36;
   --c-warning:                    255 183 124;
   --c-warning-container:          58 26 0;
-  --c-info:                       180 197 255;
-  --c-info-container:             0 62 168;
+  --c-info:                       133 187 232;
+  --c-info-container:             0 62 122;
 }
 
 /* ─── Tailwind 4 color tokens ─── */
 @theme inline {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-outfit), 'Inter', ui-sans-serif, system-ui, sans-serif;
 
   /* Tailwind v4 ships sm/md/lg/xl/2xl by default — these extend that scale for the very wide
      monitors the full-width layout shells (no more max-w-[1600px] centering) now need to fill
@@ -186,10 +190,10 @@
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #bdcaba; border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: #6e7b6c; }
+::-webkit-scrollbar-thumb { background: #ced5dd; border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: #788492; }
 
-.active-glow { box-shadow: 0 0 15px rgba(49, 107, 243, 0.25); }
+.active-glow { box-shadow: 0 0 15px rgba(0, 168, 107, 0.25); }
 
 .scrollbar-hide { scrollbar-width: none; -ms-overflow-style: none; }
 .scrollbar-hide::-webkit-scrollbar { display: none; }

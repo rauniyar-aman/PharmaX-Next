@@ -151,9 +151,9 @@ export default function LabCollectorLayout({ children }: { children: React.React
       playNotificationChime()
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         const latest = notifs[0]
-        const n = new Notification(latest?.title || 'New notification — PharmaX', {
+        const n = new Notification(latest?.title || 'New notification — Swasthaya', {
           body: latest?.message || 'You have a new collection update.',
-          icon: '/PharmaX_Icon.png',
+          icon: '/swasthaya-logo_cut.jpg',
           tag: 'pharmax-collector-notif',
         })
         n.onclick = () => { window.focus(); router.push('/lab-collector/notifications'); n.close() }

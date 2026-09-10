@@ -9,7 +9,7 @@ const SETTINGS_GROUPS = [
   {
     title: 'Store Settings',
     fields: [
-      { key: 'store_name', label: 'Store Name', placeholder: 'PharmaX' },
+      { key: 'store_name', label: 'Store Name', placeholder: 'Swasthaya' },
       { key: 'support_email', label: 'Support Email', placeholder: 'support@pharmax.com' },
       { key: 'support_phone', label: 'Support Phone', placeholder: '+977 9800000000' },
       { key: 'free_delivery_threshold', label: 'Free Delivery Threshold (NPR)', placeholder: '500' },

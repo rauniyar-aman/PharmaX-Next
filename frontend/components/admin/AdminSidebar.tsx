@@ -1,8 +1,7 @@
 'use client'
 import Link from 'next/link'
-import Image from 'next/image'
 import { usePathname } from 'next/navigation'
-import Logo from '@/components/common/Logo'
+import Logo, { SwasthayaIcon } from '@/components/common/Logo'
 import { useAuthStore } from '@/store/auth'
 
 const navItems = [
@@ -72,7 +71,7 @@ export default function AdminSidebar({ collapsed, onToggle, mobileOpen, onMobile
           {iconOnly ? (
             <>
               <Link href="/admin/dashboard">
-                <Image src="/PharmaX_Icon.png" alt="PharmaX" width={36} height={36} className="h-9 w-auto object-contain" />
+                <SwasthayaIcon size={36} />
               </Link>
               <button onClick={onToggle} className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors">
                 <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>menu</span>

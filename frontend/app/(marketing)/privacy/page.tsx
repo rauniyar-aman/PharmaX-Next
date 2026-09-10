@@ -24,7 +24,7 @@ export default function PrivacyPage() {
     api.get('/settings/').then((r) => setSupport(r.data.data || {})).catch(() => {})
   }, [])
 
-  const store = support.store_name || 'PharmaX'
+  const store = support.store_name || 'Swasthaya'
   const email = support.support_email || 'support@pharmax.rauniyaraman.com.np'
 
   return (

@@ -12,7 +12,7 @@ const DOC_TYPES: { type: PharmacyDocument['doc_type']; label: string; hint: stri
   { type: 'PAN_CARD', label: 'PAN Card', hint: 'Your tax registration document.', uploadedByPharmacy: true },
   { type: 'CITIZENSHIP', label: 'Owner Citizenship', hint: "The pharmacy owner's citizenship / ID document.", uploadedByPharmacy: true },
   { type: 'CANCELLED_CHEQUE', label: 'Cancelled Cheque', hint: 'Proof of the bank account entered above.', uploadedByPharmacy: true },
-  { type: 'MOU', label: 'Signed MOU', hint: 'Provided by the PharmaX team once your agreement is signed.', uploadedByPharmacy: false },
+  { type: 'MOU', label: 'Signed MOU', hint: 'Provided by the Swasthaya team once your agreement is signed.', uploadedByPharmacy: false },
 ]
 
 // Read-only — the matching engine's 3km radius, combined-pickup proximity checks, and every
@@ -383,7 +383,7 @@ export default function PharmacySettingsPage() {
       <form onSubmit={saveBank} className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4">
         <div>
           <p className="text-sm font-bold text-on-surface">Bank Details</p>
-          <p className="text-xs text-on-surface-variant mt-0.5">Where PharmaX sends your payouts.</p>
+          <p className="text-xs text-on-surface-variant mt-0.5">Where Swasthaya sends your payouts.</p>
         </div>
         {pharmacy.is_owner === false ? (
           <p className="text-xs text-on-surface-variant">Only the pharmacy owner can view or change bank details.</p>
@@ -424,7 +424,7 @@ export default function PharmacySettingsPage() {
         <div>
           <p className="text-sm font-bold text-on-surface">Documents</p>
           <p className="text-xs text-on-surface-variant mt-0.5">
-            PAN card and citizenship are uploaded by you. The MOU and cancelled cheque are uploaded by the PharmaX team.
+            PAN card and citizenship are uploaded by you. The MOU and cancelled cheque are uploaded by the Swasthaya team.
           </p>
         </div>
         <div className="space-y-2">
@@ -455,7 +455,7 @@ export default function PharmacySettingsPage() {
                     </>
                   ) : !doc && (
                     <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-surface-container text-on-surface-variant whitespace-nowrap">
-                      Pending from PharmaX
+                      Pending from Swasthaya
                     </span>
                   )}
                 </div>

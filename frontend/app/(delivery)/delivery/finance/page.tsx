@@ -64,7 +64,7 @@ export default function DeliveryFinancePage() {
       <div>
         <h1 className="text-2xl font-bold text-on-surface">Finance</h1>
         <p className="text-sm text-on-surface-variant mt-1">
-          What PharmaX owes you for deliveries, and what you still owe back from cash you've collected.
+          What Swasthaya owes you for deliveries, and what you still owe back from cash you've collected.
         </p>
       </div>
 
@@ -73,7 +73,7 @@ export default function DeliveryFinancePage() {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <SummaryCard icon="hourglass_top" label="Yet to Receive" value={`NPR ${num(profile?.earnings_record.total_pending ?? null).toFixed(0)}`} tone={num(profile?.earnings_record.total_pending ?? null) > 0 ? 'warning' : 'default'} />
-          <SummaryCard icon="check_circle" label="Received from PharmaX" value={`NPR ${num(profile?.earnings_record.total_paid ?? null).toFixed(0)}`} tone="success" />
+          <SummaryCard icon="check_circle" label="Received from Swasthaya" value={`NPR ${num(profile?.earnings_record.total_paid ?? null).toFixed(0)}`} tone="success" />
           <SummaryCard icon="payments" label="COD Still to Remit" value={`NPR ${num(profile?.cod_record.total_outstanding ?? null).toFixed(0)}`} tone={num(profile?.cod_record.total_outstanding ?? null) > 0 ? 'warning' : 'default'} />
           <SummaryCard icon="account_balance_wallet" label="Total COD Collected" value={`NPR ${num(profile?.cod_record.total_collected ?? null).toFixed(0)}`} />
         </div>

@@ -91,7 +91,7 @@ export default function PharmacyFinancePage() {
       <div>
         <h1 className="text-2xl font-bold text-on-surface">Finance</h1>
         <p className="text-sm text-on-surface-variant mt-1">
-          What you've earned, PharmaX's commission, what's been paid out, and what's still owed.
+          What you've earned, Swasthaya's commission, what's been paid out, and what's still owed.
         </p>
       </div>
 

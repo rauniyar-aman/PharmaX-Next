@@ -19,7 +19,7 @@ export default function WalletPage() {
       <div className="bg-gradient-to-r from-emerald-600 to-emerald-700 rounded-2xl p-6 text-white">
         <div className="flex items-center gap-2 text-sm opacity-90">
           <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>account_balance_wallet</span>
-          PharmaX Wallet
+          Swasthaya Wallet
         </div>
         <p className="text-3xl font-bold mt-2">NPR {Number(wallet?.balance || 0).toFixed(2)}</p>
         <p className="text-xs opacity-80 mt-1">Use your wallet balance at checkout to pay for orders.</p>
