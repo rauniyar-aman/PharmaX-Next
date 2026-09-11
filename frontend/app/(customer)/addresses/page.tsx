@@ -6,6 +6,8 @@ import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import type { Address } from '@/types'
 import type { PickedLocation } from '@/components/map/MapPicker'
+import { NEPAL_PROVINCES, guessDistrictFromText } from '@/lib/nepalDistricts'
+import { fetchServiceArea, isServiceable, type ServiceAreaConfig } from '@/lib/serviceArea'
 
 const MapPicker = dynamic(() => import('@/components/map/MapPicker'), {
   ssr: false,
@@ -16,7 +18,7 @@ const MapPicker = dynamic(() => import('@/components/map/MapPicker'), {
   ),
 })
 
-const EMPTY_FORM = { label: 'Home', full_name: '', phone: '', address_line1: '', city: '', state: '', zip_code: '', is_default: false }
+const EMPTY_FORM = { label: 'Home', full_name: '', phone: '', address_line1: '', city: '', state: '', district: '', zip_code: '', is_default: false }
 
 export default function AddressesPage() {
   const { user } = useAuthStore()
@@ -29,6 +31,9 @@ export default function AddressesPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [form, setForm] = useState<any>(EMPTY_FORM)
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
+  const [svcArea, setSvcArea] = useState<ServiceAreaConfig | null>(null)
+
+  useEffect(() => { fetchServiceArea().then(setSvcArea).catch(() => {}) }, [])
 
   const load = () => {
     setLoading(true)
@@ -53,6 +58,7 @@ export default function AddressesPage() {
       label: addr.label || 'Home',
       full_name: addr.full_name, phone: addr.phone,
       address_line1: addr.address_line1, city: addr.city, state: addr.state,
+      district: addr.district || '',
       zip_code: addr.zip_code || '', is_default: addr.is_default,
     })
     setCoords(addr.lat && addr.lng ? { lat: addr.lat, lng: addr.lng } : null)
@@ -62,19 +68,24 @@ export default function AddressesPage() {
 
   const handleMapPick = (loc: PickedLocation) => {
     setCoords({ lat: loc.lat, lng: loc.lng })
+    const guessed = guessDistrictFromText(loc.address, loc.city, loc.province)
     setForm((p: any) => ({
       ...p,
       address_line1: loc.address || p.address_line1,
       city: loc.city || p.city,
       state: loc.province || p.state,
       zip_code: loc.zip || p.zip_code,
+      district: p.district || guessed,   // don't override a district the customer already chose
     }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    // Delivery/lab collection can't proceed without a pinned location — it's what the service-area
+    // circle check runs on. Require it here (consult addresses don't go through this form).
+    if (!coords) { toast.error('Please pin this address on the map so we can confirm delivery.'); setShowMap(true); return }
     setSaving(true)
-    const payload = { ...form, lat: coords?.lat, lng: coords?.lng }
+    const payload = { ...form, lat: coords.lat, lng: coords.lng }
     try {
       if (editingId) {
         const res = await api.put(`/addresses/${editingId}/`, payload)
@@ -183,6 +194,36 @@ export default function AddressesPage() {
             </div>
           ))}
 
+          <div>
+            <label className="text-xs font-medium text-on-surface-variant">District</label>
+            <select required value={form.district}
+              onChange={(e) => setForm((p: any) => ({ ...p, district: e.target.value }))}
+              className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition">
+              <option value="">Select your district</option>
+              {NEPAL_PROVINCES.map((prov) => (
+                <optgroup key={prov.name} label={`${prov.name} Province`}>
+                  {prov.districts.map((d) => <option key={d} value={d}>{d}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            {!coords && (
+              <p className="mt-1 text-[11px] text-on-surface-variant flex items-center gap-1">
+                <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>info</span>
+                Pin your location on the map — required so we can confirm delivery to your door.
+              </p>
+            )}
+          </div>
+
+          {svcArea && form.district && coords && (() => {
+            const r = isServiceable({ district: form.district, lat: coords.lat, lng: coords.lng }, svcArea)
+            return (
+              <div className={`flex items-start gap-2 rounded-xl px-3 py-2 text-xs ${r.ok ? 'bg-primary/5 text-primary' : 'bg-amber-50 text-amber-700'}`}>
+                <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>{r.ok ? 'check_circle' : 'info'}</span>
+                <span>{r.ok ? 'We deliver to this address.' : `${r.message} You can still save it — consultations are available nationwide.`}</span>
+              </div>
+            )
+          })()}
+
           <div className="flex gap-2">
             <button type="submit" disabled={saving}
               className="flex-1 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">
@@ -210,10 +251,13 @@ export default function AddressesPage() {
             <div key={addr.id} className={`bg-surface rounded-2xl border p-4 ${addr.is_default ? 'border-primary' : 'border-outline-variant'}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold text-on-surface-variant uppercase tracking-wide">{addr.label || 'Home'}</span>
                     {addr.is_default && <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full">Default</span>}
                     {addr.lat != null && <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '14px' }}>location_on</span>}
+                    {svcArea && !isServiceable(addr, svcArea).ok && (
+                      <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Outside service area</span>
+                    )}
                   </div>
                   <p className="text-sm font-semibold text-on-surface mt-1">{addr.full_name}</p>
                   <p className="text-sm text-on-surface-variant">{addr.address_line1}</p>

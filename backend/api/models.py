@@ -99,6 +99,9 @@ class Address(models.Model):
     address = models.TextField()
     city = models.CharField(max_length=100)
     province = models.CharField(max_length=100)
+    # Structured district (from a fixed Nepal list, chosen in the address form) — the coarse
+    # signal the service-area gate reads. Blank on legacy rows until the customer edits them.
+    district = models.CharField(max_length=50, blank=True, default='')
     zip = models.CharField(max_length=20)
     lat = models.FloatField(null=True, blank=True)
     lng = models.FloatField(null=True, blank=True)

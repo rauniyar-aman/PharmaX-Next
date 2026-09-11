@@ -7,6 +7,7 @@ import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { useLabCartStore } from '@/store/labCart'
 import type { Address } from '@/types'
+import { fetchServiceArea, isServiceable, type ServiceAreaConfig } from '@/lib/serviceArea'
 
 const TIME_SLOTS = ['6:00 AM - 8:00 AM', '8:00 AM - 10:00 AM', '10:00 AM - 12:00 PM', '4:00 PM - 6:00 PM', '6:00 PM - 8:00 PM']
 
@@ -39,6 +40,7 @@ export default function LabCartPage() {
   const clearCart = useLabCartStore((s) => s.clear)
 
   const [addresses, setAddresses] = useState<Address[]>([])
+  const [svcArea, setSvcArea] = useState<ServiceAreaConfig | null>(null)
   const [addressId, setAddressId] = useState('')
   const [date, setDate] = useState(tomorrowDateStr())
   const [timeSlot, setTimeSlot] = useState('')
@@ -66,6 +68,8 @@ export default function LabCartPage() {
   // sync (same reason as the catalog list badge).
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
+
+  useEffect(() => { fetchServiceArea().then(setSvcArea).catch(() => {}) }, [])
 
   useEffect(() => {
     if (!user) return
@@ -101,6 +105,12 @@ export default function LabCartPage() {
     if (!user) { router.push('/signin'); return }
     if (items.length === 0) { toast.error('Your cart is empty.'); return }
     if (!addressId) { toast.error('Please select a sample collection address.'); return }
+    // Home sample collection is physical fulfillment — same service-area gate as delivery.
+    const coAddr = addresses.find((a) => a.id === addressId)
+    if (svcArea && coAddr) {
+      const r = isServiceable(coAddr, svcArea)
+      if (!r.ok) { toast.error(r.message); return }
+    }
     if (!timeSlot) { toast.error('Please select a time slot.'); return }
 
     // Flatten each test's people into one booking line apiece. "Myself" sends no patient fields (the
@@ -157,6 +167,9 @@ export default function LabCartPage() {
   }
 
   if (!mounted) return <div className="flex items-center justify-center py-24"><div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
+
+  const selectedCartAddr = addresses.find((a) => a.id === addressId)
+  const cartSvc = svcArea && selectedCartAddr ? isServiceable(selectedCartAddr, svcArea) : null
 
   return (
     <div className="space-y-6">
@@ -273,10 +286,21 @@ export default function LabCartPage() {
                     {addresses.length === 0 ? (
                       <Link href="/addresses" className="mt-1 block text-sm text-primary hover:underline">+ Add an address to book</Link>
                     ) : (
-                      <select value={addressId} onChange={(e) => setAddressId(e.target.value)}
-                        className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
-                        {addresses.map((a) => <option key={a.id} value={a.id}>{a.label} — {a.address_line1}, {a.city}</option>)}
-                      </select>
+                      <>
+                        <select value={addressId} onChange={(e) => setAddressId(e.target.value)}
+                          className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
+                          {addresses.map((a) => {
+                            const bad = svcArea ? !isServiceable(a, svcArea).ok : false
+                            return <option key={a.id} value={a.id}>{a.label} — {a.address_line1}, {a.city}{bad ? ' (outside service area)' : ''}</option>
+                          })}
+                        </select>
+                        {cartSvc && !cartSvc.ok && (
+                          <p className="mt-1 text-[11px] text-amber-700 flex items-start gap-1">
+                            <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>info</span>
+                            <span>{cartSvc.message} <Link href="/addresses" className="underline">Update address</Link></span>
+                          </p>
+                        )}
+                      </>
                     )}
                   </div>
                   <div>
@@ -312,7 +336,7 @@ export default function LabCartPage() {
                       ))}
                     </div>
                   </div>
-                  <button onClick={handleCheckout} disabled={placing || addresses.length === 0}
+                  <button onClick={handleCheckout} disabled={placing || addresses.length === 0 || (cartSvc ? !cartSvc.ok : false)}
                     className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
                     {placing
                       ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />{method === 'ESEWA' ? 'Redirecting to eSewa...' : method === 'KHALTI' ? 'Redirecting to Khalti...' : 'Booking...'}</>

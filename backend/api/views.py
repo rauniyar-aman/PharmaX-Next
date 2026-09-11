@@ -72,6 +72,7 @@ from .serializers import (
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification, send_collector_welcome_email, send_pharmacy_welcome_email, send_lab_report_ready_email
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
+from .geo import check_address_serviceable, service_area_config
 from . import imports as bulk_imports
 from .throttles import AuthRateThrottle
 from .matching import (
@@ -463,6 +464,16 @@ class PublicSettingsView(APIView):
             'support_email': settings_map.get('support_email'),
             'support_phone': settings_map.get('support_phone'),
         }})
+
+
+class PublicServiceAreaView(APIView):
+    """Public read of the serviceable-area config (districts + coverage circles) so the storefront
+    can badge/disable out-of-area addresses and message the customer before they hit the
+    authoritative server-side gate. Physical fulfillment only — consult is nationwide."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({'success': True, 'data': service_area_config()})
 
 
 class HomeShowcaseView(APIView):
@@ -1452,6 +1463,10 @@ class OrderCheckoutView(APIView):
         except Address.DoesNotExist:
             return Response({'success': False, 'message': 'Address not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        ok, msg = check_address_serviceable(address)
+        if not ok:
+            return Response({'success': False, 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+
         prescription = None
         prescription_id = request.data.get('prescription_id')
         if prescription_id:
@@ -2342,6 +2357,10 @@ class LabTestBookingListCreateView(APIView):
         except Address.DoesNotExist:
             return Response({'success': False, 'message': 'Address not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        ok, msg = check_address_serviceable(address)
+        if not ok:
+            return Response({'success': False, 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+
         payment_method = request.data.get('payment_method')
         if payment_method not in ('KHALTI', 'ESEWA', 'CASH_ON_DELIVERY'):
             return Response({'success': False, 'message': "payment_method must be one of: KHALTI, ESEWA, CASH_ON_DELIVERY."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2776,6 +2795,10 @@ class LabTestCartCheckoutView(APIView):
         except (Address.DoesNotExist, ValueError, TypeError):
             return Response({'success': False, 'message': 'Address not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        ok, msg = check_address_serviceable(address)
+        if not ok:
+            return Response({'success': False, 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+
         # Each item is one booking line. It may be a bare test id (books for the account holder) or
         # an object {lab_test_id, patient_name, patient_phone, patient_age, patient_gender} naming who
         # this line's collection is for. Duplicates are intentionally NOT collapsed: the same test can
@@ -3104,6 +3127,9 @@ class SubscriptionListCreateView(APIView):
                 address = Address.objects.get(id=address_id, user=request.user)
             except Address.DoesNotExist:
                 return Response({'success': False, 'message': 'Address not found.'}, status=status.HTTP_404_NOT_FOUND)
+            ok, msg = check_address_serviceable(address)
+            if not ok:
+                return Response({'success': False, 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
 
         frequency_days = s.validated_data.get('frequency_days', 30)
         sub = MedicineSubscription.objects.create(

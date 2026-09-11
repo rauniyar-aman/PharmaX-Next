@@ -7,6 +7,8 @@ import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import type { Address } from '@/types'
 import type { PickedLocation } from '@/components/map/MapPicker'
+import { NEPAL_PROVINCES, guessDistrictFromText } from '@/lib/nepalDistricts'
+import { fetchServiceArea, isServiceable, type ServiceAreaConfig } from '@/lib/serviceArea'
 
 const MapPicker = dynamic(() => import('@/components/map/MapPicker'), {
   ssr: false,
@@ -27,9 +29,12 @@ export default function CheckoutShippingPage() {
   const [showMap, setShowMap] = useState(false)
   const [saving, setSaving] = useState(false)
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
-  const [form, setForm] = useState({ full_name: '', phone: '', address_line1: '', address_line2: '', city: '', state: '', is_default: false })
+  const [form, setForm] = useState({ full_name: '', phone: '', address_line1: '', address_line2: '', city: '', state: '', district: '', is_default: false })
   const [notes, setNotes] = useState('')
   const [detectingLocation, setDetectingLocation] = useState(false)
+  const [svcArea, setSvcArea] = useState<ServiceAreaConfig | null>(null)
+
+  useEffect(() => { fetchServiceArea().then(setSvcArea).catch(() => {}) }, [])
 
   // Autofill the recipient phone from the signed-in user's account (editable) when the add form is
   // opened, so the customer needn't re-type their own mobile.
@@ -39,11 +44,13 @@ export default function CheckoutShippingPage() {
 
   const handleMapPick = (loc: PickedLocation) => {
     setCoords({ lat: loc.lat, lng: loc.lng })
+    const guessed = guessDistrictFromText(loc.address, loc.city, loc.province)
     setForm((p) => ({
       ...p,
       address_line1: loc.address || p.address_line1,
       city: loc.city || p.city,
       state: loc.province || p.state,
+      district: p.district || guessed,
     }))
   }
 
@@ -99,16 +106,17 @@ export default function CheckoutShippingPage() {
 
   const handleAddAddress = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!coords) { toast.error('Please pin this address on the map so we can confirm delivery.'); setShowMap(true); return }
     setSaving(true)
     try {
-      const res = await api.post('/addresses/', { ...form, lat: coords?.lat, lng: coords?.lng })
+      const res = await api.post('/addresses/', { ...form, lat: coords.lat, lng: coords.lng })
       const newAddr = res.data.data.address
       setAddresses((p) => [...p, newAddr])
       setSelected(newAddr.id)
       setShowForm(false)
       setShowMap(false)
       setCoords(null)
-      setForm({ full_name: '', phone: '', address_line1: '', address_line2: '', city: '', state: '', is_default: false })
+      setForm({ full_name: '', phone: '', address_line1: '', address_line2: '', city: '', state: '', district: '', is_default: false })
     } catch {
       toast.error('Failed to save address.')
     } finally {
@@ -118,6 +126,13 @@ export default function CheckoutShippingPage() {
 
   const handleContinue = () => {
     if (!selected) { toast.error('Please select a delivery address.'); return }
+    // Belt-and-suspenders with the server gate: block clearly out-of-area addresses here with the
+    // reason, so the customer fixes it before the broadcast step rather than after a 400.
+    const addr = addresses.find((a) => a.id === selected)
+    if (svcArea && addr) {
+      const r = isServiceable(addr, svcArea)
+      if (!r.ok) { toast.error(r.message); return }
+    }
     sessionStorage.setItem('checkoutAddress', selected)
     sessionStorage.setItem('checkoutNotes', notes)
     router.push('/checkout/broadcasting')
@@ -151,18 +166,25 @@ export default function CheckoutShippingPage() {
       <h1 className="text-2xl font-bold text-on-surface">Delivery Address</h1>
 
       <div className="space-y-3">
-        {addresses.map((addr) => (
-          <label key={addr.id} className={`flex items-start gap-3 p-4 rounded-2xl border cursor-pointer transition-colors ${selected === addr.id ? 'border-primary bg-primary/5' : 'border-outline-variant bg-surface hover:border-primary/40'}`}>
-            <input type="radio" name="address" value={addr.id} checked={selected === addr.id} onChange={() => setSelected(addr.id)} className="mt-1 accent-primary" />
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-on-surface">{addr.full_name}</p>
-              <p className="text-sm text-on-surface-variant">{addr.address_line1}{addr.address_line2 ? `, ${addr.address_line2}` : ''}</p>
-              <p className="text-sm text-on-surface-variant">{addr.city}, {addr.state}</p>
-              <p className="text-sm text-on-surface-variant">{addr.phone}</p>
-              {addr.is_default && <span className="text-xs font-medium text-primary">Default</span>}
-            </div>
-          </label>
-        ))}
+        {addresses.map((addr) => {
+          const svc = svcArea ? isServiceable(addr, svcArea) : null
+          return (
+            <label key={addr.id} className={`flex items-start gap-3 p-4 rounded-2xl border cursor-pointer transition-colors ${selected === addr.id ? 'border-primary bg-primary/5' : 'border-outline-variant bg-surface hover:border-primary/40'}`}>
+              <input type="radio" name="address" value={addr.id} checked={selected === addr.id} onChange={() => setSelected(addr.id)} className="mt-1 accent-primary" />
+              <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-semibold text-on-surface">{addr.full_name}</p>
+                  {svc && !svc.ok && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Outside delivery area</span>}
+                </div>
+                <p className="text-sm text-on-surface-variant">{addr.address_line1}{addr.address_line2 ? `, ${addr.address_line2}` : ''}</p>
+                <p className="text-sm text-on-surface-variant">{addr.city}, {addr.state}</p>
+                <p className="text-sm text-on-surface-variant">{addr.phone}</p>
+                {addr.is_default && <span className="text-xs font-medium text-primary">Default</span>}
+                {svc && !svc.ok && <p className="text-[11px] text-amber-700 mt-1">{svc.message}</p>}
+              </div>
+            </label>
+          )
+        })}
 
         {!showForm ? (
           <div className="flex flex-col sm:flex-row gap-3">
@@ -209,6 +231,34 @@ export default function CheckoutShippingPage() {
                   className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
               </div>
             ))}
+            <div>
+              <label className="text-xs font-medium text-on-surface-variant">District</label>
+              <select required value={form.district}
+                onChange={(e) => setForm((p) => ({ ...p, district: e.target.value }))}
+                className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition">
+                <option value="">Select your district</option>
+                {NEPAL_PROVINCES.map((prov) => (
+                  <optgroup key={prov.name} label={`${prov.name} Province`}>
+                    {prov.districts.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+              {!coords && (
+                <p className="mt-1 text-[11px] text-on-surface-variant flex items-center gap-1">
+                  <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>info</span>
+                  Pin your location on the map — required to confirm delivery.
+                </p>
+              )}
+            </div>
+            {svcArea && form.district && coords && (() => {
+              const r = isServiceable({ district: form.district, lat: coords.lat, lng: coords.lng }, svcArea)
+              return (
+                <div className={`flex items-start gap-2 rounded-xl px-3 py-2 text-xs ${r.ok ? 'bg-primary/5 text-primary' : 'bg-amber-50 text-amber-700'}`}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>{r.ok ? 'check_circle' : 'info'}</span>
+                  <span>{r.ok ? 'We deliver to this address.' : r.message}</span>
+                </div>
+              )
+            })()}
             <label className="flex items-center gap-2 text-sm text-on-surface-variant cursor-pointer">
               <input type="checkbox" checked={form.is_default} onChange={(e) => setForm((p) => ({ ...p, is_default: e.target.checked }))} className="accent-primary" />
               Set as default address
