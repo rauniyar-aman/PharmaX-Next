@@ -7,6 +7,7 @@ import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { useLabCartStore } from '@/store/labCart'
 import type { LabTest, Address } from '@/types'
+import { fetchServiceArea, isServiceable, type ServiceAreaConfig } from '@/lib/serviceArea'
 
 const TIME_SLOTS = ['6:00 AM - 8:00 AM', '8:00 AM - 10:00 AM', '10:00 AM - 12:00 PM', '4:00 PM - 6:00 PM', '6:00 PM - 8:00 PM']
 
@@ -38,6 +39,7 @@ function LabTestDetailContent() {
 
   const [test, setTest] = useState<LabTest | null>(null)
   const [addresses, setAddresses] = useState<Address[]>([])
+  const [svcArea, setSvcArea] = useState<ServiceAreaConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [addressId, setAddressId] = useState('')
   const [date, setDate] = useState(tomorrowDateStr())
@@ -57,6 +59,8 @@ function LabTestDetailContent() {
     if (!id) return
     api.get(`/lab-tests/${id}/`).then((r) => setTest(r.data.data.labTest)).catch(() => toast.error('Lab test not found.')).finally(() => setLoading(false))
   }, [id])
+
+  useEffect(() => { fetchServiceArea().then(setSvcArea).catch(() => {}) }, [])
 
   useEffect(() => {
     if (!user) return
@@ -86,6 +90,12 @@ function LabTestDetailContent() {
   const handleBook = async () => {
     if (!user) { router.push('/signin'); return }
     if (!addressId) { toast.error('Please select a sample collection address.'); return }
+    // Home sample collection is a physical-fulfillment service — same service-area gate as delivery.
+    const bookAddr = addresses.find((a) => a.id === addressId)
+    if (svcArea && bookAddr) {
+      const r = isServiceable(bookAddr, svcArea)
+      if (!r.ok) { toast.error(r.message); return }
+    }
     if (!timeSlot) { toast.error('Please select a time slot.'); return }
     if (forSomeoneElse && !patientName.trim()) { toast.error("Enter the patient's name, or turn off “booking for someone else”."); return }
     setBooking(true)
@@ -145,6 +155,9 @@ function LabTestDetailContent() {
   const discount = Number(test.original_price) > Number(test.price)
     ? Math.round(((Number(test.original_price) - Number(test.price)) / Number(test.original_price)) * 100)
     : 0
+
+  const selectedLabAddr = addresses.find((a) => a.id === addressId)
+  const labSvc = svcArea && selectedLabAddr ? isServiceable(selectedLabAddr, svcArea) : null
 
   return (
     <div className="space-y-6">
@@ -251,10 +264,21 @@ function LabTestDetailContent() {
                   {addresses.length === 0 ? (
                     <Link href="/addresses" className="mt-1 block text-sm text-primary hover:underline">+ Add an address to book</Link>
                   ) : (
-                    <select value={addressId} onChange={(e) => setAddressId(e.target.value)}
-                      className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
-                      {addresses.map((a) => <option key={a.id} value={a.id}>{a.label} — {a.address_line1}, {a.city}</option>)}
-                    </select>
+                    <>
+                      <select value={addressId} onChange={(e) => setAddressId(e.target.value)}
+                        className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
+                        {addresses.map((a) => {
+                          const bad = svcArea ? !isServiceable(a, svcArea).ok : false
+                          return <option key={a.id} value={a.id}>{a.label} — {a.address_line1}, {a.city}{bad ? ' (outside service area)' : ''}</option>
+                        })}
+                      </select>
+                      {labSvc && !labSvc.ok && (
+                        <p className="mt-1 text-[11px] text-amber-700 flex items-start gap-1">
+                          <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>info</span>
+                          <span>{labSvc.message} <Link href="/addresses" className="underline">Update address</Link></span>
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
                 <div>
@@ -313,7 +337,7 @@ function LabTestDetailContent() {
                     ))}
                   </div>
                 </div>
-                <button onClick={handleBook} disabled={booking || addresses.length === 0}
+                <button onClick={handleBook} disabled={booking || addresses.length === 0 || (labSvc ? !labSvc.ok : false)}
                   className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
                   {booking
                     ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />{method === 'ESEWA' ? 'Redirecting to eSewa...' : method === 'KHALTI' ? 'Redirecting to Khalti...' : 'Booking...'}</>

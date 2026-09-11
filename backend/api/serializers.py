@@ -373,7 +373,7 @@ class AddressSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Address
-        fields = ['id', 'label', 'full_name', 'phone', 'address_line1', 'city', 'state', 'zip_code', 'lat', 'lng', 'is_default']
+        fields = ['id', 'label', 'full_name', 'phone', 'address_line1', 'city', 'state', 'district', 'zip_code', 'lat', 'lng', 'is_default']
         read_only_fields = ['id']
 
     def to_internal_value(self, data):

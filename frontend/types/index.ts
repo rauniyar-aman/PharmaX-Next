@@ -384,6 +384,9 @@ export interface Address {
   address_line2?: string | null
   city: string
   state: string
+  // Structured district (chosen from the fixed Nepal list) — the coarse signal the service-area
+  // gate reads. Optional/blank on legacy rows until the customer edits them.
+  district?: string
   zip_code?: string | null
   lat?: number | null
   lng?: number | null
