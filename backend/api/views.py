@@ -18,7 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.db.models import Q, Avg, Count, Sum, F, Max, Min, ProtectedError
 from django.db.models.functions import TruncDate
 from django.db import transaction, IntegrityError
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, HttpResponse
 from django.conf import settings
 from decimal import Decimal
 
@@ -72,6 +72,7 @@ from .serializers import (
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification, send_collector_welcome_email, send_pharmacy_welcome_email, send_lab_report_ready_email
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
+from . import imports as bulk_imports
 from .throttles import AuthRateThrottle
 from .matching import (
     broadcast_order, sync_order_status, expire_stale_fulfillment_requests, expire_stale_delivery_broadcasts,
@@ -4545,6 +4546,80 @@ class AdminLabTestDetailView(APIView):
             return Response({'success': False, 'message': 'Lab test not found.'}, status=status.HTTP_404_NOT_FOUND)
         test.delete()
         return Response({'success': True, 'message': 'Lab test deleted.'})
+
+
+# --- Bulk spreadsheet import/export (medicines, brands, categories, lab-tests) -------------------
+# One set of generic views drives all four entities; the entity is a URL segment and the required
+# permission (manage_inventory vs manage_lab_tests) is chosen per-entity from the import spec.
+
+class _BulkBase(APIView):
+    def get_permissions(self):
+        spec = bulk_imports.get_spec(self.kwargs.get('entity'))
+        # Unknown entity falls through to an inventory-permitted admin, who then gets a clean 404.
+        code = spec['permission'] if spec else 'manage_inventory'
+        return [require_permission(code)()]
+
+    def _spec(self, entity):
+        return bulk_imports.get_spec(entity)
+
+    def _xlsx(self, content, filename):
+        resp = HttpResponse(content, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return resp
+
+
+class AdminBulkTemplateView(_BulkBase):
+    def get(self, request, entity):
+        spec = self._spec(entity)
+        if not spec:
+            return Response({'success': False, 'message': 'Unknown data type.'}, status=status.HTTP_404_NOT_FOUND)
+        return self._xlsx(bulk_imports.template_workbook(spec), f'{entity}-import-template.xlsx')
+
+
+class AdminBulkExportView(_BulkBase):
+    def get(self, request, entity):
+        spec = self._spec(entity)
+        if not spec:
+            return Response({'success': False, 'message': 'Unknown data type.'}, status=status.HTTP_404_NOT_FOUND)
+        return self._xlsx(bulk_imports.export_workbook(spec), f'{entity}-export.xlsx')
+
+
+class AdminBulkImportPreviewView(_BulkBase):
+    def post(self, request, entity):
+        spec = self._spec(entity)
+        if not spec:
+            return Response({'success': False, 'message': 'Unknown data type.'}, status=status.HTTP_404_NOT_FOUND)
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'success': False, 'message': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            parsed = bulk_imports.parse_file(spec, file, file.name)
+        except Exception:
+            return Response({'success': False, 'message': 'Could not read that file. Upload a .xlsx or .csv exported from this template.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not parsed:
+            return Response({'success': False, 'message': 'The file has no data rows.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'success': True, 'data': bulk_imports.build_plan(spec, parsed)})
+
+
+class AdminBulkImportCommitView(_BulkBase):
+    def post(self, request, entity):
+        spec = self._spec(entity)
+        if not spec:
+            return Response({'success': False, 'message': 'Unknown data type.'}, status=status.HTTP_404_NOT_FOUND)
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'success': False, 'message': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            apply_rows = json.loads(request.data.get('apply_rows') or '[]')
+            create_refs = json.loads(request.data.get('create_refs') or '{}')
+        except (ValueError, TypeError):
+            return Response({'success': False, 'message': 'Invalid import selection.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            parsed = bulk_imports.parse_file(spec, file, file.name)
+        except Exception:
+            return Response({'success': False, 'message': 'Could not read that file.'}, status=status.HTTP_400_BAD_REQUEST)
+        summary = bulk_imports.apply_import(spec, parsed, apply_rows, create_refs)
+        return Response({'success': True, 'data': summary})
 
 
 class AdminLabTestBookingListView(APIView):

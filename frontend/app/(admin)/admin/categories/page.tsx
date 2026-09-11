@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import BulkDataTools from '@/components/admin/BulkDataTools'
 import type { Category } from '@/types'
 
 export default function AdminCategoriesPage() {
@@ -34,10 +35,13 @@ export default function AdminCategoriesPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-on-surface-variant">{categories.length} categories</p>
-        <Link href="/admin/categories/add"
-          className="flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity">
-          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>Add Category
-        </Link>
+        <div className="flex items-center gap-2">
+          <BulkDataTools entity="categories" title="Categories" onImported={load} />
+          <Link href="/admin/categories/add"
+            className="flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity">
+            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>Add Category
+          </Link>
+        </div>
       </div>
 
       {loading ? (
