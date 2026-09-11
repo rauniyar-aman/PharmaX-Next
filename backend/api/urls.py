@@ -145,6 +145,12 @@ urlpatterns = [
     path('admin/dashboard/',                    views.AdminDashboardView.as_view(),         name='admin-dashboard'),
     path('admin/reports/',                      views.AdminReportsView.as_view(),           name='admin-reports'),
     path('admin/settings/',                     views.AdminSettingsView.as_view(),          name='admin-settings'),
+    # Bulk spreadsheet import/export — entity in {categories, brands, medicines, lab-tests}. The
+    # distinct /import/... and /export/ suffixes don't collide with the exact/uuid routes below.
+    path('admin/<str:entity>/import/template/', views.AdminBulkTemplateView.as_view(),      name='admin-bulk-template'),
+    path('admin/<str:entity>/import/preview/',  views.AdminBulkImportPreviewView.as_view(), name='admin-bulk-import-preview'),
+    path('admin/<str:entity>/import/commit/',   views.AdminBulkImportCommitView.as_view(),  name='admin-bulk-import-commit'),
+    path('admin/<str:entity>/export/',          views.AdminBulkExportView.as_view(),        name='admin-bulk-export'),
     path('admin/categories/',                   views.AdminCategoryListView.as_view(),      name='admin-categories'),
     path('admin/categories/<uuid:pk>/',         views.AdminCategoryDetailView.as_view(),    name='admin-category-detail'),
     path('admin/brands/',                       views.AdminBrandListView.as_view(),         name='admin-brands'),

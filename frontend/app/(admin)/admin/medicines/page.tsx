@@ -4,6 +4,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
+import BulkDataTools from '@/components/admin/BulkDataTools'
 import type { Medicine } from '@/types'
 
 export default function AdminMedicinesPage() {
@@ -51,10 +52,13 @@ export default function AdminMedicinesPage() {
           <input type="text" placeholder="Search medicines..." value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }}
             className="w-full pl-9 pr-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
         </div>
-        <Link href="/admin/medicines/add"
-          className="flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity whitespace-nowrap">
-          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>Add Medicine
-        </Link>
+        <div className="flex items-center gap-2">
+          <BulkDataTools entity="medicines" title="Medicines" onImported={fetchMeds} />
+          <Link href="/admin/medicines/add"
+            className="flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity whitespace-nowrap">
+            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>Add Medicine
+          </Link>
+        </div>
       </div>
       <p className="text-xs text-on-surface-variant">{total} medicines total</p>
 

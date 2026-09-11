@@ -4,6 +4,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
+import BulkDataTools from '@/components/admin/BulkDataTools'
 import type { LabTest, LabTestCategory, LabTestBooking, LabTestBookingStatus, AdminLabCollector } from '@/types'
 
 const TABS = ['Tests', 'Categories', 'Bookings'] as const
@@ -81,10 +82,13 @@ function TestsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-on-surface-variant">{tests.length} lab tests</p>
-        <Link href="/admin/lab-tests/add"
-          className="flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity">
-          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>Add Lab Test
-        </Link>
+        <div className="flex items-center gap-2">
+          <BulkDataTools entity="lab-tests" title="Lab Tests" onImported={load} />
+          <Link href="/admin/lab-tests/add"
+            className="flex items-center gap-2 px-4 py-2.5 bg-primary text-on-primary text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity">
+            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>Add Lab Test
+          </Link>
+        </div>
       </div>
       <div className="bg-surface rounded-2xl border border-outline-variant overflow-hidden">
         <div className="overflow-x-auto">
