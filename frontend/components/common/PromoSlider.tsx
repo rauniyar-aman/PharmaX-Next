@@ -21,9 +21,11 @@ export default function PromoSlider({ slides }: Props) {
   if (slides.length === 0) return null
 
   return (
-    <div className="max-w-[1120px] mx-auto">
-      <CarouselRow className="gap-4 pb-1 -mx-1 px-1" ariaLabel="promotions">
-        {slides.map((slide, i) => {
+    // Full-width, left-aligned scroll row — same shell as every other home rail. (Previously capped
+    // at max-w-[1120px] mx-auto, which left the cards floating centred with big empty margins on wide
+    // screens while the rails below ran edge-to-edge.)
+    <CarouselRow className="gap-4 pb-1 -mx-1 px-1" ariaLabel="promotions">
+      {slides.map((slide, i) => {
           const image = resolveImg(slide.image_url)
           return (
             <Link key={i} href={slide.href}
@@ -37,7 +39,7 @@ export default function PromoSlider({ slides }: Props) {
               <div className="relative max-w-[75%]">
                 <p className="text-base sm:text-lg font-bold text-white leading-snug line-clamp-1">{slide.title}</p>
                 <p className="text-xs sm:text-sm text-white/85 mt-1 leading-relaxed line-clamp-2">{slide.subtitle}</p>
-                <span className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 bg-white text-gray-900 text-xs font-bold rounded-xl">
+                <span className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 bg-white text-gray-900 text-xs font-bold rounded-lg">
                   {slide.cta}
                   <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
                 </span>
@@ -50,7 +52,6 @@ export default function PromoSlider({ slides }: Props) {
             </Link>
           )
         })}
-      </CarouselRow>
-    </div>
+    </CarouselRow>
   )
 }

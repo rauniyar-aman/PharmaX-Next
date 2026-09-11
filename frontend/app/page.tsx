@@ -144,7 +144,7 @@ function Footer() {
 
   return (
     <footer className="border-t border-outline-variant mt-4 bg-surface">
-      <div className="w-full px-4 sm:px-6 py-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
         <div className="col-span-2 sm:col-span-1">
           <Logo iconSize={36} textClassName="text-lg" className="mb-2" />
           <p className="text-xs text-on-surface-variant leading-relaxed">
@@ -182,8 +182,10 @@ function Footer() {
           </ul>
         </div>
       </div>
-      <div className="border-t border-outline-variant py-4 text-center text-xs text-on-surface-variant">
-        © {new Date().getFullYear()} {support.store_name || 'Swasthaya'}. All rights reserved.
+      <div className="border-t border-outline-variant">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 text-xs text-on-surface-variant">
+          © {new Date().getFullYear()} {support.store_name || 'Swasthaya'}. All rights reserved.
+        </div>
       </div>
     </footer>
   )

@@ -15,6 +15,10 @@ const ICON_BADGE = 'w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-c
 // headshot reads as a person and the consult card is visually distinct from the lab-test and
 // article tiles that share the squared ICON_BADGE.
 const DOCTOR_AVATAR = 'w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 overflow-hidden'
+// Health-article tiles are image-forward: a full-bleed cover banner sits flush at the card top, so
+// (unlike the icon-badge Lab/Doctor cards) they carry no outer p-4 — the banner spans edge to edge
+// and the text below gets its own padded block. overflow-hidden keeps the banner inside the radius.
+const ARTICLE_CARD_CLASS = 'w-48 flex-shrink-0 bg-surface rounded-2xl border border-outline-variant overflow-hidden flex flex-col hover:-translate-y-1 hover:shadow-md transition-all duration-200'
 
 // The whole card is a <Link>, so the action affordance is a styled span, not a nested <button>
 // (invalid inside an <a>). It reuses the site's .btn tokens for a full-width filled pill — a real
@@ -90,7 +94,10 @@ function ServiceGroup({ title, viewAllHref, loading, empty, children }: {
           <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
         </Link>
       </div>
-      <CarouselRow className="gap-4 pb-1 -mx-1 px-1" ariaLabel={title}>
+      {/* Scrim matches this section's bg-primary/5 panel (primary at 5% over background) so the
+          arrow fade blends into the panel, not the page background. color-mix keeps it theme-safe. */}
+      <CarouselRow className="gap-4 pb-1 -mx-1 px-1" ariaLabel={title}
+        scrimClass="from-[color-mix(in_srgb,rgb(var(--c-primary))_5%,rgb(var(--c-background)))]">
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => <ServiceCardSkeleton key={i} />)
         ) : empty ? (
@@ -110,12 +117,15 @@ export default function OurServicesSection() {
   if (allLoaded && tests.length === 0 && doctors.length === 0 && posts.length === 0) return null
 
   return (
-    <section className="bg-primary/5 rounded-xl p-5 sm:p-6 space-y-6">
-      <div>
+    <section className="bg-primary/5 rounded-xl p-5 sm:p-6">
+      {/* Intro gets more breathing room (mb-8) than the 24px between rails below, so the section
+          heading reads as a level above the rail headings instead of sitting equally spaced. */}
+      <div className="mb-8">
         <h2 className="text-lg font-bold text-on-surface">Our Services</h2>
         <p className="text-xs text-on-surface-variant mt-0.5">More than a medicine store — lab tests, doctor consults, and health guidance, all in one place.</p>
       </div>
 
+      <div className="space-y-6">
       <ServiceGroup title="Lab Tests at Home" viewAllHref="/lab-tests" loading={testsLoading} empty={tests.length === 0}>
         {tests.map((t) => {
           const discount = Number(t.original_price) > Number(t.price)
@@ -149,7 +159,7 @@ export default function OurServicesSection() {
               )}
             </div>
             <p className="text-sm font-semibold text-on-surface leading-snug mt-3">Dr. {d.name}</p>
-            <p className="text-xs text-on-surface-variant mt-1">{d.specialty}</p>
+            <p className="text-xs text-on-surface-variant mt-1 flex-1">{d.specialty}</p>
             <p className="text-sm font-bold text-primary mt-2">NPR {Number(d.consultation_fee).toFixed(0)}</p>
             <CardCta label="Consult" />
           </Link>
@@ -158,20 +168,25 @@ export default function OurServicesSection() {
 
       <ServiceGroup title="Health Articles" viewAllHref="/health-articles" loading={postsLoading} empty={posts.length === 0}>
         {posts.map((p) => (
-          <Link key={p.id} href={`/health-articles/${p.slug}`} className={CARD_CLASS}>
-            <div className={ICON_BADGE}>
+          <Link key={p.id} href={`/health-articles/${p.slug}`} className={ARTICLE_CARD_CLASS}>
+            <div className="h-28 w-full bg-primary/10 flex items-center justify-center text-primary/40 overflow-hidden">
               {p.cover_image_url ? (
                 <img src={resolveImg(p.cover_image_url) || undefined} alt={p.title} className="w-full h-full object-cover" />
               ) : (
-                <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>article</span>
+                <span className="material-symbols-outlined ms-filled" style={{ fontSize: '32px' }}>article</span>
               )}
             </div>
-            {p.category && <p className="text-[10px] font-semibold text-primary uppercase tracking-wide mt-3">{p.category}</p>}
-            <p className="text-sm font-semibold text-on-surface leading-snug mt-1 line-clamp-2">{p.title}</p>
-            <CardCta label="Read article" />
+            <div className="p-4 flex flex-col flex-1">
+              {/* Title first, then category below in grey sentence-case — matches every other card
+                  (was a blue ALL-CAPS category sitting above the title, the reverse of the others). */}
+              <p className="text-sm font-semibold text-on-surface leading-snug line-clamp-2">{p.title}</p>
+              {p.category && <p className="text-xs text-on-surface-variant mt-1 flex-1">{p.category}</p>}
+              <CardCta label="Read article" />
+            </div>
           </Link>
         ))}
       </ServiceGroup>
+      </div>
     </section>
   )
 }
