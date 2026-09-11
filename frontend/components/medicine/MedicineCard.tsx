@@ -41,16 +41,21 @@ export default function MedicineCard({ medicine: med, inWishlist, cartLoading, o
         {imgSrc ? (
           <img src={imgSrc} alt={med.name} onError={() => setImgError(true)} className="h-24 w-full object-cover group-hover:scale-105 transition-transform duration-300" />
         ) : (
-          <div className="h-24 w-full bg-primary/5 flex items-center justify-center text-primary/30">
-            <span className="material-symbols-outlined text-4xl">medication</span>
+          <div className="h-24 w-full bg-primary/5 flex flex-col items-center justify-center gap-0.5 text-primary/30">
+            <span className="material-symbols-outlined text-3xl">medication</span>
+            <span className="text-[9px] font-medium text-primary/40 tracking-wide">Image coming soon</span>
           </div>
         )}
         {/* One overlaid badge, not three: Rx status wins (safety), then promo, then delivery tier */}
         <div className="absolute top-1.5 left-1.5">
           {isRx ? (
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-primary text-on-primary">Rx</span>
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-primary text-on-primary">
+              <span className="material-symbols-outlined ms-filled" style={{ fontSize: '12px' }}>prescriptions</span>
+              Rx
+            </span>
           ) : med.promo_badge ? (
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-white">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-white">
+              <span className="material-symbols-outlined ms-filled" style={{ fontSize: '12px' }}>sell</span>
               {med.promo_badge}
             </span>
           ) : (
@@ -79,7 +84,7 @@ export default function MedicineCard({ medicine: med, inWishlist, cartLoading, o
           <span className="text-xs font-medium text-on-surface">{Number(med.rating).toFixed(1)}</span>
           <span className="text-[10px] text-on-surface-variant">({med.total_reviews})</span>
         </div>
-        <div className="flex items-baseline gap-1.5 mt-1">
+        <div className="flex items-baseline gap-2 mt-1">
           <span className="text-sm font-bold text-on-surface">NPR {Number(med.price).toFixed(0)}</span>
           {Number(med.original_price) > Number(med.price) && (
             <span className="text-[10px] text-on-surface-variant line-through">NPR {Number(med.original_price).toFixed(0)}</span>
