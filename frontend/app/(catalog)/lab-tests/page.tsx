@@ -36,6 +36,12 @@ export default function LabTestsPage() {
   useEffect(() => setMounted(true), [])
   const isInCart = (id: string) => mounted && cartItems.some((i) => i.id === id)
 
+  // Deep-link support: the homepage "Value Packages" tile links here with ?packages=1, so switch
+  // the packages-only filter on for that entry (client-only read — no Suspense boundary needed).
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('packages') === '1') setPackagesOnly(true)
+  }, [])
+
   const handleAdd = (t: LabTest) => {
     addToCart({ id: t.id, name: t.name, price: t.price, is_package: t.is_package })
     toast.success('Added to cart')

@@ -10,6 +10,8 @@ import { useWishlist } from '@/hooks/useWishlist'
 import { useCart } from '@/hooks/useCart'
 import PublicHeader from '@/components/common/PublicHeader'
 import PromoSlider, { type Slide } from '@/components/common/PromoSlider'
+import HeroBanner from '@/components/home/HeroBanner'
+import TrustStrip from '@/components/home/TrustStrip'
 import CategoryRail from '@/components/home/CategoryRail'
 import BrandRail from '@/components/home/BrandRail'
 import TabbedProductRail from '@/components/home/TabbedProductRail'
@@ -17,7 +19,7 @@ import StatsBar from '@/components/home/StatsBar'
 import Testimonials from '@/components/home/Testimonials'
 import OurServicesSection from '@/components/home/OurServicesSection'
 import FeaturedDealsRail from '@/components/home/FeaturedDealsRail'
-import QuickLinksGrid from '@/components/home/QuickLinksGrid'
+import ServiceTiles from '@/components/home/ServiceTiles'
 
 // Mirrors the redirect map in signin/restore-account — every non-customer role has its own
 // dashboard and should never land on the customer storefront while logged in as themselves.
@@ -97,9 +99,11 @@ export default function HomePage() {
 
       <main className="w-full px-4 sm:px-6 py-6 space-y-10">
         <h1 className="sr-only">Swasthaya — Healthcare, Simplified.</h1>
-        <PromoSlider slides={heroSlides} />
+        <HeroBanner slides={heroSlides} />
 
-        <QuickLinksGrid />
+        <ServiceTiles />
+
+        <TrustStrip />
 
         <FeaturedDealsRail
           wishlistIds={wishlistIds}

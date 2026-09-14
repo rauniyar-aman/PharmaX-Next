@@ -26,6 +26,13 @@ export default function DoctorConsultPage() {
     api.get('/doctors/specialties/').then((r) => setSpecialties(r.data.data.specialties || [])).catch(() => {})
   }, [])
 
+  // Deep-link support: the homepage "Consult by Specialty" tiles link here with ?specialty=<name>,
+  // so pre-select that filter on mount (client-only read — no Suspense boundary needed).
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search).get('specialty')
+    if (sp) setSpecialty(sp)
+  }, [])
+
   const fetchDoctors = useCallback(() => {
     setLoading(true)
     const params: Record<string, any> = { sortBy: 'popular' }

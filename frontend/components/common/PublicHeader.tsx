@@ -111,7 +111,7 @@ export default function PublicHeader() {
           </button>
 
           <Link href={hydrated && user?.role === 'CUSTOMER' ? '/dashboard' : '/'} className="flex-shrink-0">
-            <Logo iconSize={28} textClassName="text-base sm:text-2xl" />
+            <Logo iconSizeClassName="h-7 w-7 sm:h-11 sm:w-11" textClassName="text-base sm:text-2xl" />
           </Link>
 
           <div className="hidden md:block">
