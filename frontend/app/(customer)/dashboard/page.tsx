@@ -6,9 +6,15 @@ import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { useWishlist } from '@/hooks/useWishlist'
 import { useCart } from '@/hooks/useCart'
+import { type Slide } from '@/components/common/PromoSlider'
+import HeroBanner from '@/components/home/HeroBanner'
+import TrustStrip from '@/components/home/TrustStrip'
+import PrescriptionCTA from '@/components/home/PrescriptionCTA'
+import ServiceTiles from '@/components/home/ServiceTiles'
 import TabbedProductRail from '@/components/home/TabbedProductRail'
 import OurServicesSection from '@/components/home/OurServicesSection'
 import FeaturedDealsRail from '@/components/home/FeaturedDealsRail'
+import CategoryRail from '@/components/home/CategoryRail'
 import type { Order, ReminderScheduleItem, Wallet } from '@/types'
 
 const ORDER_STATUS_LABEL: Record<string, string> = {
@@ -38,6 +44,7 @@ export default function DashboardPage() {
   const [reminderSchedule, setReminderSchedule] = useState<ReminderScheduleItem[]>([])
   const [wallet, setWallet] = useState<Wallet | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(true)
+  const [heroSlides, setHeroSlides] = useState<Slide[]>([])
 
   // Reuses the exact same endpoints the Orders / Reminders / Wallet pages already fetch from —
   // no second order-status lookup, no parallel reminders model, just the same data read here too.
@@ -47,6 +54,17 @@ export default function DashboardPage() {
       api.get('/reminders/today/').then((r) => setReminderSchedule(r.data.data.schedule || [])).catch(() => {}),
       api.get('/wallet/').then((r) => setWallet(r.data.data.wallet)).catch(() => {}),
     ]).finally(() => setSummaryLoading(false))
+  }, [])
+
+  // Hero promo banners — the same HERO-placement banners the public landing shows, giving the
+  // dashboard a lead visual ("product demonstration") instead of opening straight into stat cards.
+  useEffect(() => {
+    api.get('/promo-banners/').then((r) => {
+      const banners = (r.data.data.banners || {}).HERO || []
+      setHeroSlides(banners.map((b: any) => ({
+        title: b.title, subtitle: b.subtitle, cta: b.cta, href: b.href, icon: b.icon, gradient: b.gradient, image_url: b.image_url,
+      })))
+    }).catch(() => {})
   }, [])
 
   const handleAddToCart = useCallback(async (medId: string, e: React.MouseEvent) => {
@@ -115,7 +133,22 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      <HeroBanner slides={heroSlides} />
+
+      <ServiceTiles />
+
+      <TrustStrip />
+
+      <PrescriptionCTA />
+
       <TabbedProductRail
+        wishlistIds={wishlistIds}
+        onToggleWishlist={handleWishlist}
+        onAddToCart={handleAddToCart}
+        cartLoading={cartLoading}
+      />
+
+      <FeaturedDealsRail
         wishlistIds={wishlistIds}
         onToggleWishlist={handleWishlist}
         onAddToCart={handleAddToCart}
@@ -124,12 +157,7 @@ export default function DashboardPage() {
 
       <OurServicesSection />
 
-      <FeaturedDealsRail
-        wishlistIds={wishlistIds}
-        onToggleWishlist={handleWishlist}
-        onAddToCart={handleAddToCart}
-        cartLoading={cartLoading}
-      />
+      <CategoryRail />
     </div>
   )
 }

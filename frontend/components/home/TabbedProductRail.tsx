@@ -37,10 +37,13 @@ function discountPct(m: Medicine) {
   return (original - price) / original
 }
 
+// Best Sellers leads (the default tab). There is no sales-count field on Medicine, so highest
+// rating is the closest available proxy — the old "Top Rated" tab was the same signal, folded in
+// here rather than shown twice.
 const TABS = [
+  { key: 'bestsellers', label: 'Best Sellers', viewAllHref: '/medicines?sortBy=rating' },
   { key: 'new', label: 'New Launches', viewAllHref: '/medicines?sortBy=newest' },
   { key: 'deals', label: 'Deals of the Day', viewAllHref: '/medicines?sortBy=price-asc' },
-  { key: 'top', label: 'Top Rated', viewAllHref: '/medicines?sortBy=rating' },
   { key: 'wellness', label: 'Wellness Essentials', viewAllHref: '/medicines?category=Health+Food+and+Drinks' },
 ] as const
 type TabKey = typeof TABS[number]['key']
@@ -61,15 +64,15 @@ export default function TabbedProductRail({ wishlistIds, onToggleWishlist, onAdd
 
   const { medicines: newLaunches, loading: newLoading } = useMedicineRail({ sortBy: 'newest', limit: 10, ...geo })
   const { medicines: dealsPool, loading: dealsLoading } = useMedicineRail({ sortBy: 'price-asc', limit: 30, ...geo })
-  const { medicines: topRated, loading: topLoading } = useMedicineRail({ sortBy: 'rating', limit: 10, ...geo })
+  const { medicines: bestSellers, loading: bestLoading } = useMedicineRail({ sortBy: 'rating', limit: 10, ...geo })
   const { medicines: wellness, loading: wellnessLoading } = useMedicineRail({ category: 'Health Food and Drinks', limit: 10, ...geo })
 
   const deals = [...dealsPool].sort((a, b) => discountPct(b) - discountPct(a)).slice(0, 10)
 
   const byTab: Record<TabKey, { medicines: Medicine[]; loading: boolean }> = {
+    bestsellers: { medicines: bestSellers, loading: bestLoading },
     new: { medicines: newLaunches, loading: newLoading },
     deals: { medicines: deals, loading: dealsLoading },
-    top: { medicines: topRated, loading: topLoading },
     wellness: { medicines: wellness, loading: wellnessLoading },
   }
 

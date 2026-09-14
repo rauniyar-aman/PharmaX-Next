@@ -2,13 +2,14 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { resolveImg } from '@/lib/resolveImg'
+import { productPhoto } from '@/lib/demoImages'
 import DeliveryTierBadge from '@/components/medicine/DeliveryTierBadge'
 import type { Medicine } from '@/types'
 
 export function MedicineCardSkeleton() {
   return (
     <div className="bg-surface rounded-xl overflow-hidden border border-outline-variant animate-pulse">
-      <div className="h-24 bg-surface-container" />
+      <div className="h-36 bg-surface-container" />
       <div className="p-2.5 space-y-1.5">
         <div className="h-2.5 bg-surface-container rounded w-1/3" />
         <div className="h-3.5 bg-surface-container rounded w-3/4" />
@@ -31,23 +32,25 @@ interface Props {
 
 export default function MedicineCard({ medicine: med, inWishlist, cartLoading, onToggleWishlist, onAddToCart, badge, className = '' }: Props) {
   const isRx = med.type === 'Rx'
-  // Fall back to the placeholder if there's no image *or* the image URL fails to load, so a
-  // broken/missing source degrades to the clean icon instead of a cropped "sliver" of a dead image.
+  // Every card shows a photo: the real product image when it exists, otherwise a topical demo photo
+  // keyed off the product's category (see lib/demoImages) — so the storefront never falls back to a
+  // bare "no image" placeholder. If a real image URL fails to load we drop to the same demo photo.
   const [imgError, setImgError] = useState(false)
-  const imgSrc = imgError ? null : resolveImg(med.image_url)
+  const realSrc = resolveImg(med.image_url)
+  const imgSrc = imgError || !realSrc ? productPhoto(med) : realSrc
+  // Savings, shown as a green "X% OFF" flag on the image (hidden below 5% to avoid a noisy "1% OFF").
+  const price = Number(med.price)
+  const original = Number(med.original_price)
+  const discount = original > price ? Math.round(((original - price) / original) * 100) : 0
   return (
     <div className={`bg-surface rounded-xl border border-outline-variant overflow-hidden hover:-translate-y-0.5 transition-all duration-200 flex flex-col group ${className}`}>
-      <Link href={`/medicines/${med.id}`} className="relative block overflow-hidden">
-        {imgSrc ? (
-          <img src={imgSrc} alt={med.name} onError={() => setImgError(true)} className="h-24 w-full object-cover group-hover:scale-105 transition-transform duration-300" />
-        ) : (
-          <div className="h-24 w-full bg-primary/5 flex flex-col items-center justify-center gap-0.5 text-primary/30">
-            <span className="material-symbols-outlined text-3xl">medication</span>
-            <span className="text-[9px] font-medium text-primary/40 tracking-wide">Image coming soon</span>
-          </div>
-        )}
-        {/* One overlaid badge, not three: Rx status wins (safety), then promo, then delivery tier */}
-        <div className="absolute top-1.5 left-1.5">
+      <Link href={`/medicines/${med.id}`} className="relative block overflow-hidden bg-surface-container">
+        <img src={imgSrc} alt={med.name}
+          onError={() => { if (!imgError) setImgError(true) }}
+          className="h-36 w-full object-cover group-hover:scale-105 transition-transform duration-300" />
+        {/* Badges stack top-left (Rx status wins for safety, then promo, then delivery tier), with the
+            savings flag below them — PharmEasy-style — so nothing overlaps the wishlist button. */}
+        <div className="absolute top-1.5 left-1.5 flex flex-col items-start gap-1">
           {isRx ? (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-primary text-on-primary">
               <span className="material-symbols-outlined ms-filled" style={{ fontSize: '12px' }}>prescriptions</span>
@@ -60,6 +63,11 @@ export default function MedicineCard({ medicine: med, inWishlist, cartLoading, o
             </span>
           ) : (
             <DeliveryTierBadge tier={med.delivery_tier} className="px-1.5 py-0.5 text-[10px]" />
+          )}
+          {discount >= 5 && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-secondary text-white shadow-sm">
+              {discount}% OFF
+            </span>
           )}
         </div>
         <button onClick={(e) => onToggleWishlist(med.id, e)}

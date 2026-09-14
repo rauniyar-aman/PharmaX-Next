@@ -6,186 +6,251 @@ import { resolveImg } from '@/lib/resolveImg'
 import CarouselRow from '@/components/common/CarouselRow'
 import type { LabTest, Doctor, BlogPost } from '@/types'
 
-// Same card shell and accent for all three services — the whole point of this section is that Lab
-// Tests / Doctor Consult / Health Articles read as one family instead of three independently-
-// styled rails, so every tile shares size, shape, and color regardless of which service it's for.
-const CARD_CLASS = 'w-48 flex-shrink-0 bg-surface rounded-2xl border border-outline-variant p-4 flex flex-col hover:-translate-y-1 hover:shadow-md transition-all duration-200'
-const ICON_BADGE = 'w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 overflow-hidden'
-// Doctors get a larger *circular* avatar (a face, not an abstract service glyph) so a real
-// headshot reads as a person and the consult card is visually distinct from the lab-test and
-// article tiles that share the squared ICON_BADGE.
-const DOCTOR_AVATAR = 'w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 overflow-hidden'
-// Health-article tiles are image-forward: a full-bleed cover banner sits flush at the card top, so
-// (unlike the icon-badge Lab/Doctor cards) they carry no outer p-4 — the banner spans edge to edge
-// and the text below gets its own padded block. overflow-hidden keeps the banner inside the radius.
-const ARTICLE_CARD_CLASS = 'w-48 flex-shrink-0 bg-surface rounded-2xl border border-outline-variant overflow-hidden flex flex-col hover:-translate-y-1 hover:shadow-md transition-all duration-200'
+// This section used to be three near-identical rails that led with lab-test names, doctor names,
+// and article titles. It's now merchandising-first: lab tests lead with the *saving* (discount %),
+// packages lead with their *value* (amount saved + tests included), and doctors are entered by
+// *specialty tiles* — a graphic grid — with only a short "top doctors" row keeping the named cards.
 
-// The whole card is a <Link>, so the action affordance is a styled span, not a nested <button>
-// (invalid inside an <a>). It reuses the site's .btn tokens for a full-width filled pill — a real
-// button-strength affordance rather than a small text link — and mt-auto pins it to the card foot.
-function CardCta({ label }: { label: string }) {
-  return (
-    <span className="btn btn-sm btn-primary w-full mt-auto">
-      {label}
-      <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
-    </span>
-  )
+function discountPct(price: string | number, original: string | number) {
+  const p = Number(price), o = Number(original)
+  return o > p && o > 0 ? Math.round(((o - p) / o) * 100) : 0
 }
 
-function ServiceCardSkeleton() {
-  return (
-    <div className="w-48 flex-shrink-0 bg-surface rounded-2xl border border-outline-variant p-4 animate-pulse space-y-3">
-      <div className="w-10 h-10 rounded-xl bg-surface-container" />
-      <div className="h-4 bg-surface-container rounded w-3/4" />
-      <div className="h-3 bg-surface-container rounded w-1/2" />
-    </div>
-  )
-}
-
-// Each hook below fetches from the exact same endpoint/params the original standalone
-// LabTestRail/DoctorRail/HealthArticlesRail components used — only the rendering is consolidated,
-// not the data-fetching.
-function useLabTests() {
-  const [tests, setTests] = useState<LabTest[]>([])
-  const [loading, setLoading] = useState(true)
-  useEffect(() => {
-    api.get('/lab-tests/', { params: { sortBy: 'popular', limit: 10 } })
-      .then((r) => setTests(r.data.data.labTests || []))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
-  return { tests, loading }
-}
-
-function useDoctors() {
-  const [doctors, setDoctors] = useState<Doctor[]>([])
-  const [loading, setLoading] = useState(true)
-  useEffect(() => {
-    api.get('/doctors/', { params: { sortBy: 'popular' } })
-      .then((r) => setDoctors((r.data.data.doctors || []).slice(0, 10)))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
-  return { doctors, loading }
-}
-
-function useHealthArticles() {
-  const [posts, setPosts] = useState<BlogPost[]>([])
-  const [loading, setLoading] = useState(true)
-  useEffect(() => {
-    api.get('/blog/', { params: { limit: 8 } }).then((r) => setPosts(r.data.data.posts || [])).catch(() => {}).finally(() => setLoading(false))
-  }, [])
-  return { posts, loading }
-}
-
-function ServiceGroup({ title, viewAllHref, loading, empty, children }: {
-  title: string
-  viewAllHref: string
-  loading: boolean
-  empty: boolean
-  children: React.ReactNode
+function ScrollGroup({ title, subtitle, viewAllHref, loading, empty, emptyText = 'Nothing here yet.', children }: {
+  title: string; subtitle?: string; viewAllHref: string; loading: boolean; empty: boolean; emptyText?: string; children: React.ReactNode
 }) {
   return (
     <div>
-      <div className="flex items-center gap-3 mb-3">
-        <h3 className="text-sm font-bold text-on-surface">{title}</h3>
-        <Link href={viewAllHref} className="text-xs font-semibold text-primary hover:underline flex items-center gap-0.5">
+      <div className="flex items-baseline gap-3 mb-3">
+        <div>
+          <h3 className="text-sm font-bold text-on-surface">{title}</h3>
+          {subtitle && <p className="text-xs text-on-surface-variant mt-0.5">{subtitle}</p>}
+        </div>
+        <Link href={viewAllHref} className="text-xs font-semibold text-primary hover:underline flex items-center gap-0.5 ml-auto flex-shrink-0">
           View All
           <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
         </Link>
       </div>
-      {/* Scrim matches this section's bg-primary/5 panel (primary at 5% over background) so the
-          arrow fade blends into the panel, not the page background. color-mix keeps it theme-safe. */}
       <CarouselRow className="gap-4 pb-1 -mx-1 px-1" ariaLabel={title}
         scrimClass="from-[color-mix(in_srgb,rgb(var(--c-primary))_5%,rgb(var(--c-background)))]">
         {loading ? (
-          Array.from({ length: 5 }).map((_, i) => <ServiceCardSkeleton key={i} />)
+          Array.from({ length: 5 }).map((_, i) => <CardSkeleton key={i} />)
         ) : empty ? (
-          <p className="text-sm text-on-surface-variant py-4">Nothing here yet.</p>
+          <p className="text-sm text-on-surface-variant py-4">{emptyText}</p>
         ) : children}
       </CarouselRow>
     </div>
   )
 }
 
-export default function OurServicesSection() {
-  const { tests, loading: testsLoading } = useLabTests()
-  const { doctors, loading: doctorsLoading } = useDoctors()
-  const { posts, loading: postsLoading } = useHealthArticles()
+function CardSkeleton() {
+  return (
+    <div className="w-48 flex-shrink-0 bg-surface rounded-2xl border border-outline-variant p-4 animate-pulse space-y-3">
+      <div className="h-4 bg-surface-container rounded w-3/4" />
+      <div className="h-3 bg-surface-container rounded w-1/2" />
+      <div className="h-8 bg-surface-container rounded mt-2" />
+    </div>
+  )
+}
 
-  const allLoaded = !testsLoading && !doctorsLoading && !postsLoading
-  if (allLoaded && tests.length === 0 && doctors.length === 0 && posts.length === 0) return null
+// ---- Popular lab tests: the discount is the lead, not the name ------------------------------
+function LabTestCard({ t }: { t: LabTest }) {
+  const off = discountPct(t.price, t.original_price)
+  return (
+    <Link href={`/lab-tests/${t.id}`}
+      className="w-48 flex-shrink-0 bg-surface rounded-2xl border border-outline-variant p-4 flex flex-col hover:-translate-y-1 hover:shadow-md transition-all duration-200">
+      <div className="flex items-center justify-between">
+        <div className="w-10 h-10 rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center flex-shrink-0">
+          <span className="material-symbols-outlined ms-filled" style={{ fontSize: '20px' }}>science</span>
+        </div>
+        {off > 0 && <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-error/10 text-error">{off}% OFF</span>}
+      </div>
+      <p className="text-sm font-semibold text-on-surface leading-snug mt-3 flex-1 line-clamp-2">{t.name}</p>
+      <p className="text-xs text-on-surface-variant mt-1">{t.category_name}</p>
+      <div className="flex items-baseline gap-2 mt-2">
+        <span className="text-sm font-bold text-on-surface">NPR {Number(t.price).toFixed(0)}</span>
+        {off > 0 && <span className="text-[10px] text-on-surface-variant line-through">NPR {Number(t.original_price).toFixed(0)}</span>}
+      </div>
+      <span className="btn btn-sm btn-primary w-full mt-3">Book test<span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span></span>
+    </Link>
+  )
+}
+
+// ---- Value packages: the amount saved + tests included is the lead ---------------------------
+function PackageCard({ t }: { t: LabTest }) {
+  const off = discountPct(t.price, t.original_price)
+  const saved = Math.max(0, Number(t.original_price) - Number(t.price))
+  const count = t.included_tests?.length || 0
+  return (
+    <Link href={`/lab-tests/${t.id}`}
+      className="w-56 flex-shrink-0 rounded-2xl border border-purple-500/20 bg-purple-500/5 p-4 flex flex-col hover:-translate-y-1 hover:shadow-md transition-all duration-200">
+      <div className="flex items-center justify-between">
+        <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full bg-purple-500/15 text-purple-600 dark:text-purple-300">
+          <span className="material-symbols-outlined ms-filled" style={{ fontSize: '14px' }}>inventory_2</span>
+          Package
+        </span>
+        {off > 0 && <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-purple-600 text-white">Save {off}%</span>}
+      </div>
+      <p className="text-sm font-semibold text-on-surface leading-snug mt-3 line-clamp-2">{t.name}</p>
+      <p className="text-xs text-on-surface-variant mt-1 flex-1">{count > 0 ? `${count} tests included` : 'Multi-test package'}</p>
+      <div className="flex items-baseline gap-2 mt-2">
+        <span className="text-base font-bold text-on-surface">NPR {Number(t.price).toFixed(0)}</span>
+        {off > 0 && <span className="text-[10px] text-on-surface-variant line-through">NPR {Number(t.original_price).toFixed(0)}</span>}
+      </div>
+      {saved > 0 && <p className="text-[11px] font-semibold text-purple-600 dark:text-purple-300 mt-0.5">You save NPR {saved.toFixed(0)}</p>}
+      <span className="btn btn-sm w-full mt-3 bg-purple-600 text-white hover:opacity-90">View package<span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span></span>
+    </Link>
+  )
+}
+
+// ---- Consult by specialty: a graphic grid instead of a list of doctor names ------------------
+const SPECIALTY_COLORS = [
+  'bg-rose-500/10 text-rose-600 dark:text-rose-400',
+  'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  'bg-purple-500/10 text-purple-600 dark:text-purple-400',
+  'bg-teal-500/10 text-teal-600 dark:text-teal-400',
+  'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400',
+  'bg-sky-500/10 text-sky-600 dark:text-sky-400',
+]
+
+function specialtyIcon(name: string): string {
+  const s = name.toLowerCase()
+  if (s.includes('cardio')) return 'cardiology'
+  if (s.includes('derma') || s.includes('skin')) return 'dermatology'
+  if (s.includes('pediatr') || s.includes('child')) return 'child_care'
+  if (s.includes('gyne') || s.includes('obstet')) return 'pregnant_woman'
+  if (s.includes('psych') || s.includes('mental')) return 'psychology'
+  if (s.includes('dent')) return 'dentistry'
+  if (s.includes('orthop') || s.includes('bone')) return 'orthopedics'
+  if (s.includes('ent') || s.includes('ear')) return 'hearing'
+  if (s.includes('ophthal') || s.includes('eye')) return 'ophthalmology'
+  if (s.includes('neuro')) return 'neurology'
+  if (s.includes('gastro')) return 'gastroenterology'
+  if (s.includes('diabet') || s.includes('endocr')) return 'glucose'
+  if (s.includes('pulmo') || s.includes('lung') || s.includes('chest')) return 'pulmonology'
+  return 'stethoscope'
+}
+
+export default function OurServicesSection() {
+  const [tests, setTests] = useState<LabTest[]>([])
+  const [packages, setPackages] = useState<LabTest[]>([])
+  const [specialties, setSpecialties] = useState<string[]>([])
+  const [doctors, setDoctors] = useState<Doctor[]>([])
+  const [posts, setPosts] = useState<BlogPost[]>([])
+  const [testsLoading, setTestsLoading] = useState(true)
+  const [pkgLoading, setPkgLoading] = useState(true)
+  const [docsLoading, setDocsLoading] = useState(true)
+  const [postsLoading, setPostsLoading] = useState(true)
+
+  useEffect(() => {
+    // Popular tests (packages filtered out so the two lab rails stay distinct)
+    api.get('/lab-tests/', { params: { sortBy: 'popular', limit: 12 } })
+      .then((r) => setTests((r.data.data.labTests || []).filter((t: LabTest) => !t.is_package)))
+      .catch(() => {}).finally(() => setTestsLoading(false))
+    // Value packages via the same isPackage filter the catalog page uses
+    api.get('/lab-tests/', { params: { sortBy: 'popular', isPackage: 'true', limit: 10 } })
+      .then((r) => setPackages(r.data.data.labTests || []))
+      .catch(() => {}).finally(() => setPkgLoading(false))
+    // Specialties (authoritative list) + a short "top doctors" sample
+    api.get('/doctors/specialties/').then((r) => setSpecialties(r.data.data.specialties || [])).catch(() => {})
+    api.get('/doctors/', { params: { sortBy: 'popular' } })
+      .then((r) => setDoctors((r.data.data.doctors || []).slice(0, 8)))
+      .catch(() => {}).finally(() => setDocsLoading(false))
+    api.get('/blog/', { params: { limit: 8 } })
+      .then((r) => setPosts(r.data.data.posts || []))
+      .catch(() => {}).finally(() => setPostsLoading(false))
+  }, [])
+
+  const allLoaded = !testsLoading && !pkgLoading && !docsLoading && !postsLoading
+  if (allLoaded && tests.length === 0 && packages.length === 0 && doctors.length === 0 && posts.length === 0) return null
 
   return (
     <section className="bg-primary/5 rounded-xl p-5 sm:p-6">
-      {/* Intro gets more breathing room (mb-8) than the 24px between rails below, so the section
-          heading reads as a level above the rail headings instead of sitting equally spaced. */}
       <div className="mb-8">
         <h2 className="text-lg font-bold text-on-surface">Our Services</h2>
-        <p className="text-xs text-on-surface-variant mt-0.5">More than a medicine store — lab tests, doctor consults, and health guidance, all in one place.</p>
+        <p className="text-xs text-on-surface-variant mt-0.5">More than a medicine store — lab tests, health packages, and doctor consults, all in one place.</p>
       </div>
 
-      <div className="space-y-6">
-      <ServiceGroup title="Lab Tests at Home" viewAllHref="/lab-tests" loading={testsLoading} empty={tests.length === 0}>
-        {tests.map((t) => {
-          const discount = Number(t.original_price) > Number(t.price)
-            ? Math.round(((Number(t.original_price) - Number(t.price)) / Number(t.original_price)) * 100)
-            : 0
-          return (
-            <Link key={t.id} href={`/lab-tests/${t.id}`} className={CARD_CLASS}>
-              <div className={ICON_BADGE}>
-                <span className="material-symbols-outlined ms-filled" style={{ fontSize: '20px' }}>biotech</span>
-              </div>
-              <p className="text-sm font-semibold text-on-surface leading-snug mt-3 flex-1 line-clamp-2">{t.name}</p>
-              <p className="text-xs text-on-surface-variant mt-1">{t.category_name}</p>
-              <div className="flex items-baseline gap-2 mt-2">
-                <span className="text-sm font-bold text-primary">NPR {Number(t.price).toFixed(0)}</span>
-                {discount > 0 && <span className="text-[10px] text-on-surface-variant line-through">NPR {Number(t.original_price).toFixed(0)}</span>}
-              </div>
-              <CardCta label="Book test" />
+      <div className="space-y-8">
+        <ScrollGroup title="Popular Lab Tests" subtitle="Home sample collection, certified labs" viewAllHref="/lab-tests" loading={testsLoading} empty={tests.length === 0}>
+          {tests.map((t) => <LabTestCard key={t.id} t={t} />)}
+        </ScrollGroup>
+
+        {(pkgLoading || packages.length > 0) && (
+          <ScrollGroup title="Value Test Packages" subtitle="Bundled tests at a lower price" viewAllHref="/lab-tests?packages=1" loading={pkgLoading} empty={packages.length === 0}>
+            {packages.map((t) => <PackageCard key={t.id} t={t} />)}
+          </ScrollGroup>
+        )}
+
+        {/* Consult by specialty — the graphic entry point. Doctor names are demoted to a short row. */}
+        <div>
+          <div className="flex items-baseline gap-3 mb-3">
+            <div>
+              <h3 className="text-sm font-bold text-on-surface">Consult by Specialty</h3>
+              <p className="text-xs text-on-surface-variant mt-0.5">Video consult a certified doctor from anywhere in Nepal</p>
+            </div>
+            <Link href="/doctor-consult" className="text-xs font-semibold text-primary hover:underline flex items-center gap-0.5 ml-auto flex-shrink-0">
+              View All<span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
             </Link>
-          )
-        })}
-      </ServiceGroup>
+          </div>
 
-      <ServiceGroup title="Consult a Doctor" viewAllHref="/doctor-consult" loading={doctorsLoading} empty={doctors.length === 0}>
-        {doctors.map((d) => (
-          <Link key={d.id} href={`/doctor-consult/${d.id}`} className={CARD_CLASS}>
-            <div className={DOCTOR_AVATAR}>
-              {d.photo_url ? (
-                <img src={resolveImg(d.photo_url) || undefined} alt={`Dr. ${d.name}`} className="w-full h-full object-cover" />
-              ) : (
-                <span className="material-symbols-outlined" style={{ fontSize: '28px' }}>person</span>
-              )}
-            </div>
-            <p className="text-sm font-semibold text-on-surface leading-snug mt-3">Dr. {d.name}</p>
-            <p className="text-xs text-on-surface-variant mt-1 flex-1">{d.specialty}</p>
-            <p className="text-sm font-bold text-primary mt-2">NPR {Number(d.consultation_fee).toFixed(0)}</p>
-            <CardCta label="Consult" />
-          </Link>
-        ))}
-      </ServiceGroup>
+          {specialties.length > 0 && (
+            <CarouselRow className="gap-3 pb-1 -mx-1 px-1 mb-4" ariaLabel="specialties"
+              scrimClass="from-[color-mix(in_srgb,rgb(var(--c-primary))_5%,rgb(var(--c-background)))]">
+              {specialties.slice(0, 12).map((s, i) => (
+                <Link key={s} href={`/doctor-consult?specialty=${encodeURIComponent(s)}`}
+                  className="flex flex-col items-center gap-2 w-24 flex-shrink-0 group">
+                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${SPECIALTY_COLORS[i % SPECIALTY_COLORS.length]} group-hover:scale-105 transition-transform`}>
+                    <span className="material-symbols-outlined ms-filled" style={{ fontSize: '30px' }}>{specialtyIcon(s)}</span>
+                  </div>
+                  <span className="text-[11px] font-medium text-on-surface text-center leading-snug line-clamp-2">{s}</span>
+                </Link>
+              ))}
+            </CarouselRow>
+          )}
 
-      <ServiceGroup title="Health Articles" viewAllHref="/health-articles" loading={postsLoading} empty={posts.length === 0}>
-        {posts.map((p) => (
-          <Link key={p.id} href={`/health-articles/${p.slug}`} className={ARTICLE_CARD_CLASS}>
-            <div className="h-28 w-full bg-primary/10 flex items-center justify-center text-primary/40 overflow-hidden">
-              {p.cover_image_url ? (
-                <img src={resolveImg(p.cover_image_url) || undefined} alt={p.title} className="w-full h-full object-cover" />
-              ) : (
-                <span className="material-symbols-outlined ms-filled" style={{ fontSize: '32px' }}>article</span>
-              )}
-            </div>
-            <div className="p-4 flex flex-col flex-1">
-              {/* Title first, then category below in grey sentence-case — matches every other card
-                  (was a blue ALL-CAPS category sitting above the title, the reverse of the others). */}
-              <p className="text-sm font-semibold text-on-surface leading-snug line-clamp-2">{p.title}</p>
-              {p.category && <p className="text-xs text-on-surface-variant mt-1 flex-1">{p.category}</p>}
-              <CardCta label="Read article" />
-            </div>
-          </Link>
-        ))}
-      </ServiceGroup>
+          {/* Short "top doctors" strip — a few faces, not a long list of names */}
+          {!docsLoading && doctors.length > 0 && (
+            <CarouselRow className="gap-3 pb-1 -mx-1 px-1" ariaLabel="top doctors"
+              scrimClass="from-[color-mix(in_srgb,rgb(var(--c-primary))_5%,rgb(var(--c-background)))]">
+              {doctors.map((d) => (
+                <Link key={d.id} href={`/doctor-consult/${d.id}`}
+                  className="flex items-center gap-3 w-64 flex-shrink-0 bg-surface rounded-2xl border border-outline-variant p-3 hover:-translate-y-0.5 hover:shadow-md transition-all">
+                  <div className="w-11 h-11 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    {d.photo_url
+                      ? <img src={resolveImg(d.photo_url) || undefined} alt="" className="w-full h-full object-cover" />
+                      : <span className="material-symbols-outlined" style={{ fontSize: '22px' }}>person</span>}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-on-surface truncate">Dr. {d.name}</p>
+                    <p className="text-xs text-on-surface-variant truncate">{d.specialty}</p>
+                  </div>
+                  <span className="text-xs font-bold text-primary flex-shrink-0">NPR {Number(d.consultation_fee).toFixed(0)}</span>
+                </Link>
+              ))}
+            </CarouselRow>
+          )}
+        </div>
+
+        <ScrollGroup title="Health Articles" subtitle="Guidance from our medical team" viewAllHref="/health-articles" loading={postsLoading} empty={posts.length === 0}>
+          {posts.map((p) => (
+            <Link key={p.id} href={`/health-articles/${p.slug}`}
+              className="w-48 flex-shrink-0 bg-surface rounded-2xl border border-outline-variant overflow-hidden flex flex-col hover:-translate-y-1 hover:shadow-md transition-all duration-200">
+              <div className="h-28 w-full bg-primary/10 flex items-center justify-center text-primary/40 overflow-hidden">
+                {p.cover_image_url
+                  ? <img src={resolveImg(p.cover_image_url) || undefined} alt={p.title} className="w-full h-full object-cover" />
+                  : <span className="material-symbols-outlined ms-filled" style={{ fontSize: '32px' }}>article</span>}
+              </div>
+              <div className="p-4 flex flex-col flex-1">
+                <p className="text-sm font-semibold text-on-surface leading-snug line-clamp-2">{p.title}</p>
+                {p.category && <p className="text-xs text-on-surface-variant mt-1 flex-1">{p.category}</p>}
+                <span className="btn btn-sm btn-primary w-full mt-auto">Read article<span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span></span>
+              </div>
+            </Link>
+          ))}
+        </ScrollGroup>
       </div>
     </section>
   )

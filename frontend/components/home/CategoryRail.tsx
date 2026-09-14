@@ -6,9 +6,20 @@ import CarouselRow from '@/components/common/CarouselRow'
 import type { Category } from '@/types'
 
 const ICONS = ['medication', 'heart_plus', 'vaccines', 'medical_services', 'health_and_safety', 'science', 'healing', 'pediatrics', 'psychology', 'ophthalmology', 'dentistry', 'dermatology']
-// One consistent brand-green treatment for every tile — color is reserved for the "Our Services"
-// signature section elsewhere on the page, not spent decorating this category list.
-const TILE_COLOR = 'bg-primary/10 text-primary'
+// A rotating colour palette so the category tiles read as a colourful, graphic shortcut grid
+// (Flipkart/PharmEasy style) rather than a flat monochrome list. The /10 tints + dark: text stay
+// legible in both themes. (This deliberately replaces the earlier "reserve colour for one section"
+// rule — the whole storefront is intentionally more colourful now.)
+const TILE_COLORS = [
+  'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  'bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  'bg-rose-500/10 text-rose-600 dark:text-rose-400',
+  'bg-purple-500/10 text-purple-600 dark:text-purple-400',
+  'bg-teal-500/10 text-teal-600 dark:text-teal-400',
+  'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400',
+  'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+]
 
 function TileSkeleton() {
   return (
@@ -44,7 +55,7 @@ export default function CategoryRail() {
           : categories.map((cat, i) => (
             <Link key={cat.id} href={`/medicines?category=${encodeURIComponent(cat.name)}`}
               className="flex flex-col items-center gap-2 w-20 sm:w-24 flex-shrink-0 group">
-              <div className={`w-16 h-16 rounded-full flex items-center justify-center ${TILE_COLOR} group-hover:scale-105 transition-transform`}>
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center ${TILE_COLORS[i % TILE_COLORS.length]} group-hover:scale-105 transition-transform`}>
                 <span className="material-symbols-outlined ms-filled" style={{ fontSize: '28px' }}>{cat.icon || ICONS[i % ICONS.length]}</span>
               </div>
               <p className="text-xs font-medium text-on-surface text-center leading-snug line-clamp-2">{cat.name}</p>
