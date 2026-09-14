@@ -4,7 +4,7 @@
 const ITEMS = [
   { icon: 'verified', label: '100% Genuine', detail: 'Sourced from licensed suppliers', color: 'text-emerald-600 dark:text-emerald-400' },
   { icon: 'local_shipping', label: 'Fast Delivery', detail: 'Same-day across the Valley', color: 'text-sky-600 dark:text-sky-400' },
-  { icon: 'lock', label: 'Secure Payments', detail: 'eSewa, Khalti & cards', color: 'text-indigo-600 dark:text-indigo-400' },
+  { icon: 'payments', label: 'Cash on Delivery', detail: 'Online payment accepted', color: 'text-indigo-600 dark:text-indigo-400' },
   { icon: 'health_and_safety', label: 'Licensed Pharmacy', detail: 'Registered & regulated', color: 'text-primary' },
 ]
 
