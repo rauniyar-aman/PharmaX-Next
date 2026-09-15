@@ -809,7 +809,7 @@ export interface DoctorAppointment {
   payment_status?: AppointmentPaymentStatus
   payment_method?: 'KHALTI' | 'ESEWA' | 'WALLET' | null
   payout_status?: PayoutStatus | null   // admin views only (AdminAppointmentListView/Detail)
-  prescription?: { id: string; notes: string | null; medicine_item_count: number; lab_test_item_count: number } | null
+  prescription?: { id: string; notes: string | null; file_url?: string | null; medicine_item_count: number; lab_test_item_count: number } | null
   follow_up_date?: string | null
   follow_up_notes?: string | null
   booked_at: string

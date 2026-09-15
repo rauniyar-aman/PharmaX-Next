@@ -1162,9 +1162,18 @@ class DoctorAppointmentSerializer(serializers.ModelSerializer):
         presc = getattr(obj, 'prescription', None)
         if not presc:
             return None
+        # Absolute PDF URL when a request is in context (dev serves a relative /media/ path), else
+        # the raw storage URL (already absolute on R2) — mirrors PrescriptionSerializer.get_file_url.
+        file_url = None
+        if presc.file:
+            request = self.context.get('request')
+            file_url = request.build_absolute_uri(presc.file.url) if request else presc.file.url
+        elif presc.file_url:
+            file_url = presc.file_url
         return {
             'id': str(presc.id),
             'notes': presc.notes,
+            'file_url': file_url,
             'medicine_item_count': presc.medicine_items.count(),
             'lab_test_item_count': presc.lab_test_items.count(),
         }

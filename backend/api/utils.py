@@ -311,6 +311,48 @@ def send_lab_report_ready_email(booking):
     _send_email_async(user.email, subject, html_body, text_body, attachments=attachments)
 
 
+def send_prescription_ready_email(prescription):
+    """Prescription Ready email for a completed consultation — the generated PDF is ATTACHED, so the
+    prescription arrives with the notification rather than as a bare link. Mirrors
+    send_lab_report_ready_email: gate on the customer's PRESCRIPTION opt-out, read the file bytes
+    here (a completed consultation is a doctor action, not a customer hot path), fire-and-forget via
+    _send_email_async. Safe to call even if the PDF failed to save — it just sends the link-only
+    variant instead of silently dropping the notification."""
+    user = prescription.user
+    if not _should_email_notification(user, 'PRESCRIPTION'):
+        return
+    store_name = get_store_name()
+    doctor_label = f'Dr. {prescription.doctor}' if prescription.doctor else 'your doctor'
+    view_url = f'{FRONTEND_URL}/prescriptions'
+
+    attachments = None
+    if prescription.file:
+        try:
+            prescription.file.open('rb')
+            content = prescription.file.read()
+        finally:
+            prescription.file.close()
+        attachments = [('Prescription.pdf', content, 'application/pdf')]
+
+    has_file = bool(attachments)
+    subject = f'Your prescription from {store_name} is ready'
+    text_body = (
+        f'Hi {user.full_name},\n\n'
+        f'Your consultation with {doctor_label} is complete and your prescription is ready'
+        + (' — it is attached to this email as a PDF.' if has_file else '.') + '\n\n'
+        f'You can also view or download it anytime here: {view_url}\n\n'
+        f'— {store_name} Team'
+    )
+    body_html = (
+        f'Hi {user.full_name},<br><br>'
+        f'Your consultation with <strong>{doctor_label}</strong> is complete and your prescription is ready'
+        + (' — you’ll find it attached to this email as a PDF.' if has_file else '.')
+        + '<br><br>You can also view or download it anytime from your prescriptions.'
+    )
+    html_body = _render_email_html(store_name, 'Your prescription is ready', body_html, cta_text='View Prescription', cta_url=view_url)
+    _send_email_async(user.email, subject, html_body, text_body, attachments=attachments)
+
+
 def _admin_wants_notification(user, notif_type):
     """Per-admin category opt-out for _notify_admins() fan-outs. Maps the notif_type an admin
     alert is sent under to the User boolean that governs it; unknown/miscellaneous admin types

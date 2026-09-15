@@ -3,6 +3,7 @@ import hashlib
 import base64
 import calendar
 import json
+import logging
 import os
 import random
 import uuid as uuid_lib
@@ -19,6 +20,7 @@ from django.db.models import Q, Avg, Count, Sum, F, Max, Min, ProtectedError
 from django.db.models.functions import TruncDate
 from django.db import transaction, IntegrityError
 from django.http import HttpResponseRedirect, HttpResponse
+from django.core.files.base import ContentFile
 from django.conf import settings
 from decimal import Decimal
 
@@ -70,7 +72,7 @@ from .serializers import (
     AdminLabCollectorSerializer, AdminLabCollectorCreateSerializer,
     PharmacyIncentiveCampaignSerializer, PharmacyCampaignEnrollmentSerializer,
 )
-from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification, send_collector_welcome_email, send_pharmacy_welcome_email, send_lab_report_ready_email
+from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification, send_collector_welcome_email, send_pharmacy_welcome_email, send_lab_report_ready_email, send_prescription_ready_email
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
 from .geo import check_address_serviceable, service_area_config
 from . import imports as bulk_imports
@@ -88,6 +90,9 @@ from .lab_collection import (
     collector_confirm_sample_collected, collector_mark_en_route,
     collector_mark_arrived, collector_mark_submitted_to_lab,
 )
+from .pdf import build_prescription_pdf
+
+logger = logging.getLogger(__name__)
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
@@ -2152,6 +2157,21 @@ class AppointmentKhaltiInitiateView(APIView):
         return Response({'success': True, 'data': {'payment_url': khalti_res['payment_url']}})
 
 
+def _ensure_meeting_link(appt):
+    """Give a confirmed appointment a video room the instant it's confirmed, so neither the doctor
+    nor the patient has to wait for a link to be pasted in by hand. Deterministic and idempotent:
+    the room is derived from the appointment's UUID (unguessable), never changes across re-confirms,
+    and is only ever set when empty — a manual override set via DoctorAppointmentSetMeetingLinkView
+    is always preserved. The base host is a setting so this Jitsi room can later be swapped for a
+    Zoom/Google Meet join URL without touching any caller."""
+    if appt.meeting_link:
+        return appt.meeting_link
+    base = (_get_setting('jitsi_base_url', 'https://meet.jit.si') or 'https://meet.jit.si').rstrip('/')
+    appt.meeting_link = f'{base}/Swasthaya-{appt.id}'
+    appt.save(update_fields=['meeting_link'])
+    return appt.meeting_link
+
+
 def _confirm_appointment(appt):
     """The one idempotent place a doctor appointment moves PENDING -> CONFIRMED and both parties are
     notified — mirrors _confirm_lab_test_booking(). Called at booking creation for a Plus-free
@@ -2163,6 +2183,7 @@ def _confirm_appointment(appt):
         return
     appt.status = 'CONFIRMED'
     appt.save(update_fields=['status'])
+    _ensure_meeting_link(appt)
 
     date_label = appt.scheduled_date.strftime('%b %d, %Y')
     plus_free = appt.payment_status == 'NOT_REQUIRED'
@@ -2174,7 +2195,7 @@ def _confirm_appointment(appt):
         appt.user, 'APPOINTMENT_UPDATE', 'Appointment Confirmed',
         f'Your appointment with Dr. {appt.doctor.name} is confirmed for {date_label}, '
         f'{appt.time_slot}. {customer_payment_line}',
-        link=f'/doctor-consult/appointments/{appt.id}',
+        link='/appointments',
     )
     _notify_admins(
         'manage_doctors', 'NEW_APPOINTMENT', 'New Doctor Appointment',
@@ -3241,7 +3262,10 @@ class AppointmentListCreateView(APIView):
 
     def get(self, request):
         appts = DoctorAppointment.objects.filter(user=request.user).select_related('doctor').order_by('-booked_at')
-        return Response({'success': True, 'data': {'appointments': DoctorAppointmentSerializer(appts, many=True).data}})
+        # context={'request': request} so the serializer can build an absolute prescription PDF URL
+        # in local dev (where MEDIA_URL is a relative /media/ path); in prod the R2 URL is already
+        # absolute and the context is harmless.
+        return Response({'success': True, 'data': {'appointments': DoctorAppointmentSerializer(appts, many=True, context={'request': request}).data}})
 
     def post(self, request):
         s = DoctorAppointmentSerializer(data=request.data)
@@ -3350,6 +3374,72 @@ class AppointmentFollowUpsDueView(APIView):
             DoctorAppointment.objects.filter(id__in=[a.id for a in due]).update(follow_up_notified_at=timezone.now())
 
         return Response({'success': True, 'data': {'follow_ups': DoctorAppointmentSerializer(due, many=True).data}})
+
+
+class InternalAppointmentRemindersView(APIView):
+    """Unattended cron sweep that fires the pre-appointment reminders — 24h and 1h before — in-app
+    AND email, for every CONFIRMED consultation. It's the piece an external scheduler hits every
+    few minutes, since this project has no task runner. There's no logged-in user on a cron call,
+    so instead of a JWT it's gated by a shared secret: the caller must send X-Cron-Secret matching
+    settings.CRON_SECRET, and an unset secret disables the endpoint entirely (rejects every request)
+    so a misconfigured deploy never runs open. reminder_24h_sent_at / reminder_1h_sent_at make each
+    lead time fire exactly once — the same fire-once discipline as follow_up_notified_at — so the
+    cron is safe to run as often as it likes. The two lead times use disjoint windows ([T-24h, T-1h)
+    and [T-1h, T)), so a booking made less than an hour out gets only the 'starting soon' reminder,
+    never both at once. type='REMINDER_DUE' routes the email to the notif_reminders opt-out."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        secret = settings.CRON_SECRET
+        provided = request.headers.get('X-Cron-Secret', '')
+        # Bytes compare so a non-ASCII header can't make compare_digest raise; empty secret => deny.
+        if not secret or not hmac.compare_digest(provided.encode('utf-8'), secret.encode('utf-8')):
+            return Response({'success': False, 'message': 'Forbidden.'}, status=status.HTTP_403_FORBIDDEN)
+
+        now = timezone.now()
+        today = now.date()
+        # A 2-day date window comfortably brackets both lead times across a midnight boundary; the
+        # per-appointment time math below is what actually decides whether a reminder is due.
+        appts = DoctorAppointment.objects.filter(
+            status='CONFIRMED', scheduled_date__gte=today, scheduled_date__lte=today + timedelta(days=2),
+        ).filter(
+            Q(reminder_24h_sent_at__isnull=True) | Q(reminder_1h_sent_at__isnull=True),
+        ).select_related('doctor', 'user')
+
+        sent_24h = 0
+        sent_1h = 0
+        for appt in appts:
+            try:
+                slot_time = datetime.strptime(appt.time_slot, '%H:%M').time()
+            except (ValueError, TypeError):
+                continue  # malformed slot string — skip this one, don't crash the whole sweep
+            scheduled_at = timezone.make_aware(datetime.combine(appt.scheduled_date, slot_time))
+            when = f'{appt.scheduled_date.strftime("%b %d, %Y")} at {appt.time_slot}'
+
+            if appt.reminder_24h_sent_at is None and scheduled_at - timedelta(hours=24) <= now < scheduled_at - timedelta(hours=1):
+                notify_user(
+                    user=appt.user, type='REMINDER_DUE', title='Consultation tomorrow',
+                    message=f'Reminder: your consultation with Dr. {appt.doctor.name} is on {when}. Join from your appointments when it starts.',
+                    link='/appointments',
+                )
+                appt.reminder_24h_sent_at = now
+                appt.save(update_fields=['reminder_24h_sent_at'])
+                sent_24h += 1
+            elif appt.reminder_1h_sent_at is None and scheduled_at - timedelta(hours=1) <= now < scheduled_at:
+                notify_user(
+                    user=appt.user, type='REMINDER_DUE', title='Consultation starting soon',
+                    message=f'Your consultation with Dr. {appt.doctor.name} starts soon — {when}. Join from your appointments.',
+                    link='/appointments',
+                )
+                appt.reminder_1h_sent_at = now
+                appt.save(update_fields=['reminder_1h_sent_at'])
+                sent_1h += 1
+
+        return Response({
+            'success': True,
+            'data': {'reminders_24h_sent': sent_24h, 'reminders_1h_sent': sent_1h},
+            'message': f'Sent {sent_24h} day-before and {sent_1h} hour-before reminder(s).',
+        })
 
 
 def _recalc_doctor_rating(doctor):
@@ -5067,6 +5157,11 @@ class AdminAppointmentDetailView(APIView):
         if 'meeting_link' in request.data:
             appt.meeting_link = request.data.get('meeting_link') or None
         appt.save()
+        # A confirmed appointment should always have a room to join, so backfill one if this
+        # update left it without a link — mirrors the doctor/auto-confirm paths. An explicit
+        # non-empty meeting_link in the same request is preserved (the helper only fills a blank).
+        if appt.status == 'CONFIRMED':
+            _ensure_meeting_link(appt)
         data = DoctorAppointmentSerializer(appt).data
         data['payout_status'] = appt.payout.status if hasattr(appt, 'payout') else None
         return Response({'success': True, 'data': {'appointment': data}, 'message': 'Appointment updated.'})
@@ -6085,11 +6180,12 @@ class DoctorAppointmentConfirmView(APIView):
 
         appt.status = 'CONFIRMED'
         appt.save(update_fields=['status'])
+        _ensure_meeting_link(appt)
 
         notify_user(
             user=appt.user, type='APPOINTMENT_UPDATE', title='Appointment Confirmed',
             message=f'Dr. {doctor.name} has confirmed your appointment on {appt.scheduled_date} at {appt.time_slot}.',
-            link=f'/doctor-consult/appointments/{appt.id}',
+            link='/appointments',
         )
         return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment confirmed.'})
 
@@ -6119,7 +6215,7 @@ class DoctorAppointmentSetMeetingLinkView(APIView):
         notify_user(
             user=appt.user, type='APPOINTMENT_UPDATE', title='Meeting Link Ready',
             message=f'Dr. {doctor.name} has shared the meeting link for your appointment on {appt.scheduled_date}.',
-            link=f'/doctor-consult/appointments/{appt.id}',
+            link='/appointments',
         )
         return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Meeting link set.'})
 
@@ -6220,6 +6316,19 @@ class DoctorAppointmentCompleteView(APIView):
             for lab_test in resolved_lab_tests:
                 PrescriptionLabTestItem.objects.create(prescription=presc, lab_test=lab_test, added_by=request.user)
 
+            # Render the finished prescription to a PDF and store it on the record, so the patient
+            # can download it and it can be emailed as an attachment. Generated AFTER the medicine
+            # and lab items are attached so the document reflects them. A rendering failure must not
+            # block completion — the appointment is already COMPLETED and the payout written above,
+            # and this view isn't atomic — so log it and carry on: the record still exists in-app
+            # and the email below degrades to a link-only message.
+            try:
+                pdf_bytes = build_prescription_pdf(presc)
+                presc.file_name = f'prescription-{presc.id}.pdf'
+                presc.file.save(presc.file_name, ContentFile(pdf_bytes), save=True)
+            except Exception:
+                logger.exception('Prescription PDF generation failed for %s', presc.id)
+
             # Reuses AdminPrescriptionDetailView.put()'s verify-notification shape (count-based
             # message, link to the review screen), extended to mention lab tests too when present.
             medicine_count = len(resolved_medicines)
@@ -6235,10 +6344,14 @@ class DoctorAppointmentCompleteView(APIView):
             else:
                 message = f'Dr. {doctor.name} has completed your consultation — your notes are ready.'
                 link = '/appointments'
-            notify_user(
+            # In-app bell row written directly (not via notify_user) because the matching email is
+            # sent separately by send_prescription_ready_email — which ATTACHES the PDF, unlike the
+            # plain email notify_user would send. Routing both through notify_user would double-email.
+            Notification.objects.create(
                 user=appt.user, type='PRESCRIPTION', title='Consultation Notes Ready',
                 message=message, link=link,
             )
+            send_prescription_ready_email(presc)
 
         return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment marked complete.'})
 
