@@ -754,6 +754,10 @@ class DoctorAppointment(models.Model):
     follow_up_date = models.DateField(null=True, blank=True)
     follow_up_notes = models.CharField(max_length=255, null=True, blank=True)
     follow_up_notified_at = models.DateTimeField(null=True, blank=True)
+    # Fire-once markers for the pre-appointment reminder sweep — same discipline as
+    # follow_up_notified_at above, one column per lead time so each fires exactly once.
+    reminder_24h_sent_at = models.DateTimeField(null=True, blank=True)
+    reminder_1h_sent_at = models.DateTimeField(null=True, blank=True)
     booked_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

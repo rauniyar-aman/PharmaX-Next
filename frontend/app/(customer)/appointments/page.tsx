@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { downloadFile } from '@/lib/downloadFile'
 import type { DoctorAppointment } from '@/types'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -135,13 +136,22 @@ export default function AppointmentsPage() {
                   Consultation Notes
                 </p>
                 {a.prescription.notes && <p className="text-sm text-on-surface">{a.prescription.notes}</p>}
-                {(a.prescription.medicine_item_count > 0 || a.prescription.lab_test_item_count > 0) && (
-                  <Link href={`/prescriptions/${a.prescription.id}/review`}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
-                    {[a.prescription.medicine_item_count > 0 && `${a.prescription.medicine_item_count} medicine(s)`, a.prescription.lab_test_item_count > 0 && `${a.prescription.lab_test_item_count} test(s)`].filter(Boolean).join(' + ')} suggested — Review
-                    <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>arrow_forward</span>
-                  </Link>
-                )}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  {(a.prescription.medicine_item_count > 0 || a.prescription.lab_test_item_count > 0) && (
+                    <Link href={`/prescriptions/${a.prescription.id}/review`}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+                      {[a.prescription.medicine_item_count > 0 && `${a.prescription.medicine_item_count} medicine(s)`, a.prescription.lab_test_item_count > 0 && `${a.prescription.lab_test_item_count} test(s)`].filter(Boolean).join(' + ')} suggested — Review
+                      <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>arrow_forward</span>
+                    </Link>
+                  )}
+                  {a.prescription.file_url && (
+                    <button onClick={() => downloadFile(a.prescription!.file_url!, `prescription-${a.prescription!.id}.pdf`)}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+                      <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>download</span>
+                      Download prescription (PDF)
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 

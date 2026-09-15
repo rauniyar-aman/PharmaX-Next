@@ -142,6 +142,11 @@ EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 EMAIL_FROM = os.getenv('EMAIL_FROM', EMAIL_HOST_USER)
 
+# Shared secret for unattended cron sweeps (e.g. the appointment-reminders endpoint). An
+# external scheduler POSTs with this value in the X-Cron-Secret header; empty means the
+# endpoint is disabled (rejects every request), so a misconfigured deploy never runs open.
+CRON_SECRET = os.getenv('CRON_SECRET', '')
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',

@@ -109,6 +109,8 @@ urlpatterns = [
     path('doctors/appointments/',       views.AppointmentListCreateView.as_view(), name='appointments'),
     path('doctors/appointments/<uuid:pk>/', views.AppointmentDetailView.as_view(), name='appointment-detail'),
     path('appointments/follow-ups-due/',  views.AppointmentFollowUpsDueView.as_view(), name='appointment-follow-ups-due'),
+    # Unattended cron sweep (shared-secret via X-Cron-Secret, not JWT) — fires 24h/1h appointment reminders.
+    path('internal/cron/appointment-reminders/', views.InternalAppointmentRemindersView.as_view(), name='internal-appointment-reminders'),
     path('doctors/my-reviews/',         views.MyDoctorReviewsView.as_view(),  name='my-doctor-reviews'),
     path('doctors/',                    views.DoctorListView.as_view(),       name='doctors'),
     path('doctors/<uuid:pk>/',          views.DoctorDetailView.as_view(),     name='doctor-detail'),

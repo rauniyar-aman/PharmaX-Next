@@ -23,6 +23,7 @@ export default function DoctorAppointmentsPage() {
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [actingId, setActingId] = useState<string | null>(null)
   const [linkDrafts, setLinkDrafts] = useState<Record<string, string>>({})
+  const [editingLinkId, setEditingLinkId] = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -56,6 +57,7 @@ export default function DoctorAppointmentsPage() {
     try {
       await api.post(`/doctor/appointments/${id}/set-meeting-link/`, { meeting_link: link })
       toast.success('Meeting link set.')
+      setEditingLinkId(null)
       load()
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to set meeting link.')
@@ -119,30 +121,46 @@ export default function DoctorAppointmentsPage() {
               </div>
             )}
 
-            {a.status === 'CONFIRMED' && !a.meeting_link && (
-              <div className="pt-1 border-t border-outline-variant flex items-center gap-2">
-                <input type="text" placeholder="Meeting link (e.g., video call URL)"
-                  value={linkDrafts[a.id] ?? ''}
-                  onChange={(e) => setLinkDrafts((p) => ({ ...p, [a.id]: e.target.value }))}
-                  className="flex-1 px-3 py-2 border border-outline-variant rounded-xl bg-surface text-xs text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary transition" />
-                <button onClick={() => setMeetingLink(a.id)} disabled={actingId === a.id}
-                  className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60 flex-shrink-0">
-                  {actingId === a.id ? 'Saving...' : 'Set Link'}
-                </button>
-              </div>
-            )}
-
-            {a.status === 'CONFIRMED' && a.meeting_link && (
-              <div className="pt-1 border-t border-outline-variant flex items-center justify-between gap-2 flex-wrap">
-                <a href={a.meeting_link} target="_blank" rel="noopener noreferrer"
-                  className="text-xs text-primary hover:underline truncate max-w-[60%] flex items-center gap-1">
-                  <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>videocam</span>
-                  {a.meeting_link}
-                </a>
-                <Link href={`/doctor/appointments/${a.id}`}
-                  className="px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity flex-shrink-0">
-                  Complete Consultation
-                </Link>
+            {a.status === 'CONFIRMED' && (
+              <div className="pt-1 border-t border-outline-variant space-y-2">
+                {editingLinkId === a.id ? (
+                  <div className="flex items-center gap-2">
+                    <input type="text" placeholder="Meeting link (e.g., video call URL)"
+                      value={linkDrafts[a.id] ?? ''}
+                      onChange={(e) => setLinkDrafts((p) => ({ ...p, [a.id]: e.target.value }))}
+                      className="flex-1 px-3 py-2 border border-outline-variant rounded-xl bg-surface text-xs text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary transition" />
+                    <button onClick={() => setMeetingLink(a.id)} disabled={actingId === a.id}
+                      className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60 flex-shrink-0">
+                      {actingId === a.id ? 'Saving...' : 'Save'}
+                    </button>
+                    <button onClick={() => setEditingLinkId(null)} disabled={actingId === a.id}
+                      className="px-3 py-2 text-xs font-semibold text-on-surface-variant hover:text-on-surface transition-colors flex-shrink-0">
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    {a.meeting_link ? (
+                      <a href={a.meeting_link} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-primary hover:underline truncate max-w-[55%] flex items-center gap-1">
+                        <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>videocam</span>
+                        {a.meeting_link}
+                      </a>
+                    ) : (
+                      <span className="text-xs text-on-surface-variant">No meeting link yet.</span>
+                    )}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button onClick={() => { setLinkDrafts((p) => ({ ...p, [a.id]: a.meeting_link || '' })); setEditingLinkId(a.id) }}
+                        className="px-3 py-2 border border-outline-variant text-on-surface-variant text-xs font-semibold rounded-xl hover:bg-surface-container transition-colors">
+                        {a.meeting_link ? 'Edit link' : 'Set link'}
+                      </button>
+                      <Link href={`/doctor/appointments/${a.id}`}
+                        className="px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity">
+                        Complete Consultation
+                      </Link>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
