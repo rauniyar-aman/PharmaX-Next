@@ -12,7 +12,7 @@ import PublicHeader from '@/components/common/PublicHeader'
 import PromoSlider, { type Slide } from '@/components/common/PromoSlider'
 import HeroBanner from '@/components/home/HeroBanner'
 import TrustStrip from '@/components/home/TrustStrip'
-import PrescriptionCTA from '@/components/home/PrescriptionCTA'
+import CarePromo from '@/components/home/CarePromo'
 import CategoryRail from '@/components/home/CategoryRail'
 import BrandRail from '@/components/home/BrandRail'
 import TabbedProductRail from '@/components/home/TabbedProductRail'
@@ -106,7 +106,7 @@ export default function HomePage() {
 
         <TrustStrip />
 
-        <PrescriptionCTA />
+        <CarePromo />
 
         <FeaturedDealsRail
           wishlistIds={wishlistIds}

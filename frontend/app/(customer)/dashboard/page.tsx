@@ -9,7 +9,7 @@ import { useCart } from '@/hooks/useCart'
 import { type Slide } from '@/components/common/PromoSlider'
 import HeroBanner from '@/components/home/HeroBanner'
 import TrustStrip from '@/components/home/TrustStrip'
-import PrescriptionCTA from '@/components/home/PrescriptionCTA'
+import CarePromo from '@/components/home/CarePromo'
 import ServiceTiles from '@/components/home/ServiceTiles'
 import TabbedProductRail from '@/components/home/TabbedProductRail'
 import OurServicesSection from '@/components/home/OurServicesSection'
@@ -139,7 +139,7 @@ export default function DashboardPage() {
 
       <TrustStrip />
 
-      <PrescriptionCTA />
+      <CarePromo />
 
       <TabbedProductRail
         wishlistIds={wishlistIds}
