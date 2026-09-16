@@ -91,7 +91,14 @@ export default function HeroBanner({ slides, className = '' }: Props) {
               )}
               {/* Left-anchored scrim keeps the headline legible over any photo. */}
               <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/45 to-transparent" />
-              <div className="relative h-full flex flex-col justify-center gap-2 sm:gap-3 max-w-md px-6 sm:px-10 md:px-12">
+              {/* The copy fades on its own, faster schedule than the photo behind it. Slides are stacked
+                  in the same spot, so a straight 700ms cross-fade left both headlines legible at ~50%
+                  mid-transition — they read as one doubled, ghosted block. Letting the outgoing copy
+                  clear (200ms) before the incoming copy starts (300ms delay) means only one headline is
+                  ever readable, while the images still cross-fade smoothly underneath. */}
+              <div
+                className={`relative h-full flex flex-col justify-center gap-2 sm:gap-3 max-w-md px-6 sm:px-10 md:px-12 transition-opacity motion-reduce:transition-none ${i === idx ? 'opacity-100 duration-[400ms] delay-[300ms]' : 'opacity-0 duration-200'}`}
+              >
                 <h2 className="text-white text-2xl sm:text-3xl md:text-4xl font-extrabold leading-tight drop-shadow-sm">{s.title}</h2>
                 {s.subtitle && <p className="text-white/85 text-sm sm:text-base leading-snug max-w-sm">{s.subtitle}</p>}
                 <span className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-bold text-primary shadow-md group-hover:gap-2 transition-all">
