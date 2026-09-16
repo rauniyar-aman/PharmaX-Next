@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { label: 'Appointments',  href: '/doctor/appointments',  icon: 'calendar_month' },
   { label: 'Patients',      href: '/doctor/patients',      icon: 'groups' },
   { label: 'Earnings',      href: '/doctor/earnings',      icon: 'account_balance_wallet' },
+  { label: 'Profile',       href: '/doctor/profile',       icon: 'badge' },
 ]
 
 export default function DoctorLayout({ children }: { children: React.ReactNode }) {

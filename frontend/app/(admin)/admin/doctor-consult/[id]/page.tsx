@@ -5,7 +5,13 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
-import type { Doctor, DoctorPayout } from '@/types'
+import type { Doctor, DoctorPayout, DoctorProfileChangeRequest, DoctorDocument } from '@/types'
+
+const REVIEW_STATUS_CFG: Record<string, { label: string; color: string; icon: string }> = {
+  PENDING: { label: 'Pending review', color: 'bg-amber-50 text-amber-600', icon: 'hourglass_top' },
+  APPROVED: { label: 'Approved', color: 'bg-emerald-50 text-emerald-600', icon: 'check_circle' },
+  REJECTED: { label: 'Rejected', color: 'bg-error/10 text-error', icon: 'cancel' },
+}
 
 function fmt(n: string | number) {
   return `NPR ${Number(n).toLocaleString('en-NP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -91,9 +97,18 @@ export default function AdminDoctorDetailPage() {
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState<Record<string, any>>({})
   const [savingEdit, setSavingEdit] = useState(false)
+  const [profileChanges, setProfileChanges] = useState<DoctorProfileChangeRequest[]>([])
+  const [docs, setDocs] = useState<DoctorDocument[]>([])
+  const [reviewingId, setReviewingId] = useState<string | null>(null)
+  const [rejectingId, setRejectingId] = useState<string | null>(null)
+  const [rejectNote, setRejectNote] = useState('')
 
   const loadDoctor = useCallback(() => {
-    api.get(`/admin/doctors/${id}/`).then((r) => setDoctor(r.data.data.doctor)).catch(() => toast.error('Failed to load doctor.')).finally(() => setLoading(false))
+    api.get(`/admin/doctors/${id}/`).then((r) => {
+      setDoctor(r.data.data.doctor)
+      setProfileChanges(r.data.data.profile_change_requests || [])
+      setDocs(r.data.data.documents || [])
+    }).catch(() => toast.error('Failed to load doctor.')).finally(() => setLoading(false))
   }, [id])
 
   const loadPayouts = useCallback(() => {
@@ -138,6 +153,66 @@ export default function AdminDoctorDetailPage() {
       toast.error(err.response?.data?.message || 'Failed to mark paid.')
     } finally {
       setMarkingPayoutId(null)
+    }
+  }
+
+  // Profile change requests + research documents — approve/reject with a required note on reject.
+  // Both re-fetch the doctor afterward so the embedded arrays and the live values above refresh.
+  const approveProfileChange = async (reqId: string) => {
+    setReviewingId(reqId)
+    try {
+      await api.post(`/admin/doctors/${id}/profile-change-requests/${reqId}/approve/`)
+      toast.success('Profile changes approved.')
+      loadDoctor()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to approve.')
+    } finally {
+      setReviewingId(null)
+    }
+  }
+
+  const rejectProfileChange = async (reqId: string) => {
+    if (!rejectNote.trim()) { toast.error('Explain why these changes are being rejected.'); return }
+    setReviewingId(reqId)
+    try {
+      await api.post(`/admin/doctors/${id}/profile-change-requests/${reqId}/reject/`, { admin_note: rejectNote })
+      toast.success('Profile changes rejected.')
+      setRejectingId(null)
+      setRejectNote('')
+      loadDoctor()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to reject.')
+    } finally {
+      setReviewingId(null)
+    }
+  }
+
+  const approveDoc = async (docId: string) => {
+    setReviewingId(docId)
+    try {
+      await api.post(`/admin/doctors/${id}/documents/${docId}/approve/`)
+      toast.success('Document approved.')
+      loadDoctor()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to approve.')
+    } finally {
+      setReviewingId(null)
+    }
+  }
+
+  const rejectDoc = async (docId: string) => {
+    if (!rejectNote.trim()) { toast.error('Explain why this document is being rejected.'); return }
+    setReviewingId(docId)
+    try {
+      await api.post(`/admin/doctors/${id}/documents/${docId}/reject/`, { admin_note: rejectNote })
+      toast.success('Document rejected.')
+      setRejectingId(null)
+      setRejectNote('')
+      loadDoctor()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to reject.')
+    } finally {
+      setReviewingId(null)
     }
   }
 
@@ -284,6 +359,153 @@ export default function AdminDoctorDetailPage() {
                 </button>
               </div>
             </form>
+          )}
+
+          {/* Profile change requests — the only path that moves the doctor's live bio/photo/
+              qualification/experience/languages/social links (see DoctorProfileChangeRequestView). */}
+          {!!profileChanges.length && (
+            <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
+              <div>
+                <p className="text-sm font-bold text-on-surface">Profile Change Requests</p>
+                <p className="text-xs text-on-surface-variant mt-0.5">Approving one updates the doctor's live public profile above.</p>
+              </div>
+              <div className="space-y-2">
+                {profileChanges.map((r) => {
+                  const cfg = REVIEW_STATUS_CFG[r.status] || { label: r.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+                  const photo = resolveImg(r.requested_photo_url)
+                  return (
+                    <div key={r.id} className="bg-surface-container-low rounded-xl px-3 py-2.5 space-y-2">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div className="min-w-0 space-y-1">
+                          {photo && <img src={photo} alt="" className="w-12 h-12 rounded-lg object-cover" />}
+                          <dl className="text-xs text-on-surface-variant space-y-0.5">
+                            {r.requested_qualification && <div><span className="text-on-surface font-medium">Qualification:</span> {r.requested_qualification}</div>}
+                            {r.requested_experience_years != null && <div><span className="text-on-surface font-medium">Experience:</span> {r.requested_experience_years} yrs</div>}
+                            {r.requested_languages && <div><span className="text-on-surface font-medium">Languages:</span> {r.requested_languages}</div>}
+                            {r.requested_bio && <div className="whitespace-pre-line"><span className="text-on-surface font-medium">Bio:</span> {r.requested_bio}</div>}
+                            {!!r.requested_social_links?.length && (
+                              <div><span className="text-on-surface font-medium">Links:</span> {r.requested_social_links.map((l) => l.label).join(', ')}</div>
+                            )}
+                          </dl>
+                          <p className="text-[11px]">Requested {new Date(r.created_at).toLocaleString()}</p>
+                          {r.status !== 'PENDING' && (
+                            <p className="text-[11px]">Reviewed {r.reviewed_at ? new Date(r.reviewed_at).toLocaleString() : ''}{r.reviewed_by_name ? ` by ${r.reviewed_by_name}` : ''}</p>
+                          )}
+                          {r.status === 'REJECTED' && r.admin_note && <p className="text-[11px] text-error">Reason: {r.admin_note}</p>}
+                        </div>
+                        <span className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${cfg.color}`}>
+                          <span className="material-symbols-outlined ms-filled" style={{ fontSize: '13px' }}>{cfg.icon}</span>
+                          {cfg.label}
+                        </span>
+                      </div>
+                      {r.status === 'PENDING' && (
+                        rejectingId === r.id ? (
+                          <div className="space-y-2 pt-1 border-t border-outline-variant">
+                            <textarea rows={2} value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} autoFocus
+                              placeholder="Explain why these changes are being rejected (required)"
+                              className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-xs text-on-surface placeholder:text-on-surface-variant resize-none focus:outline-none focus:border-secondary transition" />
+                            <div className="flex gap-2">
+                              <button onClick={() => rejectProfileChange(r.id)} disabled={reviewingId === r.id || !rejectNote.trim()}
+                                className="px-3 py-1.5 bg-error text-white text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60">
+                                {reviewingId === r.id ? 'Rejecting…' : 'Confirm Rejection'}
+                              </button>
+                              <button onClick={() => { setRejectingId(null); setRejectNote('') }}
+                                className="px-3 py-1.5 border border-outline-variant text-on-surface-variant text-xs rounded-lg hover:bg-surface-container transition-colors">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex gap-2 pt-1 border-t border-outline-variant">
+                            <button onClick={() => approveProfileChange(r.id)} disabled={reviewingId === r.id}
+                              className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60">
+                              {reviewingId === r.id ? 'Approving…' : 'Approve'}
+                            </button>
+                            <button onClick={() => { setRejectingId(r.id); setRejectNote('') }} disabled={reviewingId === r.id}
+                              className="px-3 py-1.5 border border-error/30 text-error text-xs font-semibold rounded-lg hover:bg-error/10 transition-colors disabled:opacity-60">
+                              Reject
+                            </button>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Research & credential documents — only APPROVED ones show on the public profile. */}
+          {!!docs.length && (
+            <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
+              <div>
+                <p className="text-sm font-bold text-on-surface">Research & Credentials</p>
+                <p className="text-xs text-on-surface-variant mt-0.5">Only approved documents appear on the doctor's public profile.</p>
+              </div>
+              <div className="space-y-2">
+                {docs.map((doc) => {
+                  const cfg = REVIEW_STATUS_CFG[doc.status] || { label: doc.status, color: 'bg-surface-container text-on-surface-variant', icon: 'help' }
+                  const src = resolveImg(doc.file_url)
+                  return (
+                    <div key={doc.id} className="bg-surface-container-low rounded-xl px-3 py-2.5 space-y-2">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-on-surface-variant flex-shrink-0" style={{ fontSize: '20px' }}>description</span>
+                            <p className="text-sm font-medium text-on-surface truncate">{doc.title}</p>
+                          </div>
+                          <p className="text-[11px] text-on-surface-variant">Uploaded {new Date(doc.uploaded_at).toLocaleString()}</p>
+                          {doc.status !== 'PENDING' && (
+                            <p className="text-[11px] text-on-surface-variant">Reviewed {doc.reviewed_at ? new Date(doc.reviewed_at).toLocaleString() : ''}{doc.reviewed_by_name ? ` by ${doc.reviewed_by_name}` : ''}</p>
+                          )}
+                          {doc.status === 'REJECTED' && doc.admin_note && <p className="text-[11px] text-error">Reason: {doc.admin_note}</p>}
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {src && (
+                            <a href={src} target="_blank" rel="noopener noreferrer"
+                              className="px-2.5 py-1 border border-outline-variant text-on-surface-variant text-xs font-semibold rounded-lg hover:bg-surface-container transition-colors">View</a>
+                          )}
+                          <span className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${cfg.color}`}>
+                            <span className="material-symbols-outlined ms-filled" style={{ fontSize: '13px' }}>{cfg.icon}</span>
+                            {cfg.label}
+                          </span>
+                        </div>
+                      </div>
+                      {doc.status === 'PENDING' && (
+                        rejectingId === doc.id ? (
+                          <div className="space-y-2 pt-1 border-t border-outline-variant">
+                            <textarea rows={2} value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} autoFocus
+                              placeholder="Explain why this document is being rejected (required)"
+                              className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-xs text-on-surface placeholder:text-on-surface-variant resize-none focus:outline-none focus:border-secondary transition" />
+                            <div className="flex gap-2">
+                              <button onClick={() => rejectDoc(doc.id)} disabled={reviewingId === doc.id || !rejectNote.trim()}
+                                className="px-3 py-1.5 bg-error text-white text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60">
+                                {reviewingId === doc.id ? 'Rejecting…' : 'Confirm Rejection'}
+                              </button>
+                              <button onClick={() => { setRejectingId(null); setRejectNote('') }}
+                                className="px-3 py-1.5 border border-outline-variant text-on-surface-variant text-xs rounded-lg hover:bg-surface-container transition-colors">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex gap-2 pt-1 border-t border-outline-variant">
+                            <button onClick={() => approveDoc(doc.id)} disabled={reviewingId === doc.id}
+                              className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60">
+                              {reviewingId === doc.id ? 'Approving…' : 'Approve'}
+                            </button>
+                            <button onClick={() => { setRejectingId(doc.id); setRejectNote('') }} disabled={reviewingId === doc.id}
+                              className="px-3 py-1.5 border border-error/30 text-error text-xs font-semibold rounded-lg hover:bg-error/10 transition-colors disabled:opacity-60">
+                              Reject
+                            </button>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           )}
 
           {/* Onboarding fee */}

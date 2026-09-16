@@ -177,6 +177,10 @@ urlpatterns = [
     path('admin/doctors/<uuid:pk>/link-account/', views.AdminDoctorLinkAccountView.as_view(), name='admin-doctor-link-account'),
     path('admin/doctors/<uuid:pk>/payouts/',     views.AdminDoctorPayoutListView.as_view(),  name='admin-doctor-payouts'),
     path('admin/doctors/<uuid:pk>/payouts/<uuid:payout_id>/mark-paid/', views.AdminDoctorPayoutMarkPaidView.as_view(), name='admin-doctor-payout-mark-paid'),
+    path('admin/doctors/<uuid:pk>/profile-change-requests/<uuid:req_pk>/approve/', views.AdminDoctorProfileChangeApproveView.as_view(), name='admin-doctor-profile-change-approve'),
+    path('admin/doctors/<uuid:pk>/profile-change-requests/<uuid:req_pk>/reject/',  views.AdminDoctorProfileChangeRejectView.as_view(),  name='admin-doctor-profile-change-reject'),
+    path('admin/doctors/<uuid:pk>/documents/<uuid:doc_pk>/approve/', views.AdminDoctorDocumentApproveView.as_view(), name='admin-doctor-document-approve'),
+    path('admin/doctors/<uuid:pk>/documents/<uuid:doc_pk>/reject/',  views.AdminDoctorDocumentRejectView.as_view(),  name='admin-doctor-document-reject'),
     path('admin/appointments/',                 views.AdminAppointmentListView.as_view(),   name='admin-appointments'),
     path('admin/appointments/<uuid:pk>/',       views.AdminAppointmentDetailView.as_view(), name='admin-appointment-detail'),
     path('admin/plus-plans/',                   views.AdminPlusPlanListView.as_view(),      name='admin-plus-plans'),
@@ -274,6 +278,9 @@ urlpatterns = [
 
     # Doctor dashboard
     path('doctor/profile/',                     views.DoctorProfileView.as_view(), name='doctor-profile'),
+    path('doctor/profile/change-request/',      views.DoctorProfileChangeRequestView.as_view(), name='doctor-profile-change-request'),
+    path('doctor/documents/',                   views.DoctorDocumentView.as_view(), name='doctor-documents'),
+    path('doctor/documents/<uuid:pk>/',         views.DoctorDocumentDetailView.as_view(), name='doctor-document-detail'),
     path('doctor/availability/',                views.DoctorAvailabilityListView.as_view(), name='doctor-availability'),
     path('doctor/availability/<uuid:pk>/',      views.DoctorAvailabilityDetailView.as_view(), name='doctor-availability-detail'),
     path('doctor/appointments/',                views.DoctorOwnAppointmentListView.as_view(), name='doctor-own-appointments'),

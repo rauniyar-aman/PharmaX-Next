@@ -37,6 +37,7 @@ from .models import (
     PharmacyDocument, PharmacyLocationChangeRequest,
     FeaturedDeal, PromoBanner,
     PharmacyIncentiveCampaign, PharmacyCampaignEnrollment,
+    DoctorProfileChangeRequest, DoctorDocument,
 )
 from .serializers import (
     RegisterSerializer, OTPVerifySerializer, ResendOTPSerializer,
@@ -71,6 +72,7 @@ from .serializers import (
     AdminChannelOrderSerializer, AdminChannelLabBookingSerializer, AdminChannelAppointmentSerializer,
     AdminLabCollectorSerializer, AdminLabCollectorCreateSerializer,
     PharmacyIncentiveCampaignSerializer, PharmacyCampaignEnrollmentSerializer,
+    DoctorProfileChangeRequestSerializer, DoctorDocumentSerializer,
 )
 from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification, send_collector_welcome_email, send_pharmacy_welcome_email, send_lab_report_ready_email, send_prescription_ready_email
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
@@ -3204,7 +3206,7 @@ class DoctorListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        qs = Doctor.objects.filter(is_active=True)
+        qs = Doctor.objects.filter(is_active=True).prefetch_related('documents')
         search = request.query_params.get('search', '').strip()
         specialty = request.query_params.get('specialty', '').strip()
         sort = request.query_params.get('sortBy', 'popular')
@@ -3216,7 +3218,7 @@ class DoctorListView(APIView):
                 qs = qs.filter(specialty__in=names)
         sort_map = {'popular': '-total_consultations', 'price-asc': 'consultation_fee', 'rating': '-rating'}
         qs = qs.order_by(sort_map.get(sort, '-total_consultations'))
-        return Response({'success': True, 'data': {'doctors': DoctorSerializer(qs, many=True).data}})
+        return Response({'success': True, 'data': {'doctors': DoctorSerializer(qs, many=True, context={'request': request}).data}})
 
 
 class DoctorSpecialtyListView(APIView):
@@ -3232,10 +3234,10 @@ class DoctorDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            doctor = Doctor.objects.get(id=pk, is_active=True)
+            doctor = Doctor.objects.prefetch_related('documents').get(id=pk, is_active=True)
         except Doctor.DoesNotExist:
             return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return Response({'success': True, 'data': {'doctor': DoctorSerializer(doctor).data}})
+        return Response({'success': True, 'data': {'doctor': DoctorSerializer(doctor, context={'request': request}).data}})
 
 
 class DoctorSlotsView(APIView):
@@ -4245,6 +4247,7 @@ class AdminDashboardView(APIView):
         total_customers = User.objects.filter(role='CUSTOMER', is_deleted=False).count()
         total_medicines = Medicine.objects.count()
         pending_prescriptions = Prescription.objects.filter(status='PENDING').count()
+        pending_doctor_profile_changes = DoctorProfileChangeRequest.objects.filter(status='PENDING').count()
         pending_orders = Order.objects.filter(status='PLACED').count()
         delivered_orders = Order.objects.filter(status='DELIVERED').count()
         cancelled_orders = Order.objects.filter(status='CANCELLED').count()
@@ -4269,6 +4272,7 @@ class AdminDashboardView(APIView):
                 'total_customers': total_customers,
                 'total_medicines': total_medicines,
                 'pending_prescriptions': pending_prescriptions,
+                'pending_doctor_profile_changes': pending_doctor_profile_changes,
                 'pending_orders': pending_orders,
                 'delivered_orders': delivered_orders,
                 'cancelled_orders': cancelled_orders,
@@ -5029,10 +5033,15 @@ class AdminDoctorDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            doctor = Doctor.objects.select_related('user').get(id=pk)
+            doctor = Doctor.objects.select_related('user').prefetch_related('profile_change_requests', 'documents').get(id=pk)
         except Doctor.DoesNotExist:
             return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return Response({'success': True, 'data': {'doctor': AdminDoctorSerializer(doctor).data}})
+        ctx = {'request': request}
+        return Response({'success': True, 'data': {
+            'doctor': AdminDoctorSerializer(doctor).data,
+            'profile_change_requests': DoctorProfileChangeRequestSerializer(doctor.profile_change_requests.all(), many=True, context=ctx).data,
+            'documents': DoctorDocumentSerializer(doctor.documents.all(), many=True, context=ctx).data,
+        }})
 
     def put(self, request, pk):
         # Kept for the existing Edit Doctor admin page (plain field edits only, no verify/suspend).
@@ -5910,6 +5919,135 @@ class AdminPharmacyLocationChangeRejectView(APIView):
         return Response({'success': True, 'data': {'request': PharmacyLocationChangeRequestSerializer(req).data}, 'message': 'Location change rejected.'})
 
 
+class AdminDoctorProfileChangeApproveView(APIView):
+    """Applies a doctor's REQUESTED profile values onto the live Doctor row — the only path that
+    moves bio/qualification/experience/languages/social_links/photo, since the doctor can't
+    self-edit them directly (see DoctorProfileChangeRequestView). Mirrors the pharmacy location
+    approve view. The scalar fields are the doctor's full desired state, so they're applied
+    verbatim; experience_years is guarded because the request lets it be left blank."""
+    permission_classes = [require_permission('manage_doctors')]
+
+    def post(self, request, pk, req_pk):
+        try:
+            req = DoctorProfileChangeRequest.objects.select_related('doctor__user').get(id=req_pk, doctor_id=pk, status='PENDING')
+        except DoctorProfileChangeRequest.DoesNotExist:
+            return Response({'success': False, 'message': 'Pending profile change request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        doctor = req.doctor
+        doctor.bio = req.requested_bio
+        doctor.qualification = req.requested_qualification
+        if req.requested_experience_years is not None:
+            doctor.experience_years = req.requested_experience_years
+        doctor.languages = req.requested_languages
+        doctor.social_links = req.requested_social_links or []
+        # photo_url stays a CharField: in prod .url is the absolute R2 URL, in dev the relative
+        # /media path — both resolve correctly through the frontend's resolveImg().
+        if req.requested_photo:
+            doctor.photo_url = req.requested_photo.url
+        doctor.save()
+
+        req.status = 'APPROVED'
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
+
+        if doctor.user_id:
+            notify_user(
+                user=doctor.user, type='DOCTOR_PROFILE_CHANGE_REVIEWED', title='Profile Changes Approved',
+                message='Your profile changes have been approved and are now live.',
+                link='/doctor/profile',
+            )
+
+        return Response({
+            'success': True,
+            'data': {'request': DoctorProfileChangeRequestSerializer(req, context={'request': request}).data, 'doctor': AdminDoctorSerializer(doctor).data},
+            'message': 'Profile changes approved.',
+        })
+
+
+class AdminDoctorProfileChangeRejectView(APIView):
+    permission_classes = [require_permission('manage_doctors')]
+
+    def post(self, request, pk, req_pk):
+        admin_note = (request.data.get('admin_note') or '').strip()
+        if not admin_note:
+            return Response({'success': False, 'message': 'admin_note is required — explain why this request was rejected.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            req = DoctorProfileChangeRequest.objects.select_related('doctor__user').get(id=req_pk, doctor_id=pk, status='PENDING')
+        except DoctorProfileChangeRequest.DoesNotExist:
+            return Response({'success': False, 'message': 'Pending profile change request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        req.status = 'REJECTED'
+        req.admin_note = admin_note
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.save(update_fields=['status', 'admin_note', 'reviewed_by', 'reviewed_at'])
+
+        if req.doctor.user_id:
+            notify_user(
+                user=req.doctor.user, type='DOCTOR_PROFILE_CHANGE_REVIEWED', title='Profile Changes Rejected',
+                message=f'Your profile changes were rejected: {admin_note}',
+                link='/doctor/profile',
+            )
+
+        return Response({'success': True, 'data': {'request': DoctorProfileChangeRequestSerializer(req, context={'request': request}).data}, 'message': 'Profile changes rejected.'})
+
+
+class AdminDoctorDocumentApproveView(APIView):
+    permission_classes = [require_permission('manage_doctors')]
+
+    def post(self, request, pk, doc_pk):
+        try:
+            doc = DoctorDocument.objects.select_related('doctor__user').get(id=doc_pk, doctor_id=pk)
+        except DoctorDocument.DoesNotExist:
+            return Response({'success': False, 'message': 'Document not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        doc.status = 'APPROVED'
+        doc.admin_note = None
+        doc.reviewed_by = request.user
+        doc.reviewed_at = timezone.now()
+        doc.save(update_fields=['status', 'admin_note', 'reviewed_by', 'reviewed_at'])
+
+        if doc.doctor.user_id:
+            notify_user(
+                user=doc.doctor.user, type='DOCTOR_DOCUMENT_REVIEWED', title='Document Approved',
+                message=f'Your document "{doc.title}" was approved and now shows on your public profile.',
+                link='/doctor/profile',
+            )
+
+        return Response({'success': True, 'data': {'document': DoctorDocumentSerializer(doc, context={'request': request}).data}, 'message': 'Document approved.'})
+
+
+class AdminDoctorDocumentRejectView(APIView):
+    permission_classes = [require_permission('manage_doctors')]
+
+    def post(self, request, pk, doc_pk):
+        admin_note = (request.data.get('admin_note') or '').strip()
+        if not admin_note:
+            return Response({'success': False, 'message': 'admin_note is required — explain why this document was rejected.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            doc = DoctorDocument.objects.select_related('doctor__user').get(id=doc_pk, doctor_id=pk)
+        except DoctorDocument.DoesNotExist:
+            return Response({'success': False, 'message': 'Document not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        doc.status = 'REJECTED'
+        doc.admin_note = admin_note
+        doc.reviewed_by = request.user
+        doc.reviewed_at = timezone.now()
+        doc.save(update_fields=['status', 'admin_note', 'reviewed_by', 'reviewed_at'])
+
+        if doc.doctor.user_id:
+            notify_user(
+                user=doc.doctor.user, type='DOCTOR_DOCUMENT_REVIEWED', title='Document Rejected',
+                message=f'Your document "{doc.title}" was rejected: {admin_note}',
+                link='/doctor/profile',
+            )
+
+        return Response({'success': True, 'data': {'document': DoctorDocumentSerializer(doc, context={'request': request}).data}, 'message': 'Document rejected.'})
+
+
 class AdminPharmacyDocumentView(APIView):
     """Admin-side upload for the one document PharmaX itself provides for a given pharmacy — the
     signed MOU. (The cancelled cheque is proof of the pharmacy's OWN bank account, so — like the
@@ -6081,7 +6219,184 @@ class DoctorProfileView(APIView):
         doctor = getattr(request.user, 'doctor', None)
         if not doctor:
             return _doctor_not_found_response()
-        return Response({'success': True, 'data': {'doctor': AdminDoctorSerializer(doctor).data}})
+        ctx = {'request': request}
+        # Meta ordering is -created_at / -uploaded_at, so .first() is the newest change request and
+        # the documents come newest-first — the profile page shows the doctor their latest submission
+        # status (incl. admin_note on reject) alongside the currently-live values.
+        latest_change = doctor.profile_change_requests.first()
+        return Response({'success': True, 'data': {
+            'doctor': AdminDoctorSerializer(doctor).data,
+            'profile_change_request': DoctorProfileChangeRequestSerializer(latest_change, context=ctx).data if latest_change else None,
+            'documents': DoctorDocumentSerializer(doctor.documents.all(), many=True, context=ctx).data,
+        }})
+
+
+def _parse_doctor_social_links(raw):
+    """Validate the doctor's submitted social/website links. Accepts a JSON string (as sent in the
+    multipart body) or an already-parsed list. Returns (cleaned_list, error_message); on error the
+    list is None. Enforces the 'flexible list of {label, url}' shape: ≤10 rows, non-empty label
+    (≤50 chars) and http(s) url (≤500 chars) on each."""
+    if raw in (None, ''):
+        return [], None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return None, 'Links must be valid JSON.'
+    if not isinstance(raw, list):
+        return None, 'Links must be a list.'
+    if len(raw) > 10:
+        return None, 'You can add at most 10 links.'
+    cleaned = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return None, 'Each link needs a label and a url.'
+        label = (item.get('label') or '').strip()
+        url = (item.get('url') or '').strip()
+        if not label or not url:
+            return None, 'Each link needs both a label and a url.'
+        if len(label) > 50:
+            return None, 'Each link label must be 50 characters or fewer.'
+        if not (url.startswith('http://') or url.startswith('https://')):
+            return None, 'Each link url must start with http:// or https://.'
+        if len(url) > 500:
+            return None, 'Each link url is too long (max 500 characters).'
+        cleaned.append({'label': label, 'url': url})
+    return cleaned, None
+
+
+class DoctorProfileChangeRequestView(APIView):
+    """The reviewed path for a doctor to edit their own public profile — bio, qualification, years
+    of experience, languages, social links and photo. Mirrors PharmacyLocationChangeRequestView:
+    nothing touches the live Doctor row until an admin approves, and only one PENDING request may
+    exist at a time. Name, specialty, fee, license and the is_verified flag stay admin-only and are
+    never accepted here. The doctor submits the FULL desired state of the scalar fields (the form is
+    pre-filled with current values); an optional new photo is uploaded as requested_photo."""
+    permission_classes = [IsDoctor]
+
+    def post(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+
+        if doctor.profile_change_requests.filter(status='PENDING').exists():
+            return Response({
+                'success': False,
+                'message': 'You already have a pending profile change awaiting review — wait for it to be reviewed before submitting another.',
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        social_links, err = _parse_doctor_social_links(request.data.get('social_links'))
+        if err:
+            return Response({'success': False, 'message': err}, status=status.HTTP_400_BAD_REQUEST)
+
+        experience_years = request.data.get('experience_years')
+        if experience_years in (None, ''):
+            experience_years = None
+        else:
+            try:
+                experience_years = int(experience_years)
+                if not (0 <= experience_years <= 80):
+                    raise ValueError
+            except (TypeError, ValueError):
+                return Response({'success': False, 'message': 'Years of experience must be a whole number between 0 and 80.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        photo = request.FILES.get('photo')
+        if photo:
+            if photo.content_type not in ('image/jpeg', 'image/png', 'image/webp'):
+                return Response({'success': False, 'message': 'Profile photo must be a JPG, PNG, or WebP image.'}, status=status.HTTP_400_BAD_REQUEST)
+            max_size = _document_max_size_bytes()
+            if photo.size > max_size:
+                return Response({'success': False, 'message': f'Photo must be under {max_size // (1024 * 1024)}MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        def _clean(value, limit):
+            value = (value or '').strip()
+            return value[:limit] or None
+
+        req = DoctorProfileChangeRequest.objects.create(
+            doctor=doctor,
+            requested_bio=(request.data.get('bio') or '').strip() or None,
+            requested_qualification=_clean(request.data.get('qualification'), 255),
+            requested_experience_years=experience_years,
+            requested_languages=_clean(request.data.get('languages'), 255),
+            requested_social_links=social_links,
+            requested_photo=photo if photo else None,
+        )
+
+        _notify_admins(
+            'manage_doctors', 'DOCTOR_PROFILE_CHANGE_REQUEST', 'Doctor Profile Change Requested',
+            f'Dr. {doctor.name} submitted profile changes — review before they go public.',
+            link=f'/admin/doctor-consult/{doctor.id}',
+        )
+
+        return Response({
+            'success': True,
+            'data': {'profile_change_request': DoctorProfileChangeRequestSerializer(req, context={'request': request}).data},
+            'message': 'Profile changes submitted — an admin will review them shortly.',
+        }, status=status.HTTP_201_CREATED)
+
+
+class DoctorDocumentView(APIView):
+    """Self-service research/credential document upload for the doctor's own profile. Each row is
+    reviewed independently (PENDING → APPROVED/REJECTED) and only APPROVED docs show publicly. Uses
+    a real FileField (routed through default_storage → R2 in prod) rather than the pharmacy-document
+    FileSystemStorage pattern, which only writes to Render's ephemeral local disk."""
+    permission_classes = [IsDoctor]
+
+    def get(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        docs = doctor.documents.all()
+        return Response({'success': True, 'data': {'documents': DoctorDocumentSerializer(docs, many=True, context={'request': request}).data}})
+
+    def post(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+
+        title = (request.data.get('title') or '').strip()
+        if not title:
+            return Response({'success': False, 'message': 'A title is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        title = title[:200]
+
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'success': False, 'message': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        if file.content_type not in DOCUMENT_CONTENT_TYPES:
+            return Response({'success': False, 'message': 'Only JPG, PNG, WebP, or PDF files are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
+        max_size = _document_max_size_bytes()
+        if file.size > max_size:
+            return Response({'success': False, 'message': f'File must be under {max_size // (1024 * 1024)}MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        doc = DoctorDocument.objects.create(doctor=doctor, title=title, file=file)
+        _notify_admins(
+            'manage_doctors', 'DOCTOR_DOCUMENT_UPLOADED', 'Doctor Document Uploaded',
+            f'Dr. {doctor.name} uploaded "{title}" — review before it shows publicly.',
+            link=f'/admin/doctor-consult/{doctor.id}',
+        )
+        return Response({
+            'success': True,
+            'data': {'document': DoctorDocumentSerializer(doc, context={'request': request}).data},
+            'message': 'Document uploaded — an admin will review it shortly.',
+        }, status=status.HTTP_201_CREATED)
+
+
+class DoctorDocumentDetailView(APIView):
+    permission_classes = [IsDoctor]
+
+    def delete(self, request, pk):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        try:
+            doc = doctor.documents.get(id=pk)
+        except DoctorDocument.DoesNotExist:
+            return Response({'success': False, 'message': 'Document not found.'}, status=status.HTTP_404_NOT_FOUND)
+        # Delete the stored file first (Pattern B FileField → default_storage/R2), then the row.
+        if doc.file:
+            doc.file.delete(save=False)
+        doc.delete()
+        return Response({'success': True, 'message': 'Document removed.'})
 
 
 class DoctorAvailabilityListView(APIView):
