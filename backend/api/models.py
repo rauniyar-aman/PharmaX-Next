@@ -687,6 +687,9 @@ class Doctor(models.Model):
     photo_url = models.CharField(max_length=500, null=True, blank=True)
     bio = models.TextField(null=True, blank=True)
     languages = models.CharField(max_length=255, null=True, blank=True)
+    # Approved social/website links shown on the public profile — a flexible list of {label, url}
+    # dicts, edited by the doctor via DoctorProfileChangeRequest and only written here on approval.
+    social_links = models.JSONField(default=list, blank=True)
     is_active = models.BooleanField(default=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=Decimal('0'))
     total_reviews = models.IntegerField(default=0)
@@ -704,6 +707,60 @@ class Doctor(models.Model):
 
     def __str__(self):
         return f'Dr. {self.name} ({self.specialty})'
+
+
+class DoctorProfileChangeRequest(models.Model):
+    """A doctor's pending self-service edit to their own profile, awaiting admin review.
+
+    Mirrors PharmacyLocationChangeRequest: the doctor submits requested_* values (which never touch
+    the live Doctor row until an admin approves), only one PENDING request exists at a time, and on
+    approval the requested_* fields are copied onto Doctor. requested_photo is a real ImageField so
+    it routes through default_storage → R2 in prod (unlike photo_url, a bare CharField); on approval
+    Doctor.photo_url is set to requested_photo.url."""
+    STATUS = [('PENDING', 'Pending'), ('APPROVED', 'Approved'), ('REJECTED', 'Rejected')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name='profile_change_requests')
+    requested_bio = models.TextField(blank=True, null=True)
+    requested_qualification = models.CharField(max_length=255, blank=True, null=True)
+    requested_experience_years = models.IntegerField(null=True, blank=True)
+    requested_languages = models.CharField(max_length=255, blank=True, null=True)
+    requested_social_links = models.JSONField(default=list, blank=True)
+    requested_photo = models.ImageField(upload_to='doctor_photos/', null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
+    admin_note = models.TextField(blank=True, null=True)
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'doctor_profile_change_requests'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Profile change for Dr. {self.doctor.name} — {self.status}'
+
+
+class DoctorDocument(models.Model):
+    """A research/credential PDF a doctor uploads to their own profile, reviewed per-row. Only
+    APPROVED documents are shown publicly. file is a real FileField (routes through default_storage
+    → R2 in prod), unlike the pharmacy-document pattern which writes only to local disk."""
+    STATUS = [('PENDING', 'Pending'), ('APPROVED', 'Approved'), ('REJECTED', 'Rejected')]
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name='documents')
+    title = models.CharField(max_length=200)
+    file = models.FileField(upload_to='doctor_documents/')
+    status = models.CharField(max_length=20, choices=STATUS, default='PENDING')
+    admin_note = models.TextField(blank=True, null=True)
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'doctor_documents'
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f'{self.title} — Dr. {self.doctor.name} ({self.status})'
 
 
 class DoctorAvailability(models.Model):

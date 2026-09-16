@@ -4,7 +4,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner, PharmacyIncentiveCampaign, PharmacyCampaignEnrollment
+from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner, PharmacyIncentiveCampaign, PharmacyCampaignEnrollment, DoctorProfileChangeRequest, DoctorDocument
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -299,7 +299,7 @@ class AdminDoctorSerializer(serializers.ModelSerializer):
         model = Doctor
         fields = [
             'id', 'name', 'specialty', 'qualification', 'experience_years', 'consultation_fee',
-            'photo_url', 'bio', 'languages', 'is_active', 'rating', 'total_reviews', 'total_consultations',
+            'photo_url', 'bio', 'languages', 'social_links', 'is_active', 'rating', 'total_reviews', 'total_consultations',
             'email', 'user_is_active', 'license_number', 'is_verified',
             'onboarding_fee_amount', 'onboarding_fee_paid', 'onboarding_fee_paid_at',
             'created_at', 'updated_at',
@@ -1035,14 +1035,31 @@ class MedicineSubscriptionSerializer(serializers.ModelSerializer):
 
 
 class DoctorSerializer(serializers.ModelSerializer):
+    documents = serializers.SerializerMethodField()
+
     class Meta:
         model = Doctor
         fields = [
             'id', 'name', 'specialty', 'qualification', 'experience_years', 'consultation_fee',
-            'photo_url', 'bio', 'languages', 'is_active', 'rating', 'total_reviews',
-            'total_consultations', 'created_at', 'updated_at',
+            'photo_url', 'bio', 'languages', 'social_links', 'is_active', 'rating', 'total_reviews',
+            'total_consultations', 'documents', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'rating', 'total_reviews', 'total_consultations', 'created_at', 'updated_at']
+
+    def get_documents(self, obj):
+        # Only APPROVED research docs are public. Iterate the prefetched cache (obj.documents.all())
+        # and filter status in Python — a .filter() here would fire a fresh query and bypass any
+        # prefetch_related('documents') the view set up, reintroducing an N+1.
+        request = self.context.get('request')
+        out = []
+        for doc in obj.documents.all():
+            if doc.status != 'APPROVED':
+                continue
+            url = doc.file.url if doc.file else None
+            if url and request:
+                url = request.build_absolute_uri(url)
+            out.append({'id': str(doc.id), 'title': doc.title, 'file_url': url})
+        return out
 
 
 class FeaturedDealSerializer(serializers.ModelSerializer):
@@ -1216,6 +1233,47 @@ class PharmacyLocationChangeRequestSerializer(serializers.ModelSerializer):
             'admin_note', 'reviewed_by_name', 'reviewed_at', 'created_at',
         ]
         read_only_fields = fields
+
+
+class DoctorProfileChangeRequestSerializer(serializers.ModelSerializer):
+    reviewed_by_name = serializers.CharField(source='reviewed_by.full_name', read_only=True)
+    requested_photo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DoctorProfileChangeRequest
+        fields = [
+            'id', 'requested_bio', 'requested_qualification', 'requested_experience_years',
+            'requested_languages', 'requested_social_links', 'requested_photo_url', 'status',
+            'admin_note', 'reviewed_by_name', 'reviewed_at', 'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_requested_photo_url(self, obj):
+        if not obj.requested_photo:
+            return None
+        request = self.context.get('request')
+        url = obj.requested_photo.url
+        return request.build_absolute_uri(url) if request else url
+
+
+class DoctorDocumentSerializer(serializers.ModelSerializer):
+    reviewed_by_name = serializers.CharField(source='reviewed_by.full_name', read_only=True)
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DoctorDocument
+        fields = [
+            'id', 'title', 'file_url', 'status', 'admin_note', 'reviewed_by_name',
+            'reviewed_at', 'uploaded_at',
+        ]
+        read_only_fields = fields
+
+    def get_file_url(self, obj):
+        if not obj.file:
+            return None
+        request = self.context.get('request')
+        url = obj.file.url
+        return request.build_absolute_uri(url) if request else url
 
 
 class PharmacyBusinessHoursSerializer(serializers.ModelSerializer):

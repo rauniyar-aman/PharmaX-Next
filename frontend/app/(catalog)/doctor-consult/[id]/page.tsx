@@ -181,8 +181,43 @@ export default function DoctorDetailPage() {
             </div>
             <div className="p-5">
               {tab === 'about' ? (
-                doctor.bio ? (
-                  <p className="text-sm text-on-surface-variant leading-relaxed">{doctor.bio}</p>
+                (doctor.bio || doctor.social_links?.length || doctor.documents?.length) ? (
+                  <div className="space-y-5">
+                    {doctor.bio
+                      ? <p className="text-sm text-on-surface-variant leading-relaxed whitespace-pre-line">{doctor.bio}</p>
+                      : <p className="text-sm text-on-surface-variant">No bio available.</p>}
+
+                    {!!doctor.social_links?.length && (
+                      <div className="space-y-2">
+                        <p className="text-sm font-semibold text-on-surface">Links</p>
+                        <div className="flex flex-wrap gap-2">
+                          {doctor.social_links.map((l, i) => (
+                            <a key={i} href={l.url} target="_blank" rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-low text-sm text-on-surface hover:bg-secondary-container hover:text-on-secondary-container transition-colors">
+                              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>link</span>
+                              {l.label}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {!!doctor.documents?.length && (
+                      <div className="space-y-2">
+                        <p className="text-sm font-semibold text-on-surface">Research &amp; Credentials</p>
+                        <div className="space-y-2">
+                          {doctor.documents.map((d) => (
+                            <a key={d.id} href={resolveImg(d.file_url) || undefined} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-surface-container-low hover:bg-surface-container transition-colors group">
+                              <span className="material-symbols-outlined text-primary flex-shrink-0" style={{ fontSize: '22px' }}>description</span>
+                              <span className="text-sm font-medium text-on-surface truncate flex-1">{d.title}</span>
+                              <span className="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors flex-shrink-0" style={{ fontSize: '18px' }}>open_in_new</span>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <p className="text-sm text-on-surface-variant text-center py-6">No bio available.</p>
                 )

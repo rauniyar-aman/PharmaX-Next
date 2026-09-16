@@ -774,6 +774,11 @@ export interface Doctor {
   photo_url?: string | null
   bio?: string | null
   languages?: string | null
+  // Approved social/website links shown on the public profile — a flexible list of {label, url}.
+  social_links?: { label: string; url: string }[]
+  // Approved research/credential documents shown publicly (subset of DoctorDocument — the public
+  // serializer omits review metadata since only APPROVED docs are ever returned here).
+  documents?: Pick<DoctorDocument, 'id' | 'title' | 'file_url'>[]
   is_active: boolean
   rating: string
   total_reviews: number
@@ -789,6 +794,36 @@ export interface Doctor {
   onboarding_fee_paid_at?: string | null
   created_at: string
   updated_at: string
+}
+
+// A doctor's self-service edits to their public profile, pending admin review. Only one PENDING
+// request exists at a time; approval writes the requested_* values onto the Doctor row.
+export interface DoctorProfileChangeRequest {
+  id: string
+  requested_bio: string | null
+  requested_qualification: string | null
+  requested_experience_years: number | null
+  requested_languages: string | null
+  requested_social_links: { label: string; url: string }[]
+  requested_photo_url: string | null
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  admin_note: string | null
+  reviewed_by_name: string | null
+  reviewed_at: string | null
+  created_at: string
+}
+
+// A research/credential document a doctor uploads to their profile — reviewed independently; only
+// APPROVED docs are shown publicly.
+export interface DoctorDocument {
+  id: string
+  title: string
+  file_url: string | null
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  admin_note: string | null
+  reviewed_by_name: string | null
+  reviewed_at: string | null
+  uploaded_at: string
 }
 
 export type AppointmentStatus = 'PENDING' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED'
