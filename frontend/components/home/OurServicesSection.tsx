@@ -60,7 +60,7 @@ function LabTestCard({ t }: { t: LabTest }) {
     <Link href={`/lab-tests/${t.id}`}
       className="w-48 flex-shrink-0 bg-surface rounded-2xl border border-outline-variant p-4 flex flex-col hover:-translate-y-1 hover:shadow-md transition-all duration-200">
       <div className="flex items-center justify-between">
-        <div className="w-10 h-10 rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center flex-shrink-0">
+        <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
           <span className="material-symbols-outlined ms-filled" style={{ fontSize: '20px' }}>science</span>
         </div>
         {off > 0 && <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-error/10 text-error">{off}% OFF</span>}
@@ -83,13 +83,13 @@ function PackageCard({ t }: { t: LabTest }) {
   const count = t.included_tests?.length || 0
   return (
     <Link href={`/lab-tests/${t.id}`}
-      className="w-56 flex-shrink-0 rounded-2xl border border-purple-500/20 bg-purple-500/5 p-4 flex flex-col hover:-translate-y-1 hover:shadow-md transition-all duration-200">
+      className="w-56 flex-shrink-0 rounded-2xl border border-primary/25 bg-primary/5 p-4 flex flex-col hover:-translate-y-1 hover:shadow-md transition-all duration-200">
       <div className="flex items-center justify-between">
-        <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full bg-purple-500/15 text-purple-600 dark:text-purple-300">
+        <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full bg-primary/15 text-primary">
           <span className="material-symbols-outlined ms-filled" style={{ fontSize: '14px' }}>inventory_2</span>
           Package
         </span>
-        {off > 0 && <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-purple-600 text-white">Save {off}%</span>}
+        {off > 0 && <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-error/10 text-error">Save {off}%</span>}
       </div>
       <p className="text-sm font-semibold text-on-surface leading-snug mt-3 line-clamp-2">{t.name}</p>
       <p className="text-xs text-on-surface-variant mt-1 flex-1">{count > 0 ? `${count} tests included` : 'Multi-test package'}</p>
@@ -97,24 +97,13 @@ function PackageCard({ t }: { t: LabTest }) {
         <span className="text-base font-bold text-on-surface">NPR {Number(t.price).toFixed(0)}</span>
         {off > 0 && <span className="text-[10px] text-on-surface-variant line-through">NPR {Number(t.original_price).toFixed(0)}</span>}
       </div>
-      {saved > 0 && <p className="text-[11px] font-semibold text-purple-600 dark:text-purple-300 mt-0.5">You save NPR {saved.toFixed(0)}</p>}
-      <span className="btn btn-sm w-full mt-3 bg-purple-600 text-white hover:opacity-90">View package<span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span></span>
+      {saved > 0 && <p className="text-[11px] font-semibold text-primary mt-0.5">You save NPR {saved.toFixed(0)}</p>}
+      <span className="btn btn-sm btn-primary w-full mt-3">View package<span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span></span>
     </Link>
   )
 }
 
 // ---- Consult by specialty: a graphic grid instead of a list of doctor names ------------------
-const SPECIALTY_COLORS = [
-  'bg-rose-500/10 text-rose-600 dark:text-rose-400',
-  'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-  'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  'bg-purple-500/10 text-purple-600 dark:text-purple-400',
-  'bg-teal-500/10 text-teal-600 dark:text-teal-400',
-  'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400',
-  'bg-sky-500/10 text-sky-600 dark:text-sky-400',
-]
-
 function specialtyIcon(name: string): string {
   const s = name.toLowerCase()
   if (s.includes('cardio')) return 'cardiology'
@@ -169,8 +158,8 @@ export default function OurServicesSection() {
   return (
     <section className="bg-primary/5 rounded-xl p-5 sm:p-6">
       <div className="mb-8">
-        <h2 className="text-lg font-bold text-on-surface">Our Services</h2>
-        <p className="text-xs text-on-surface-variant mt-0.5">More than a medicine store — lab tests, health packages, and doctor consults, all in one place.</p>
+        <h2 className="font-display text-lg font-semibold text-on-surface">Beyond medicines</h2>
+        <p className="text-xs text-on-surface-variant mt-0.5">Lab tests with home collection, bundled health packages, and video consults with certified doctors.</p>
       </div>
 
       <div className="space-y-8">
@@ -199,10 +188,10 @@ export default function OurServicesSection() {
           {specialties.length > 0 && (
             <CarouselRow className="gap-3 pb-1 -mx-1 px-1 mb-4" ariaLabel="specialties"
               scrimClass="from-[color-mix(in_srgb,rgb(var(--c-primary))_5%,rgb(var(--c-background)))]">
-              {specialties.slice(0, 12).map((s, i) => (
+              {specialties.slice(0, 12).map((s) => (
                 <Link key={s} href={`/doctor-consult?specialty=${encodeURIComponent(s)}`}
                   className="flex flex-col items-center gap-2 w-24 flex-shrink-0 group">
-                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${SPECIALTY_COLORS[i % SPECIALTY_COLORS.length]} group-hover:scale-105 transition-transform`}>
+                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-primary/10 text-primary group-hover:bg-primary/15 transition-colors">
                     <span className="material-symbols-outlined ms-filled" style={{ fontSize: '30px' }}>{specialtyIcon(s)}</span>
                   </div>
                   <span className="text-[11px] font-medium text-on-surface text-center leading-snug line-clamp-2">{s}</span>
