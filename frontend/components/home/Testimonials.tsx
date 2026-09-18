@@ -17,8 +17,8 @@ export default function Testimonials() {
   if (!items || items.length === 0) return null
 
   return (
-    <section>
-      <h2 className="text-lg font-bold text-on-surface mb-1">What Customers Say</h2>
+    <div>
+      <h2 className="text-sm font-bold text-on-surface mb-1">What customers say</h2>
       <p className="text-xs text-on-surface-variant mb-3">Recent reviews from verified customers.</p>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {items.map((t, idx) => (
@@ -38,6 +38,6 @@ export default function Testimonials() {
           </div>
         ))}
       </div>
-    </section>
+    </div>
   )
 }

@@ -7,12 +7,12 @@ import CarouselRow from '@/components/common/CarouselRow'
 import type { Brand } from '@/types'
 
 // Fallback-only palette for the coloured-initials chip (brands with a real logo_url never use it,
-// see BrandTile). Kept deliberately small — three brand-adjacent hues — so the page's text-colour
-// set stays tight; tiles cycle through these by index.
+// see BrandTile). Navy and green alternating — the two brand colours and nothing else. The third
+// entry used to be `bg-emerald-50`, a fixed light tint that stayed pale in dark mode and turned the
+// chip into a white patch on the dark surface; tokens invert, raw tints don't.
 export const BRAND_COLORS = [
   'bg-primary/10 text-primary',
   'bg-secondary/10 text-secondary',
-  'bg-emerald-50 text-emerald-600',
 ]
 
 export function brandInitials(brand: string) {
@@ -60,9 +60,9 @@ export default function BrandRail() {
   if (!loading && brands.length === 0) return null
 
   return (
-    <section>
+    <div>
       <div className="flex items-center gap-3 mb-1">
-        <h2 className="text-lg font-bold text-on-surface">Featured Brands</h2>
+        <h2 className="text-sm font-bold text-on-surface">Featured Brands</h2>
         <Link href="/brands" className="text-xs font-semibold text-primary hover:underline flex items-center gap-0.5">
           View All
           <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
@@ -77,6 +77,6 @@ export default function BrandRail() {
           ))
         }
       </CarouselRow>
-    </section>
+    </div>
   )
 }

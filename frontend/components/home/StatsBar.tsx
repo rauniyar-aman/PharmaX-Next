@@ -45,7 +45,7 @@ export default function StatsBar() {
   if (!credible) return null
 
   return (
-    <section className="bg-surface rounded-2xl border border-outline-variant p-6">
+    <div className="bg-surface rounded-2xl border border-outline-variant p-6">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
         {ROWS.map((s) => {
           const value = stats ? stats[s.key] : null
@@ -54,7 +54,7 @@ export default function StatsBar() {
               <div className="w-11 h-11 rounded-full bg-primary/10 text-primary flex items-center justify-center">
                 <span className="material-symbols-outlined ms-filled" style={{ fontSize: '20px' }}>{s.icon}</span>
               </div>
-              <p className="text-lg font-bold text-on-surface">
+              <p className="font-display text-lg font-semibold text-on-surface tabular-nums">
                 {value != null ? value.toLocaleString('en-IN') : '—'}
               </p>
               <p className="text-xs text-on-surface-variant">{value === 1 ? s.one : s.label}</p>
@@ -62,6 +62,6 @@ export default function StatsBar() {
           )
         })}
       </div>
-    </section>
+    </div>
   )
 }

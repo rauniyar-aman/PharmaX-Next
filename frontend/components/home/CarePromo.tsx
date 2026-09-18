@@ -8,6 +8,18 @@ import Link from 'next/link'
 //
 // Prescription is a genuine step-by-step flow, so it's numbered. The care card lists three parallel
 // capabilities ("all in one"), not an ordered sequence, so it uses plain icon bullets instead.
+//
+// The two panels are the only places in the app that hardcode a hex. They have to: these are fixed
+// saturated surfaces carrying white text, and `--color-primary` / `--color-secondary` inverse to
+// *light* blue and *light* green in dark mode (globals.css `.dark`), which would put white text on
+// a pale panel. The previous code sidestepped that with blue-800/emerald-600/teal-700 — safe, but
+// four hues that aren't the brand's. These are the brand's own navy and green, darkened for the
+// gradient's far end. Don't "fix" them into tokens.
+const NAVY = '#003B7A'
+const NAVY_DEEP = '#002C5C'
+const GREEN = '#00A86B'
+const GREEN_DEEP = '#00794D'
+
 const RX_STEPS = [
   { icon: 'upload_file', label: 'Upload your prescription' },
   { icon: 'medication', label: 'We source it & confirm the price' },
@@ -24,7 +36,8 @@ export default function CarePromo() {
   return (
     <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {/* Prescription — navy */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary to-blue-800 px-6 py-7 sm:px-8 sm:py-8 flex flex-col">
+      <div className="relative overflow-hidden rounded-3xl px-6 py-7 sm:px-8 sm:py-8 flex flex-col"
+        style={{ backgroundImage: `linear-gradient(to bottom right, ${NAVY}, ${NAVY_DEEP})` }}>
         <span className="material-symbols-outlined ms-filled absolute -right-5 -bottom-6 text-white/10 select-none pointer-events-none" style={{ fontSize: '160px' }}>prescriptions</span>
         <div className="relative flex flex-col h-full">
           <h2 className="text-white text-xl sm:text-2xl font-extrabold leading-tight">
@@ -38,7 +51,7 @@ export default function CarePromo() {
               <li key={s.label} className="flex items-center gap-2.5 text-white/90 text-sm font-medium">
                 <span className="relative w-7 h-7 rounded-full bg-white/15 flex items-center justify-center flex-shrink-0">
                   <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>{s.icon}</span>
-                  <span className="absolute -top-1 -left-1 w-4 h-4 rounded-full bg-white text-primary text-[10px] font-bold flex items-center justify-center">{i + 1}</span>
+                  <span className="absolute -top-1 -left-1 w-4 h-4 rounded-full bg-white text-[10px] font-bold flex items-center justify-center" style={{ color: NAVY }}>{i + 1}</span>
                 </span>
                 {s.label}
               </li>
@@ -46,7 +59,8 @@ export default function CarePromo() {
           </ol>
           <div className="mt-auto pt-6">
             <Link href="/prescriptions"
-              className="group inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-primary shadow-md hover:gap-3 transition-all">
+              className="group inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold shadow-md hover:gap-3 transition-all"
+              style={{ color: NAVY }}>
               <span className="material-symbols-outlined ms-filled" style={{ fontSize: '18px' }}>upload_file</span>
               Upload prescription
               <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>arrow_forward</span>
@@ -56,7 +70,8 @@ export default function CarePromo() {
       </div>
 
       {/* Consult + lab + delivery, all from home — green */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-600 to-teal-700 px-6 py-7 sm:px-8 sm:py-8 flex flex-col">
+      <div className="relative overflow-hidden rounded-3xl px-6 py-7 sm:px-8 sm:py-8 flex flex-col"
+        style={{ backgroundImage: `linear-gradient(to bottom right, ${GREEN}, ${GREEN_DEEP})` }}>
         <span className="material-symbols-outlined ms-filled absolute -right-5 -bottom-6 text-white/10 select-none pointer-events-none" style={{ fontSize: '160px' }}>health_and_safety</span>
         <div className="relative flex flex-col h-full">
           <h2 className="text-white text-xl sm:text-2xl font-extrabold leading-tight">
@@ -77,7 +92,8 @@ export default function CarePromo() {
           </ul>
           <div className="mt-auto pt-6 flex flex-wrap gap-2.5">
             <Link href="/doctor-consult"
-              className="group inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-emerald-700 shadow-md hover:gap-3 transition-all">
+              className="group inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold shadow-md hover:gap-3 transition-all"
+              style={{ color: GREEN_DEEP }}>
               <span className="material-symbols-outlined ms-filled" style={{ fontSize: '18px' }}>stethoscope</span>
               Consult a doctor
             </Link>

@@ -56,8 +56,10 @@ export default function HomePage() {
     title: b.title, subtitle: b.subtitle, cta: b.cta, href: b.href, icon: b.icon, gradient: b.gradient, image_url: b.image_url,
   }))
   const heroSlides = toSlides(bannersByPlacement.HERO)
-  const midPageSlides = toSlides(bannersByPlacement.MID_PAGE)
-  const preFooterSlides = toSlides(bannersByPlacement.PRE_FOOTER)
+  // The page used to run two identical PromoSlider sections, one mid-page and one just above the
+  // footer, which read as the same offer twice. There's one slider now, and it carries both
+  // placements' banners so nothing an admin scheduled quietly stops appearing.
+  const promoSlides = [...toSlides(bannersByPlacement.MID_PAGE), ...toSlides(bannersByPlacement.PRE_FOOTER)]
 
   // Every other customer-facing page bounces a logged-in non-customer to their own dashboard (see
   // app/(customer)/layout.tsx) — this standalone top-level page didn't have that guard, so a
@@ -99,14 +101,15 @@ export default function HomePage() {
       <PublicHeader />
 
       <main className="w-full px-4 sm:px-6 py-6 space-y-10">
-        <h1 className="sr-only">Swasthaya — Healthcare, Simplified.</h1>
-        <HeroBanner slides={heroSlides} />
+        {/* The masthead, promo carousel and trust strip sit inside one unit so the top of the page
+            reads as a single thing rather than three stacked sections. */}
+        <div className="space-y-4">
+          <Masthead />
+          <HeroBanner slides={heroSlides} />
+          <TrustStrip />
+        </div>
 
         <ServiceTiles />
-
-        <TrustStrip />
-
-        <CarePromo />
 
         <FeaturedDealsRail
           wishlistIds={wishlistIds}
@@ -115,10 +118,6 @@ export default function HomePage() {
           cartLoading={cartLoading}
         />
 
-        <CategoryRail />
-
-        <BrandRail />
-
         <TabbedProductRail
           wishlistIds={wishlistIds}
           onToggleWishlist={handleWishlist}
@@ -126,18 +125,62 @@ export default function HomePage() {
           cartLoading={cartLoading}
         />
 
-        <PromoSlider slides={midPageSlides} />
+        {/* Categories and brands are the same offer — browse by a facet — so they're one section.
+            `empty:hidden` because each child hides itself when its own fetch comes back empty; the
+            wrapper would otherwise still collect the page's section gap and leave a dead band. */}
+        <section className="space-y-6 empty:hidden">
+          <CategoryRail />
+          <BrandRail />
+        </section>
+
+        <CarePromo />
+
+        <PromoSlider slides={promoSlides} />
 
         <OurServicesSection />
 
-        <PromoSlider slides={preFooterSlides} />
-
-        <StatsBar />
-
-        <Testimonials />
+        {/* The numbers and the reviews both answer "can I trust this" — one band, not two. Both
+            hide themselves until the store has real figures and real reviews, which is the normal
+            state early on, so the wrapper has to disappear with them. */}
+        <section className="space-y-6 empty:hidden">
+          <StatsBar />
+          <Testimonials />
+        </section>
       </main>
 
       <Footer />
+    </div>
+  )
+}
+
+// The storefront's opening statement. Search itself is the sticky header's field — the first
+// interactive thing on the page at every breakpoint — so this doesn't repeat it; a second, bigger
+// box two rows below the first one was the duplication this page already had too much of. What
+// this adds is what the header can't say: what this place is, and the three jobs you can't type
+// into a medicine search.
+function Masthead() {
+  return (
+    <div className="pt-1">
+      <h1 className="font-display text-[1.75rem] sm:text-4xl font-semibold tracking-tight text-on-surface leading-[1.1]">
+        Healthcare, Simplified.
+      </h1>
+      <p className="text-sm text-on-surface-variant mt-2.5 max-w-[58ch] leading-relaxed">
+        Medicines delivered across the Kathmandu Valley, lab tests collected from your home, and
+        video consults with certified doctors anywhere in Nepal.
+      </p>
+
+      <div className="flex flex-wrap gap-x-6 gap-y-2.5 mt-4">
+        {[
+          { label: 'Upload a prescription', href: '/prescriptions', icon: 'upload_file' },
+          { label: 'Book a lab test', href: '/lab-tests', icon: 'science' },
+          { label: 'Consult a doctor', href: '/doctor-consult', icon: 'stethoscope' },
+        ].map((l) => (
+          <Link key={l.href} href={l.href} className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
+            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>{l.icon}</span>
+            {l.label}
+          </Link>
+        ))}
+      </div>
     </div>
   )
 }
