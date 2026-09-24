@@ -1,5 +1,9 @@
 import axios from 'axios'
 import type { InternalAxiosRequestConfig } from 'axios'
+import { requestFinished, requestStarted } from './requestActivity'
+
+/** Requests carry the id of their activity-tracker entry so the response side can clear it. */
+type TrackedConfig = InternalAxiosRequestConfig & { _activityId?: number; _retryCount?: number }
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001/api',
@@ -7,6 +11,7 @@ const api = axios.create({
 })
 
 api.interceptors.request.use((config) => {
+  ;(config as TrackedConfig)._activityId = requestStarted()
   if (typeof window !== 'undefined') {
     try {
       const stored = localStorage.getItem('pharmax-auth')
@@ -22,8 +27,15 @@ api.interceptors.request.use((config) => {
 })
 
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    requestFinished((res.config as TrackedConfig)._activityId)
+    return res
+  },
   async (err) => {
+    // Clear this attempt before any retry below re-enters the request interceptor and takes a
+    // fresh id, otherwise the abandoned entry would sit in the map forever and pin the banner open.
+    requestFinished((err.config as TrackedConfig | undefined)?._activityId)
+
     const url = err.config?.url || ''
     const isAuthCall = url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/token/refresh')
 
@@ -55,7 +67,7 @@ api.interceptors.response.use(
     // Retry transient failures on idempotent GETs. The free-tier backend (Render worker +
     // Neon) intermittently returns 5xx / drops the connection; without this a single blip
     // blanks a page ("Failed to load..."). Only GETs are retried, so no double-writes.
-    const cfg = err.config as (InternalAxiosRequestConfig & { _retryCount?: number }) | undefined
+    const cfg = err.config as TrackedConfig | undefined
     const method = (cfg?.method || 'get').toLowerCase()
     const status = err.response?.status ?? 0
     const isTransient = !err.response || (status >= 500 && status <= 599)
