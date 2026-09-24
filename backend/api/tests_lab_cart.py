@@ -48,9 +48,11 @@ class LabPackageAndCartTests(APITestCase):
             email='admin@example.com', full_name='Super Admin', phone='9800000003', password='pass12345',
             role='ADMIN', is_super_admin=True,
         )
+        # district + pin are what the service-area gate reads, so a bookable address needs both.
         self.address = Address.objects.create(
             user=self.customer, label='Home', name='Cust Omer', phone='9800000001',
             address='Baneshwor', city='Kathmandu', province='Bagmati', zip='44600',
+            district='Kathmandu', lat=27.6893, lng=85.3436,
         )
 
     def _customer_notifs(self, user=None):
