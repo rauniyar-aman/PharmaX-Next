@@ -4,6 +4,7 @@ import { Toaster } from 'react-hot-toast'
 import { useAuthStore } from '@/store/auth'
 import { useThemeStore } from '@/store/theme'
 import NotificationToastWatcher from '@/components/notifications/NotificationToastWatcher'
+import SlowRequestBanner from '@/components/ui/SlowRequestBanner'
 
 export default function Providers({ children }: { children: ReactNode }) {
   const dark = useThemeStore((s) => s.dark)
@@ -27,6 +28,7 @@ export default function Providers({ children }: { children: ReactNode }) {
     <>
       {children}
       <NotificationToastWatcher />
+      <SlowRequestBanner />
       <Toaster position="top-right" toastOptions={{ duration: 4000 }} />
     </>
   )
