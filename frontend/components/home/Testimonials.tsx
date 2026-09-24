@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import api from '@/lib/api'
+import { StarRating } from '@/components/ui/StarRating'
 
 type Testimonial = { name: string; rating: number; comment: string }
 
@@ -23,11 +24,7 @@ export default function Testimonials() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {items.map((t, idx) => (
           <div key={idx} className="bg-surface rounded-2xl border border-outline-variant p-5 flex flex-col gap-3">
-            <div className="flex items-center gap-1">
-              {[...Array(5)].map((_, i) => (
-                <span key={i} className={`material-symbols-outlined ${i < t.rating ? 'ms-filled text-rating' : 'text-outline-variant'}`} style={{ fontSize: '16px' }}>star</span>
-              ))}
-            </div>
+            <StarRating value={t.rating} size={16} />
             <p className="text-sm text-on-surface-variant leading-relaxed flex-1">&ldquo;{t.comment}&rdquo;</p>
             <div className="flex items-center gap-2.5 pt-2 border-t border-outline-variant">
               <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold flex-shrink-0">

@@ -5,14 +5,11 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
+import { tomorrowDateStr } from '@/lib/dates'
+import DateField from '@/components/ui/DateField'
+import { StarRating, StarRatingInput } from '@/components/ui/StarRating'
 import { useAuthStore } from '@/store/auth'
 import type { Doctor, DoctorReview } from '@/types'
-
-function tomorrowDateStr() {
-  const d = new Date()
-  d.setDate(d.getDate() + 1)
-  return d.toISOString().slice(0, 10)
-}
 
 export default function DoctorDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -48,7 +45,7 @@ export default function DoctorDetailPage() {
       setReviews(revs)
       setCanReview(Boolean(revRes.data.data.can_review))
       const mine = revs.find((r) => r.is_mine)
-      if (mine) { setMyRating(mine.rating); setMyReview(mine.comment || '') }
+      if (mine) { setMyRating(Number(mine.rating)); setMyReview(mine.comment || '') }
     }).catch(() => toast.error('Doctor not found.')).finally(() => setLoading(false))
   }, [id])
 
@@ -234,13 +231,7 @@ export default function DoctorDetailPage() {
                   {user && (canReview || myExistingReview) && (
                     <form onSubmit={handleReviewSubmit} className="bg-surface-container-low rounded-2xl p-4 space-y-3">
                       <p className="text-sm font-semibold text-on-surface">{myExistingReview ? 'Edit Your Review' : 'Write a Review'}</p>
-                      <div className="flex items-center gap-1">
-                        {[1, 2, 3, 4, 5].map((n) => (
-                          <button key={n} type="button" onClick={() => setMyRating(n)}>
-                            <span className={`material-symbols-outlined ${n <= myRating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '22px' }}>star</span>
-                          </button>
-                        ))}
-                      </div>
+                      <StarRatingInput value={myRating} onChange={setMyRating} />
                       <textarea value={myReview} onChange={(e) => setMyReview(e.target.value)} rows={3}
                         placeholder="Share your experience with this doctor..."
                         className="w-full px-3 py-2 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant resize-none focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
@@ -274,11 +265,7 @@ export default function DoctorDetailPage() {
                                 <p className="text-xs text-on-surface-variant">{new Date(rev.created_at).toLocaleDateString()}</p>
                               </div>
                             </div>
-                            <div className="flex items-center gap-0.5">
-                              {[...Array(5)].map((_, i) => (
-                                <span key={i} className={`material-symbols-outlined ${i < rev.rating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '14px' }}>star</span>
-                              ))}
-                            </div>
+                            <StarRating value={rev.rating} />
                           </div>
                           {rev.comment && <p className="text-sm text-on-surface-variant">{rev.comment}</p>}
                         </div>
@@ -302,7 +289,7 @@ export default function DoctorDetailPage() {
               <>
                 <div>
                   <label className="text-xs font-medium text-on-surface-variant">Preferred Date</label>
-                  <input type="date" min={tomorrowDateStr()} value={date} onChange={(e) => setDate(e.target.value)}
+                  <DateField min={tomorrowDateStr()} value={date} onChange={(e) => setDate(e.target.value)}
                     className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
                 </div>
                 <div>

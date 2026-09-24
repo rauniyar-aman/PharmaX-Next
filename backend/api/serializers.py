@@ -4,7 +4,8 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner, PharmacyIncentiveCampaign, PharmacyCampaignEnrollment, DoctorProfileChangeRequest, DoctorDocument
+from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, LabReportShare, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner, PharmacyIncentiveCampaign, PharmacyCampaignEnrollment, DoctorProfileChangeRequest, DoctorDocument
+from .video import ensure_meeting_link, build_join_url
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -832,6 +833,8 @@ class LabTestBookingSerializer(serializers.ModelSerializer):
     user = serializers.SerializerMethodField()
     collector = serializers.SerializerMethodField()
     report_file_url = serializers.SerializerMethodField()
+    ordered_by_doctor = serializers.SerializerMethodField()
+    shared_with = serializers.SerializerMethodField()
 
     class Meta:
         model = LabTestBooking
@@ -840,12 +843,14 @@ class LabTestBookingSerializer(serializers.ModelSerializer):
             'scheduled_date', 'time_slot', 'status', 'total_amount', 'notes',
             'payment_status', 'payment_method', 'collector',
             'patient_name', 'patient_phone', 'patient_age', 'patient_gender',
-            'report_url', 'report_file_url', 'report_uploaded_at', 'booked_at', 'updated_at',
+            'report_url', 'report_file_url', 'report_uploaded_at',
+            'ordered_by_doctor', 'shared_with', 'booked_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'status', 'total_amount', 'payment_status', 'payment_method', 'collector',
             'patient_name', 'patient_phone', 'patient_age', 'patient_gender',
-            'report_url', 'report_file_url', 'report_uploaded_at', 'booked_at', 'updated_at',
+            'report_url', 'report_file_url', 'report_uploaded_at',
+            'ordered_by_doctor', 'shared_with', 'booked_at', 'updated_at',
         ]
 
     def get_user(self, obj):
@@ -861,6 +866,63 @@ class LabTestBookingSerializer(serializers.ModelSerializer):
             return None
         request = self.context.get('request')
         return request.build_absolute_uri(obj.report_file.url) if request else obj.report_file.url
+
+    def get_ordered_by_doctor(self, obj):
+        """The doctor who suggested this test during a consultation, or None if the patient booked
+        it themselves. This is what turns a finished report into a one-tap "send it back to Dr. X" —
+        without it the patient would have to remember which doctor asked for which test.
+        Prefetch `prescription_items__prescription__appointment__doctor` to keep this off the N+1
+        path; `.all()` rather than `.first()` so a prefetched cache is actually used."""
+        for item in obj.prescription_items.all():
+            doctor = getattr(getattr(item.prescription, 'appointment', None), 'doctor', None)
+            if doctor:
+                return {'id': str(doctor.id), 'name': doctor.name, 'has_login': bool(doctor.user_id)}
+        return None
+
+    def get_shared_with(self, obj):
+        # Prefetch `report_shares__doctor` alongside the above.
+        return [{
+            'id': str(s.id), 'doctor_id': str(s.doctor_id), 'doctor_name': s.doctor.name,
+            'shared_at': s.shared_at,
+        } for s in obj.report_shares.all()]
+
+
+class LabReportShareSerializer(serializers.ModelSerializer):
+    """One shared report as the DOCTOR sees it: the file, the test, and just enough about the
+    patient and the schedule to place it. The report URL is served here and nowhere else in the
+    doctor area — a doctor reaches a patient's report only through a share the patient created."""
+    lab_test_name = serializers.CharField(source='booking.lab_test.name', read_only=True)
+    scheduled_date = serializers.DateField(source='booking.scheduled_date', read_only=True)
+    report_uploaded_at = serializers.DateTimeField(source='booking.report_uploaded_at', read_only=True)
+    booking_id = serializers.UUIDField(read_only=True)
+    patient = serializers.SerializerMethodField()
+    report_file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LabReportShare
+        fields = [
+            'id', 'booking_id', 'lab_test_name', 'scheduled_date',
+            'patient', 'report_file_url', 'report_uploaded_at', 'shared_at',
+        ]
+
+    def get_patient(self, obj):
+        # patient_name is set only when the booking was made on someone else's behalf; falling back
+        # to the account holder keeps the doctor looking at the person the sample came from.
+        b = obj.booking
+        return {
+            'id': str(b.user_id),
+            'full_name': b.patient_name or b.user.full_name,
+            'age': b.patient_age,
+            'gender': b.patient_gender,
+            'booked_by': b.user.full_name if b.patient_name else None,
+        }
+
+    def get_report_file_url(self, obj):
+        if not obj.booking.report_file:
+            return None
+        request = self.context.get('request')
+        url = obj.booking.report_file.url
+        return request.build_absolute_uri(url) if request else url
 
 
 class LabBookingGroupSerializer(serializers.ModelSerializer):
@@ -1155,23 +1217,45 @@ class DoctorAppointmentSerializer(serializers.ModelSerializer):
     doctor_id = serializers.UUIDField(write_only=True)
     user = serializers.SerializerMethodField()
     prescription = serializers.SerializerMethodField()
+    join_url = serializers.SerializerMethodField()
 
     class Meta:
         model = DoctorAppointment
         fields = [
             'id', 'user', 'doctor', 'doctor_id', 'scheduled_date', 'time_slot',
-            'status', 'fee_amount', 'reason', 'meeting_link',
+            'status', 'fee_amount', 'reason', 'meeting_link', 'join_url',
             'fee_charged', 'is_plus_free', 'payment_status', 'payment_method',
             'prescription', 'follow_up_date', 'follow_up_notes', 'booked_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'status', 'fee_amount', 'meeting_link',
+            'id', 'status', 'fee_amount', 'meeting_link', 'join_url',
             'fee_charged', 'is_plus_free', 'payment_status', 'payment_method',
             'prescription', 'follow_up_date', 'follow_up_notes', 'booked_at', 'updated_at',
         ]
 
     def get_user(self, obj):
         return {'id': str(obj.user_id), 'full_name': obj.user.full_name, 'email': obj.user.email, 'phone': obj.user.phone}
+
+    def to_representation(self, instance):
+        # Mint the room before any field is read, so `meeting_link` and `join_url` can never
+        # disagree about whether one exists. Covers appointments confirmed while no provider was
+        # configured, and the dead meet.jit.si rooms cleared by migration 0067 — the room appears
+        # the first time either party looks, with nobody having to re-confirm anything.
+        if not instance.meeting_link and instance.status == 'CONFIRMED':
+            ensure_meeting_link(instance)
+        return super().to_representation(instance)
+
+    def get_join_url(self, obj):
+        """The URL this particular viewer should click to join.
+
+        `meeting_link` stays the plain, token-free room address so that admin forms and the
+        doctor's own manual override round-trip cleanly; the short-lived credential only ever
+        rides on this field, and only for the two people actually in the consultation.
+        """
+        request = self.context.get('request')
+        if not request:
+            return None
+        return build_join_url(obj, request.user)
 
     def get_prescription(self, obj):
         # Lets the patient's appointment view surface consultation notes directly — including for
@@ -1187,12 +1271,30 @@ class DoctorAppointmentSerializer(serializers.ModelSerializer):
             file_url = request.build_absolute_uri(presc.file.url) if request else presc.file.url
         elif presc.file_url:
             file_url = presc.file_url
+        # Names, not just counts: "2 medicine(s)" is enough for a patient about to review their own
+        # cart, but admin support answering "what did this doctor actually prescribe?" needs the
+        # items themselves. Iterating the prefetched lists (rather than .count()) keeps this to the
+        # queries the view already made — see APPOINTMENT_PRESCRIPTION_PREFETCH in views.py.
+        medicines = [
+            {'id': str(item.id), 'name': item.medicine.name, 'quantity': item.quantity}
+            for item in presc.medicine_items.all()
+        ]
+        lab_tests = [{
+            'id': str(item.id),
+            'name': item.lab_test.name,
+            # Whether the patient followed the suggestion through. A suggested test with no booking
+            # is the interesting case — it is the one nobody has acted on.
+            'booking_id': str(item.booking_id) if item.booking_id else None,
+            'booking_status': item.booking.status if item.booking_id else None,
+        } for item in presc.lab_test_items.all()]
         return {
             'id': str(presc.id),
             'notes': presc.notes,
             'file_url': file_url,
-            'medicine_item_count': presc.medicine_items.count(),
-            'lab_test_item_count': presc.lab_test_items.count(),
+            'medicines': medicines,
+            'lab_tests': lab_tests,
+            'medicine_item_count': len(medicines),
+            'lab_test_item_count': len(lab_tests),
         }
 
 

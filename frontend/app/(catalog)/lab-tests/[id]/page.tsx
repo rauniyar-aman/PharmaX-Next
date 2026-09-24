@@ -4,6 +4,8 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { tomorrowDateStr } from '@/lib/dates'
+import DateField from '@/components/ui/DateField'
 import { useAuthStore } from '@/store/auth'
 import { useLabCartStore } from '@/store/labCart'
 import type { LabTest, Address } from '@/types'
@@ -18,12 +20,6 @@ const PAYMENT_METHODS = [
   { id: 'ESEWA', label: 'eSewa', icon: 'account_balance_wallet', desc: 'Pay now via eSewa digital wallet' },
   { id: 'KHALTI', label: 'Khalti', icon: 'account_balance_wallet', desc: 'Pay now via Khalti digital wallet' },
 ]
-
-function tomorrowDateStr() {
-  const d = new Date()
-  d.setDate(d.getDate() + 1)
-  return d.toISOString().slice(0, 10)
-}
 
 function LabTestDetailContent() {
   const { id } = useParams<{ id: string }>()
@@ -283,7 +279,7 @@ function LabTestDetailContent() {
                 </div>
                 <div>
                   <label className="text-xs font-medium text-on-surface-variant">Preferred Date</label>
-                  <input type="date" min={tomorrowDateStr()} value={date} onChange={(e) => setDate(e.target.value)}
+                  <DateField min={tomorrowDateStr()} value={date} onChange={(e) => setDate(e.target.value)}
                     className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
                 </div>
                 <div>

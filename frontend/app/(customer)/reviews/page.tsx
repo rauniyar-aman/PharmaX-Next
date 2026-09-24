@@ -4,6 +4,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
+import { StarRating } from '@/components/ui/StarRating'
 import type { Review, Medicine, DoctorReview } from '@/types'
 
 type MyReview = Review & { medicine: Medicine }
@@ -86,9 +87,7 @@ function MedicineReviewsTab() {
               </button>
             </div>
             <div className="flex items-center gap-0.5 mt-1">
-              {[...Array(5)].map((_, i) => (
-                <span key={i} className={`material-symbols-outlined ${i < rev.rating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '14px' }}>star</span>
-              ))}
+              <StarRating value={rev.rating} />
               <span className="text-xs text-on-surface-variant ml-1">{new Date(rev.created_at).toLocaleDateString()}</span>
             </div>
             {rev.comment && <p className="text-sm text-on-surface-variant mt-1">{rev.comment}</p>}
@@ -157,9 +156,7 @@ function DoctorReviewsTab() {
               </button>
             </div>
             <div className="flex items-center gap-0.5 mt-1">
-              {[...Array(5)].map((_, i) => (
-                <span key={i} className={`material-symbols-outlined ${i < rev.rating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '14px' }}>star</span>
-              ))}
+              <StarRating value={rev.rating} />
               <span className="text-xs text-on-surface-variant ml-1">{new Date(rev.created_at).toLocaleDateString()}</span>
             </div>
             {rev.comment && <p className="text-sm text-on-surface-variant mt-1">{rev.comment}</p>}

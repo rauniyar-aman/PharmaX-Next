@@ -5,6 +5,8 @@ import { useRouter, usePathname } from 'next/navigation'
 import api from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { useThemeStore } from '@/store/theme'
+import { useNotifications } from '@/hooks/useNotifications'
+import NotificationPanel from '@/components/notifications/NotificationPanel'
 import Logo from '@/components/common/Logo'
 
 const NAV_ITEMS = [
@@ -18,10 +20,12 @@ const NAV_ITEMS = [
 
 export default function DoctorLayout({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)
+  const [notifOpen, setNotifOpen] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
   const { user, logout } = useAuthStore()
   const { dark, toggle: toggleDark } = useThemeStore()
+  const { notifs, loading: notifLoading, unread, markRead, markAllRead, deleteOne, refetch } = useNotifications()
 
   useEffect(() => {
     useAuthStore.persist.rehydrate()
@@ -42,6 +46,17 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
       .then((r) => useAuthStore.getState().setUser(r.data.data.user))
       .catch(() => {})
   }, [hydrated, pathname])
+
+  // Poll so a booking made while the doctor is idle on some other screen still reaches them. 30s,
+  // same as the collector area. Deliberately no chime and no OS Notification here, unlike the
+  // pharmacy and collector layouts: those two are dispatch queues where a request expires if nobody
+  // grabs it within minutes. A consultation is booked for a future date — it needs to be seen, not
+  // reacted to inside the minute — so an audible alarm on every booking would just be noise.
+  useEffect(() => {
+    if (!hydrated || !user || user.role !== 'DOCTOR') return
+    const t = setInterval(() => { refetch() }, 30000)
+    return () => clearInterval(t)
+  }, [hydrated, user, refetch])
 
   if (!hydrated || !user) {
     return (
@@ -65,6 +80,11 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
   }
 
   const pendingVerification = user.doctor_verified === false
+  // Screens an unverified doctor may still open. Notifications is on the list because that's where
+  // "your account has been verified" arrives — gating it would hide the one message they're waiting
+  // for, which is also the only thing the bell in the header could ever link them to.
+  const UNGATED = ['/doctor/notifications']
+  const gated = pendingVerification && !UNGATED.some((p) => pathname.startsWith(p))
 
   return (
     <div className="min-h-screen bg-background">
@@ -91,6 +111,38 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Outside the pendingVerification gate on purpose — an unverified doctor is exactly
+                who needs to see "your account has been verified" land. */}
+            <div className="relative">
+              <button
+                onClick={() => setNotifOpen((o) => !o)}
+                className="relative p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors" title="Notifications">
+                <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>notifications</span>
+                {unread > 0 && (
+                  <span className="absolute top-1 right-1 min-w-[16px] h-4 bg-error text-white text-[9px] font-bold rounded-full flex items-center justify-center px-1 leading-none border-2 border-surface-container-lowest">
+                    {unread > 9 ? '9+' : unread}
+                  </span>
+                )}
+              </button>
+              {notifOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
+                  <div className="absolute right-0 top-12 w-80 bg-surface border border-outline-variant rounded-2xl shadow-xl z-50 overflow-hidden">
+                    <NotificationPanel
+                      notifs={notifs}
+                      loading={notifLoading && notifs.length === 0}
+                      unread={unread}
+                      onMarkRead={markRead}
+                      onMarkAllRead={markAllRead}
+                      onDeleteOne={deleteOne}
+                      viewAllHref="/doctor/notifications"
+                      onClose={() => setNotifOpen(false)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
             <button onClick={toggleDark}
               className="p-2 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors"
               title={dark ? 'Switch to light mode' : 'Switch to dark mode'}>
@@ -123,7 +175,7 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
       </header>
 
       <main className="w-full px-4 sm:px-6 py-6">
-        {pendingVerification ? (
+        {gated ? (
           <div className="flex items-center justify-center py-24">
             <div className="text-center p-8 bg-surface rounded-2xl border border-outline-variant max-w-sm">
               <span className="material-symbols-outlined text-5xl text-amber-500">pending</span>

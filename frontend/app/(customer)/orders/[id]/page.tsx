@@ -5,6 +5,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
+import { StarRatingInput } from '@/components/ui/StarRating'
 import type { Order, Prescription } from '@/types'
 
 // The actual marketplace order lifecycle — sync_order_status() only ever moves an Order through
@@ -76,14 +77,14 @@ export default function OrderDetailPage() {
     api.get(`/orders/${id}/`).then(async (r) => {
       const o: Order = r.data.data.order
       setOrder(o)
-      if (o.order_rating) { setOrderRating(o.order_rating); setOrderComment(o.order_comment || '') }
+      if (o.order_rating) { setOrderRating(Number(o.order_rating)); setOrderComment(o.order_comment || '') }
 
       const ratedFulfillments = (o.fulfillments || []).filter((f) => f.status === 'DELIVERED' && f.delivery_agent_name)
       if (ratedFulfillments.length) {
         setRiderRatings(Object.fromEntries(ratedFulfillments.map((f) => [
           f.id,
           f.rider_rating
-            ? { rating: f.rider_rating, comment: f.rider_rating_comment || '', existing: true }
+            ? { rating: Number(f.rider_rating), comment: f.rider_rating_comment || '', existing: true }
             : { rating: 0, comment: '', existing: false },
         ])))
       }
@@ -93,7 +94,7 @@ export default function OrderDetailPage() {
           try {
             const rr = await api.get(`/medicines/${item.medicine.id}/reviews/`)
             const mine = (rr.data.data.reviews || []).find((rev: any) => rev.is_mine || rev.mine)
-            return [item.medicine.id, mine ? { rating: mine.rating, comment: mine.comment || '', existing: true } : { rating: 0, comment: '', existing: false }] as const
+            return [item.medicine.id, mine ? { rating: Number(mine.rating), comment: mine.comment || '', existing: true } : { rating: 0, comment: '', existing: false }] as const
           } catch {
             return [item.medicine.id, { rating: 0, comment: '', existing: false }] as const
           }
@@ -477,14 +478,8 @@ export default function OrderDetailPage() {
                 </div>
                 {canRateRider && (
                   <div className="flex items-center gap-2 pl-1">
-                    <div className="flex items-center gap-0.5">
-                      {[1, 2, 3, 4, 5].map((n) => (
-                        <button key={n} type="button"
-                          onClick={() => setRiderRatings((p) => ({ ...p, [f.id]: { ...p[f.id], rating: n } }))}>
-                          <span className={`material-symbols-outlined ${n <= rr.rating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '18px' }}>star</span>
-                        </button>
-                      ))}
-                    </div>
+                    <StarRatingInput value={rr.rating} size={24} showValue={false}
+                      onChange={(v) => setRiderRatings((p) => ({ ...p, [f.id]: { ...p[f.id], rating: v } }))} />
                     <button onClick={() => handleRateRider(f.id)} disabled={!rr.rating || riderSubmitting === f.id}
                       className="text-xs font-semibold text-primary hover:underline disabled:opacity-50 disabled:no-underline">
                       {riderSubmitting === f.id ? 'Saving…' : rr.existing ? 'Update rider rating' : 'Rate this rider'}
@@ -520,14 +515,8 @@ export default function OrderDetailPage() {
               </div>
               {isDelivered && mr && (
                 <div className="flex items-center gap-2 pl-[68px]">
-                  <div className="flex items-center gap-0.5">
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <button key={n} type="button"
-                        onClick={() => setMedRatings((p) => ({ ...p, [item.medicine.id]: { ...p[item.medicine.id], rating: n } }))}>
-                        <span className={`material-symbols-outlined ${n <= mr.rating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '18px' }}>star</span>
-                      </button>
-                    ))}
-                  </div>
+                  <StarRatingInput value={mr.rating} size={24} showValue={false}
+                    onChange={(v) => setMedRatings((p) => ({ ...p, [item.medicine.id]: { ...p[item.medicine.id], rating: v } }))} />
                   <button onClick={() => handleRateMedicine(item.medicine.id)} disabled={!mr.rating || medSubmitting === item.medicine.id}
                     className="text-xs font-semibold text-primary hover:underline disabled:opacity-50 disabled:no-underline">
                     {medSubmitting === item.medicine.id ? 'Saving…' : mr.existing ? 'Update rating' : 'Rate this medicine'}
@@ -601,13 +590,7 @@ export default function OrderDetailPage() {
         <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
           <p className="text-sm font-bold text-on-surface">{order.order_rating ? 'Your Rating' : 'Rate This Order'}</p>
           <form onSubmit={handleRateOrder} className="space-y-3">
-            <div className="flex items-center gap-1">
-              {[1, 2, 3, 4, 5].map((n) => (
-                <button key={n} type="button" onClick={() => setOrderRating(n)}>
-                  <span className={`material-symbols-outlined ${n <= orderRating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '26px' }}>star</span>
-                </button>
-              ))}
-            </div>
+            <StarRatingInput value={orderRating} onChange={setOrderRating} size={32} />
             <textarea value={orderComment} onChange={(e) => setOrderComment(e.target.value)} rows={2}
               placeholder="How was your overall delivery experience?"
               className="w-full px-3 py-2 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant resize-none focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />

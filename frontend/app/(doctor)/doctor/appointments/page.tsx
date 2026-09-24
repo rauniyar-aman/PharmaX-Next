@@ -140,11 +140,11 @@ export default function DoctorAppointmentsPage() {
                   </div>
                 ) : (
                   <div className="flex items-center justify-between gap-2 flex-wrap">
-                    {a.meeting_link ? (
-                      <a href={a.meeting_link} target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-primary hover:underline truncate max-w-[55%] flex items-center gap-1">
+                    {a.join_url ? (
+                      <a href={a.join_url} target="_blank" rel="noopener noreferrer"
+                        className="px-4 py-2 bg-primary text-on-primary text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity flex items-center gap-1.5">
                         <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>videocam</span>
-                        {a.meeting_link}
+                        Join call
                       </a>
                     ) : (
                       <span className="text-xs text-on-surface-variant">No meeting link yet.</span>

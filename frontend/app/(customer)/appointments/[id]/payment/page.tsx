@@ -6,16 +6,22 @@ import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import type { DoctorAppointment } from '@/types'
 
-// Mirrors (customer)/checkout/payment/page.tsx's mechanic — POST to initiate, then redirect the
-// browser to the gateway's payment_url. Everything order-specific there (coupon, wallet, delivery
-// charge, method choice) doesn't apply here: a consultation only supports Khalti (Stage 2), has no
-// cart, and no delivery charge — so this is a deliberately smaller page, not a stripped-down copy.
+// Mirrors (customer)/checkout/payment/page.tsx's mechanic — POST to initiate, then hand the browser
+// to the gateway (a redirect for Khalti, a signed form POST for eSewa). Everything order-specific
+// there (coupon, wallet, delivery charge, pay-on-delivery) doesn't apply here: a consultation has no
+// cart and nothing to hand over in person, so there's no cash option — it's pay online or nothing.
+const PAYMENT_METHODS = [
+  { id: 'ESEWA', label: 'eSewa', icon: 'account_balance_wallet', desc: 'Pay via eSewa digital wallet' },
+  { id: 'KHALTI', label: 'Khalti', icon: 'account_balance_wallet', desc: 'Pay via Khalti digital wallet' },
+]
+
 export default function AppointmentPaymentPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const [appt, setAppt] = useState<DoctorAppointment | null>(null)
   const [loading, setLoading] = useState(true)
   const [paying, setPaying] = useState(false)
+  const [method, setMethod] = useState('ESEWA')
 
   useEffect(() => {
     if (!id) return
@@ -25,11 +31,33 @@ export default function AppointmentPaymentPage() {
     }).catch(() => {}).finally(() => setLoading(false))
   }, [id])
 
+  // eSewa takes a signed form POST rather than a GET redirect, so the params the backend signed have
+  // to be replayed as hidden fields — identical to the lab-test and order checkout flows.
+  const submitEsewaForm = (formUrl: string, params: Record<string, string>) => {
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = formUrl
+    Object.entries(params).forEach(([key, value]) => {
+      const input = document.createElement('input')
+      input.type = 'hidden'
+      input.name = key
+      input.value = value
+      form.appendChild(input)
+    })
+    document.body.appendChild(form)
+    form.submit()
+  }
+
   const handlePay = async () => {
     setPaying(true)
     try {
-      const res = await api.post('/payment/khalti/initiate-appointment/', { appointment_id: id })
-      window.location.href = res.data.data.payment_url
+      if (method === 'ESEWA') {
+        const res = await api.post('/payment/esewa/initiate-appointment/', { appointment_id: id })
+        submitEsewaForm(res.data.data.formUrl, res.data.data.params)
+      } else {
+        const res = await api.post('/payment/khalti/initiate-appointment/', { appointment_id: id })
+        window.location.href = res.data.data.payment_url
+      }
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to start payment.')
       setPaying(false)
@@ -88,17 +116,25 @@ export default function AppointmentPaymentPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 p-4 rounded-2xl border border-primary bg-primary/5">
-        <span className="material-symbols-outlined ms-filled text-on-surface-variant" style={{ fontSize: '22px' }}>account_balance_wallet</span>
-        <div>
-          <p className="text-sm font-semibold text-on-surface">Khalti</p>
-          <p className="text-xs text-on-surface-variant">Pay via Khalti digital wallet</p>
-        </div>
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-on-surface">Payment Method</p>
+        {PAYMENT_METHODS.map((m) => (
+          <label key={m.id} className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-colors ${method === m.id ? 'border-primary bg-primary/5' : 'border-outline-variant hover:border-primary/40'}`}>
+            <input type="radio" name="payment" value={m.id} checked={method === m.id} onChange={() => setMethod(m.id)} className="accent-primary" />
+            <span className="material-symbols-outlined ms-filled text-on-surface-variant" style={{ fontSize: '22px' }}>{m.icon}</span>
+            <div>
+              <p className="text-sm font-semibold text-on-surface">{m.label}</p>
+              <p className="text-xs text-on-surface-variant">{m.desc}</p>
+            </div>
+          </label>
+        ))}
       </div>
 
       <button onClick={handlePay} disabled={paying}
         className="w-full py-3 bg-primary text-on-primary text-sm font-bold rounded-2xl hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
-        {paying ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />Redirecting to Khalti...</> : 'Pay with Khalti'}
+        {paying
+          ? <><div className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />Redirecting to {method === 'ESEWA' ? 'eSewa' : 'Khalti'}...</>
+          : `Pay with ${method === 'ESEWA' ? 'eSewa' : 'Khalti'}`}
       </button>
       <p className="text-[11px] text-on-surface-variant text-center">
         If payment isn't completed, this appointment's slot will be released and you'll need to book again.

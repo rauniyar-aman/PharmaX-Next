@@ -11,7 +11,51 @@ from decimal import Decimal
 
 from django.db import transaction
 
+from .matching import _eta_assumed_speed_kmh, _haversine_km
 from .models import LabTestBooking, CollectorEarning, CollectorCodLiability, Notification
+
+# The collector is only "coming to you" in these three states. Before CONFIRMED nobody is assigned;
+# from SAMPLE_COLLECTED onward they have left and moved on to other patients. LabCollector.lat/lng
+# is a single ever-updating CURRENT position rather than a snapshot, so exposing it outside this
+# window would let any past patient keep polling and watch a collector's live location all day —
+# the same rule, and the same reason, as _tracking_payload() in matching.py.
+LIVE_TRACKING_STATUSES = ('CONFIRMED', 'EN_ROUTE', 'ARRIVED')
+
+
+def collector_tracking_payload(booking):
+    """Where the patient's collector is right now, for one of the patient's own bookings.
+
+    The collector's browser has been pushing coordinates to LabCollector.lat/lng all along
+    (LabCollectorLocationUpdateView, driven by the watchPosition on the collector's Active page) —
+    this is the read side, which simply never existed: the patient's booking list showed the
+    collector's name and nothing else, so "On the way" was a dead end.
+
+    Name and phone stay visible outside the live window as a support/receipt reference; neither
+    updates on its own. Distance and ETA are derived, so they disappear with the coordinates.
+    """
+    collector = booking.collector
+    data = {'booking_id': str(booking.id), 'status': booking.status, 'collector': None}
+    if not collector:
+        return data
+
+    data['collector'] = {
+        'name': collector.user.full_name,
+        'phone': collector.phone,
+        'lat': None,
+        'lng': None,
+    }
+    if booking.status not in LIVE_TRACKING_STATUSES:
+        return data
+
+    data['collector']['lat'] = collector.lat
+    data['collector']['lng'] = collector.lng
+    address = booking.address
+    if (collector.lat is not None and collector.lng is not None
+            and address is not None and address.lat is not None and address.lng is not None):
+        distance_km = _haversine_km(collector.lat, collector.lng, address.lat, address.lng)
+        data['distance_km'] = round(distance_km, 1)
+        data['eta_minutes'] = round((distance_km / _eta_assumed_speed_kmh()) * 60)
+    return data
 
 
 @transaction.atomic
@@ -83,7 +127,7 @@ def collector_mark_en_route(collector, booking):
     Notification.objects.create(
         user=locked.user, type='LAB_BOOKING_UPDATE', title='Collector On the Way',
         message=f'Your collector is on the way to collect your {locked.lab_test.name} sample.',
-        link='/lab-test-bookings',
+        link=f'/lab-test-bookings/{locked.id}/track',
     )
     return True, None
 
@@ -104,7 +148,7 @@ def collector_mark_arrived(collector, booking):
     Notification.objects.create(
         user=locked.user, type='LAB_BOOKING_UPDATE', title='Collector Arrived',
         message=f'Your collector has arrived to collect your {locked.lab_test.name} sample.',
-        link='/lab-test-bookings',
+        link=f'/lab-test-bookings/{locked.id}/track',
     )
     return True, None
 

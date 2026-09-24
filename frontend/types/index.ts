@@ -434,7 +434,7 @@ export interface OrderFulfillmentProgress {
   accepted_at: string | null
   delivery_broadcast_at: string | null
   delivered_at: string | null
-  rider_rating: number | null
+  rider_rating: string | null
   rider_rating_comment: string | null
   prescription_ready: boolean
 }
@@ -478,7 +478,7 @@ export interface Order {
   payment_method?: string | null
   payment_status: PaymentStatus
   notes?: string | null
-  order_rating?: number | null
+  order_rating?: string | null
   order_comment?: string | null
   placed_at: string
   updated_at: string
@@ -571,7 +571,8 @@ export interface SystemSettings {
 export interface Review {
   id: string
   user?: { id: string; full_name: string } | null
-  rating: number
+  // Decimal(2,1) on the server, so DRF sends it as a string — half steps like "4.5" are valid.
+  rating: string
   comment?: string | null
   created_at: string
   is_mine?: boolean
@@ -592,7 +593,8 @@ export interface DoctorReview {
   id: string
   user?: { id: string; full_name: string } | null
   doctor?: Doctor
-  rating: number
+  // Decimal(2,1) on the server — see Review.rating.
+  rating: string
   comment?: string | null
   created_at: string
   is_mine?: boolean
@@ -692,8 +694,48 @@ export interface LabTestBooking {
   report_url?: string | null
   report_file_url?: string | null
   report_uploaded_at?: string | null
+  // The doctor who suggested this test during a consultation — null when the patient booked it
+  // themselves. Drives the "send the report back to them" prompt once the report lands.
+  ordered_by_doctor?: { id: string; name: string; has_login: boolean } | null
+  // Doctors this patient has handed the report to. Sharing is always the patient's explicit act,
+  // so this is empty until they send it — including for the doctor who ordered the test.
+  shared_with?: LabReportShare[]
   booked_at: string
   updated_at: string
+}
+
+// One finished report, handed by the patient to one doctor. Deleting the row is the revoke, so
+// there is no status — presence in `shared_with` is the whole grant.
+export interface LabReportShare {
+  id: string
+  doctor_id: string
+  doctor_name: string
+  shared_at: string
+}
+
+// Matches lab_collection.collector_tracking_payload() — GET /lab-tests/bookings/<id>/tracking/.
+// The lab counterpart to TrackingFulfillment, but one collector per booking rather than one rider
+// per leg, so it's a single object. `lat`/`lng` (and with them distance_km/eta_minutes) are null
+// outside CONFIRMED/EN_ROUTE/ARRIVED: the collector's position is a single live coordinate, not a
+// per-booking snapshot, so a finished booking must not keep reporting where they are now.
+export interface CollectorTracking {
+  booking_id: string
+  status: LabTestBookingStatus
+  collector: {
+    name: string
+    phone: string | null
+    lat: number | null
+    lng: number | null
+  } | null
+  distance_km?: number
+  eta_minutes?: number
+}
+
+// GET /lab-tests/bookings/<id>/share-report/ — who this report can go to, and who has it.
+export interface LabReportShareOptions {
+  report_ready: boolean
+  doctors: { id: string; name: string; specialty: string; ordered_this_test: boolean }[]
+  shares: LabReportShare[]
 }
 
 // A multi-test cart checkout: the shared payment parent that owns the individual bookings it
@@ -839,12 +881,26 @@ export interface DoctorAppointment {
   fee_amount: string
   reason?: string | null
   meeting_link?: string | null
+  /** The room address plus this viewer's own short-lived access token. Always prefer it over
+   *  meeting_link for a join button — the bare room turns people away at the door. */
+  join_url?: string | null
   fee_charged?: string
   is_plus_free?: boolean
   payment_status?: AppointmentPaymentStatus
   payment_method?: 'KHALTI' | 'ESEWA' | 'WALLET' | null
   payout_status?: PayoutStatus | null   // admin views only (AdminAppointmentListView/Detail)
-  prescription?: { id: string; notes: string | null; file_url?: string | null; medicine_item_count: number; lab_test_item_count: number } | null
+  prescription?: {
+    id: string
+    notes: string | null
+    file_url?: string | null
+    /** What the doctor actually prescribed. Admin reads these; the patient's own pages mostly
+     *  use the counts below to size a "review your suggestions" link. */
+    medicines?: { id: string; name: string; quantity: number }[]
+    /** booking_status is null for a test the patient was told to take but never booked. */
+    lab_tests?: { id: string; name: string; booking_id: string | null; booking_status: string | null }[]
+    medicine_item_count: number
+    lab_test_item_count: number
+  } | null
   follow_up_date?: string | null
   follow_up_notes?: string | null
   booked_at: string
@@ -866,6 +922,20 @@ export interface DoctorPatientDetail {
   patient: { id: string; full_name: string; email: string; phone: string | null }
   appointments: DoctorAppointment[]
   prescriptions: (Prescription & { medicine_items: PrescriptionMedicineItem[]; lab_test_items: PrescriptionLabTestItem[] })[]
+  // Reports this patient chose to send to THIS doctor. A report the doctor ordered does not appear
+  // here on its own — it arrives only when the patient shares it, and disappears if they take it back.
+  shared_reports: DoctorSharedReport[]
+}
+
+export interface DoctorSharedReport {
+  id: string
+  booking_id: string
+  lab_test_name: string
+  scheduled_date: string
+  patient: { id: string; full_name: string; age: number | null; gender: string | null; booked_by: string | null }
+  report_file_url: string | null
+  report_uploaded_at: string | null
+  shared_at: string
 }
 
 export interface DoctorAvailability {

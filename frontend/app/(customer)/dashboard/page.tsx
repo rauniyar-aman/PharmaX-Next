@@ -169,7 +169,7 @@ export default function DashboardPage() {
           icon: 'stethoscope',
           title: `Dr. ${a.doctor?.name || 'your doctor'}`,
           detail: a.time_slot ? `Video consult, ${a.time_slot}` : 'Video consult',
-          cta: { label: a.meeting_link ? 'Join' : 'Details', href: `/appointments/${a.id}` },
+          cta: { label: a.join_url ? 'Join' : 'Details', href: `/appointments/${a.id}` },
         })
       }
     }
