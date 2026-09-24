@@ -147,6 +147,19 @@ EMAIL_FROM = os.getenv('EMAIL_FROM', EMAIL_HOST_USER)
 # endpoint is disabled (rejects every request), so a misconfigured deploy never runs open.
 CRON_SECRET = os.getenv('CRON_SECRET', '')
 
+# 8x8 JaaS — the video rooms doctor consultations run in. Moderator rights come from a JWT we
+# sign per participant rather than from a social login, which is what lets the doctor start the
+# call and the patient walk straight in. All three values come from the JaaS console; the private
+# key is a secret and must only ever live in the environment. Render env vars are single-line, so
+# a PEM is pasted with literal \n escapes and unescaped here.
+JAAS_BASE_URL = os.getenv('JAAS_BASE_URL', 'https://8x8.vc').rstrip('/')
+JAAS_APP_ID = os.getenv('JAAS_APP_ID', '').strip()
+JAAS_API_KEY_ID = os.getenv('JAAS_API_KEY_ID', '').strip()
+JAAS_PRIVATE_KEY = os.getenv('JAAS_PRIVATE_KEY', '').replace('\\n', '\n').strip()
+# How long a join link stays valid once handed out. Long enough to cover a late-running
+# consultation, short enough that a leaked URL is worthless by the next day.
+JAAS_TOKEN_TTL_HOURS = int(os.getenv('JAAS_TOKEN_TTL_HOURS', '4'))
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',

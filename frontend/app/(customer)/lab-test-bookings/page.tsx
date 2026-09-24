@@ -4,7 +4,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
-import type { LabTestBooking } from '@/types'
+import type { LabTestBooking, LabReportShare, LabReportShareOptions } from '@/types'
 
 const STATUS_COLORS: Record<string, string> = {
   PENDING: 'bg-amber-50 text-amber-600',
@@ -34,6 +34,140 @@ const PAYMENT_METHOD_LABEL: Record<string, string> = {
   CASH_ON_DELIVERY: 'Cash on Collection',
 }
 
+/**
+ * Hands a finished report to a doctor — and takes it back.
+ *
+ * A doctor never sees a report just because they ordered it; this control is the only way one
+ * reaches them. So the ordering doctor gets a named one-tap button (that's the case that happens
+ * most, and having to hunt for their name in a list would be silly), and every other doctor the
+ * patient has consulted is one tap further, behind "Send to another doctor". The full list costs a
+ * request, so it's only fetched when asked for.
+ */
+function ShareReportControl({ booking, onShares }: { booking: LabTestBooking; onShares: (shares: LabReportShare[]) => void }) {
+  const [picking, setPicking] = useState(false)
+  const [options, setOptions] = useState<LabReportShareOptions | null>(null)
+  const [loadingOptions, setLoadingOptions] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
+
+  const url = `/lab-tests/bookings/${booking.id}/share-report/`
+  const shares = booking.shared_with || []
+  const ordering = booking.ordered_by_doctor
+  const orderingHasIt = !!ordering && shares.some((s) => s.doctor_id === ordering.id)
+
+  const openPicker = async () => {
+    setPicking(true)
+    if (options) return
+    setLoadingOptions(true)
+    try {
+      const res = await api.get(url)
+      setOptions(res.data.data)
+    } catch {
+      toast.error('Could not load your doctors.')
+      setPicking(false)
+    } finally {
+      setLoadingOptions(false)
+    }
+  }
+
+  const send = async (doctorId: string) => {
+    setBusyId(doctorId)
+    try {
+      const res = await api.post(url, { doctor_id: doctorId })
+      onShares(res.data.data.shares)
+      toast.success(res.data.message)
+      setPicking(false)
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Could not send the report.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const revoke = async (doctorId: string, doctorName: string) => {
+    if (!confirm(`Remove Dr. ${doctorName}'s access to this report?`)) return
+    setBusyId(doctorId)
+    try {
+      const res = await api.delete(`${url}?doctor_id=${doctorId}`)
+      onShares(res.data.data.shares)
+      toast.success('Access removed.')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Could not remove access.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  // Already-sent doctors are hidden from the picker: the way to undo is the chip above, so listing
+  // them again with a disabled row would only add noise.
+  const sendable = (options?.doctors || []).filter((d) => !shares.some((s) => s.doctor_id === d.id))
+
+  return (
+    <div className="border-t border-outline-variant pt-3 space-y-2">
+      {shares.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {shares.map((s) => (
+            <span key={s.id} className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold">
+              <span className="material-symbols-outlined ms-filled" style={{ fontSize: '13px' }}>send</span>
+              Sent to Dr. {s.doctor_name}
+              <button onClick={() => revoke(s.doctor_id, s.doctor_name)} disabled={busyId === s.doctor_id}
+                title="Remove access" aria-label={`Remove Dr. ${s.doctor_name}'s access`}
+                className="ml-0.5 p-0.5 rounded-full hover:bg-emerald-100 disabled:opacity-50 transition-colors">
+                <span className="material-symbols-outlined block" style={{ fontSize: '14px' }}>close</span>
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {!picking ? (
+        <div className="flex items-center gap-4 flex-wrap">
+          {ordering?.has_login && !orderingHasIt && (
+            <button onClick={() => send(ordering.id)} disabled={busyId === ordering.id}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-primary text-on-primary text-xs font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity">
+              <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>stethoscope</span>
+              {busyId === ordering.id ? 'Sending...' : `Send to Dr. ${ordering.name}`}
+            </button>
+          )}
+          <button onClick={openPicker} className="text-xs font-semibold text-primary hover:underline">
+            {shares.length || (ordering?.has_login && !orderingHasIt) ? 'Send to another doctor' : 'Send this report to a doctor'}
+          </button>
+        </div>
+      ) : (
+        <div className="rounded-2xl bg-surface-container-low p-3 space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold text-on-surface">Send this report to</p>
+            <button onClick={() => setPicking(false)} className="text-xs text-on-surface-variant hover:text-on-surface">Cancel</button>
+          </div>
+          {loadingOptions ? (
+            <p className="text-xs text-on-surface-variant py-1">Loading your doctors...</p>
+          ) : sendable.length === 0 ? (
+            <p className="text-xs text-on-surface-variant py-1">
+              {options?.doctors.length
+                ? 'Every doctor you have consulted already has this report.'
+                : 'You have not consulted a doctor yet. Book a consultation and you can send this report to them afterwards.'}
+            </p>
+          ) : (
+            sendable.map((d) => (
+              <div key={d.id} className="flex items-center justify-between gap-3 py-1">
+                <div className="min-w-0">
+                  <p className="text-sm text-on-surface truncate">Dr. {d.name}</p>
+                  <p className="text-xs text-on-surface-variant truncate">
+                    {d.specialty}{d.ordered_this_test ? ' · ordered this test' : ''}
+                  </p>
+                </div>
+                <button onClick={() => send(d.id)} disabled={busyId === d.id}
+                  className="px-3 py-1.5 rounded-xl bg-primary text-on-primary text-xs font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity whitespace-nowrap">
+                  {busyId === d.id ? 'Sending...' : 'Send'}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function LabTestBookingsPage() {
   const [bookings, setBookings] = useState<LabTestBooking[]>([])
   const [loading, setLoading] = useState(true)
@@ -44,6 +178,12 @@ export default function LabTestBookingsPage() {
     api.get('/lab-tests/bookings/').then((r) => setBookings(r.data.data.bookings || [])).catch(() => {}).finally(() => setLoading(false))
   }
   useEffect(() => { load() }, [])
+
+  // Sharing changes one booking's `shared_with` and nothing else, so it's patched in place rather
+  // than refetching the whole list and collapsing any picker the patient has open.
+  const applyShares = (bookingId: string, shares: LabReportShare[]) => {
+    setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, shared_with: shares } : b)))
+  }
 
   const handleCancel = async (id: string) => {
     if (!confirm('Cancel this lab test booking?')) return
@@ -167,9 +307,22 @@ export default function LabTestBookingsPage() {
               <div>
                 <p className="text-on-surface-variant">Collector</p>
                 <p className="font-medium text-on-surface mt-0.5 truncate">{b.collector?.full_name || 'Not yet assigned'}</p>
+                {b.collector?.phone && (
+                  <a href={`tel:${b.collector.phone}`} className="text-xs text-primary hover:underline">{b.collector.phone}</a>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-4 flex-wrap">
+              {/* Only while they're actually coming to you. Before CONFIRMED nobody is assigned;
+                  from SAMPLE_COLLECTED on they've left, and the tracking endpoint stops returning
+                  coordinates — so the link would lead to a map with nothing on it. */}
+              {b.collector && (b.status === 'CONFIRMED' || b.status === 'EN_ROUTE' || b.status === 'ARRIVED') && (
+                <Link href={`/lab-test-bookings/${b.id}/track`}
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>my_location</span>
+                  Track Collector
+                </Link>
+              )}
               {b.report_file_url ? (
                 <a href={resolveImg(b.report_file_url) || '#'} target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
@@ -196,6 +349,9 @@ export default function LabTestBookingsPage() {
                 </button>
               )}
             </div>
+            {/* The report is the patient's to give away — a doctor, including the one who ordered
+                the test, sees it only once it's sent from here. */}
+            {b.report_file_url && <ShareReportControl booking={b} onShares={(shares) => applyShares(b.id, shares)} />}
           </div>
         ))}
       </div>

@@ -119,8 +119,8 @@ export default function AppointmentsPage() {
               </div>
             )}
 
-            {a.status === 'CONFIRMED' && a.meeting_link && (
-              <a href={a.meeting_link} target="_blank" rel="noopener noreferrer"
+            {a.status === 'CONFIRMED' && a.join_url && (
+              <a href={a.join_url} target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
                 Join Video Call
                 <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>open_in_new</span>

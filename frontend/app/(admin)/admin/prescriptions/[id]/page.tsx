@@ -33,6 +33,11 @@ export default function AdminPrescriptionDetailPage() {
   const [quantities, setQuantities] = useState<Record<string, string>>({})
   const [addingId, setAddingId] = useState<string | null>(null)
   const [removingId, setRemovingId] = useState<string | null>(null)
+  const [labSearch, setLabSearch] = useState('')
+  const [labCatalog, setLabCatalog] = useState<any[]>([])
+  const [loadingLabCatalog, setLoadingLabCatalog] = useState(false)
+  const [addingLabId, setAddingLabId] = useState<string | null>(null)
+  const [removingLabId, setRemovingLabId] = useState<string | null>(null)
   const [comment, setComment] = useState('')
   const [downloading, setDownloading] = useState(false)
 
@@ -60,6 +65,20 @@ export default function AdminPrescriptionDetailPage() {
     return () => clearTimeout(t)
   }, [catalogSearch, isPending])
 
+  // The public catalog rather than /admin/lab-tests/ — it's already filtered to active tests, and a
+  // pharmacist who can curate prescriptions doesn't necessarily hold the manage_lab_tests permission.
+  useEffect(() => {
+    if (!isPending || !labSearch.trim()) { setLabCatalog([]); return }
+    setLoadingLabCatalog(true)
+    const t = setTimeout(() => {
+      api.get('/lab-tests/', { params: { search: labSearch, limit: 20 } })
+        .then((r) => setLabCatalog(r.data.data.labTests || []))
+        .catch(() => toast.error('Failed to load lab test catalog.'))
+        .finally(() => setLoadingLabCatalog(false))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [labSearch, isPending])
+
   const addItem = async (medicineId: string) => {
     const qty = Number(quantities[medicineId] ?? '1')
     if (!Number.isFinite(qty) || qty < 1) { toast.error('Enter a valid quantity.'); return }
@@ -85,6 +104,32 @@ export default function AdminPrescriptionDetailPage() {
       toast.error(err.response?.data?.message || 'Failed to remove item.')
     } finally {
       setRemovingId(null)
+    }
+  }
+
+  const addLabItem = async (labTestId: string) => {
+    setAddingLabId(labTestId)
+    try {
+      await api.post(`/admin/prescriptions/${id}/lab-test-items/`, { lab_test_id: labTestId })
+      toast.success('Lab test added.')
+      load()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to add lab test.')
+    } finally {
+      setAddingLabId(null)
+    }
+  }
+
+  const removeLabItem = async (itemId: string) => {
+    setRemovingLabId(itemId)
+    try {
+      await api.delete(`/admin/prescriptions/${id}/lab-test-items/${itemId}/`)
+      toast.success('Lab test removed.')
+      load()
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to remove lab test.')
+    } finally {
+      setRemovingLabId(null)
     }
   }
 
@@ -130,6 +175,11 @@ export default function AdminPrescriptionDetailPage() {
   if (!prescription) return null
 
   const items = prescription.medicine_items || []
+  const labItems = prescription.lab_test_items || []
+  const curatedSummary = [
+    items.length > 0 ? `${items.length} medicine${items.length !== 1 ? 's' : ''}` : null,
+    labItems.length > 0 ? `${labItems.length} lab test${labItems.length !== 1 ? 's' : ''}` : null,
+  ].filter(Boolean).join(' + ')
   const files: { id: string | null; file_name: string; file_url: string }[] =
     prescription.all_files && prescription.all_files.length > 0
       ? prescription.all_files
@@ -247,6 +297,44 @@ export default function AdminPrescriptionDetailPage() {
         </div>
       )}
 
+      {isPending && (
+        <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
+          <p className="text-sm font-bold text-on-surface">Add Lab Tests</p>
+          <p className="text-xs text-on-surface-variant">
+            For any test named on the prescription. The patient books each one themselves, choosing their own address and time.
+          </p>
+          <input type="text" value={labSearch} onChange={(e) => setLabSearch(e.target.value)}
+            placeholder="Search lab tests by name..."
+            className="w-full max-w-md px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
+
+          <div className="border border-outline-variant rounded-xl overflow-hidden">
+            <div className="divide-y divide-outline-variant max-h-80 overflow-y-auto">
+              {loadingLabCatalog ? (
+                [...Array(3)].map((_, i) => <div key={i} className="px-4 py-3"><div className="h-6 bg-surface-container-low rounded animate-pulse" /></div>)
+              ) : !labSearch.trim() ? (
+                <div className="px-4 py-8 text-center text-sm text-on-surface-variant">Search the catalog above to add a lab test.</div>
+              ) : labCatalog.length === 0 ? (
+                <div className="px-4 py-8 text-center text-sm text-on-surface-variant">No lab tests found.</div>
+              ) : labCatalog.map((t) => {
+                const already = labItems.some((li: any) => li.lab_test?.id === t.id)
+                return (
+                  <div key={t.id} className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-on-surface truncate">{t.name}</p>
+                      <p className="text-xs text-on-surface-variant">{t.category_name} · NPR {Number(t.price).toFixed(0)}</p>
+                    </div>
+                    <button onClick={() => addLabItem(t.id)} disabled={addingLabId === t.id || already}
+                      className="px-3 py-1.5 bg-primary text-on-primary text-xs font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60 flex-shrink-0">
+                      {already ? 'Added' : 'Add'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
         <p className="text-sm font-bold text-on-surface">Curated Medicines ({items.length})</p>
         {items.length === 0 ? (
@@ -271,6 +359,30 @@ export default function AdminPrescriptionDetailPage() {
         )}
       </div>
 
+      <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
+        <p className="text-sm font-bold text-on-surface">Curated Lab Tests ({labItems.length})</p>
+        {labItems.length === 0 ? (
+          <p className="text-sm text-on-surface-variant">No lab tests added yet.</p>
+        ) : (
+          <div className="divide-y divide-outline-variant">
+            {labItems.map((item: any) => (
+              <div key={item.id} className="py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-on-surface truncate">{item.lab_test?.name}</p>
+                  <p className="text-xs text-on-surface-variant">{item.lab_test?.category_name} · NPR {Number(item.lab_test?.price || 0).toFixed(0)}</p>
+                </div>
+                {isPending && (
+                  <button onClick={() => removeLabItem(item.id)} disabled={removingLabId === item.id}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg text-error hover:bg-error-container transition-colors disabled:opacity-60">
+                    <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {isPending && (
         <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-3">
           <label className="text-sm font-bold text-on-surface" htmlFor="admin-comment">Comment for customer (optional)</label>
@@ -282,9 +394,9 @@ export default function AdminPrescriptionDetailPage() {
           <div className="flex items-center gap-3 pt-1">
             <button onClick={() => updateStatus('VERIFIED', undefined, comment.trim())} disabled={updating}
               className={`px-4 py-2.5 text-sm font-semibold rounded-xl transition-opacity disabled:opacity-60 ${
-                items.length > 0 ? 'bg-emerald-500 text-white hover:opacity-90' : 'border border-outline-variant text-on-surface-variant hover:bg-surface-container'
+                curatedSummary ? 'bg-emerald-500 text-white hover:opacity-90' : 'border border-outline-variant text-on-surface-variant hover:bg-surface-container'
               }`}>
-              Verify{items.length > 0 ? ` (${items.length} medicine${items.length !== 1 ? 's' : ''})` : ''}
+              Verify{curatedSummary ? ` (${curatedSummary})` : ''}
             </button>
             <button onClick={handleReject} disabled={updating}
               className="px-4 py-2.5 bg-error text-on-error text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-60">

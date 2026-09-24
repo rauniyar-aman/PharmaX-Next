@@ -324,7 +324,7 @@ class Order(models.Model):
     esewa_transaction_uuid = models.CharField(max_length=100, null=True, blank=True, unique=True)
     khalti_pidx = models.CharField(max_length=100, null=True, blank=True, unique=True)
     notes = models.TextField(null=True, blank=True)
-    order_rating = models.IntegerField(null=True, blank=True)
+    order_rating = models.DecimalField(max_digits=2, decimal_places=1, null=True, blank=True)
     order_comment = models.TextField(null=True, blank=True)
     placed_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -389,7 +389,9 @@ class Review(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reviews')
     medicine = models.ForeignKey(Medicine, on_delete=models.CASCADE, related_name='reviews')
-    rating = models.IntegerField()
+    # Half-steps allowed (0.5 … 5.0). Decimal(2,1) rather than a float so the stored value is the
+    # exact step the customer picked; the 0.5 increment itself is enforced at the view boundary.
+    rating = models.DecimalField(max_digits=2, decimal_places=1)
     comment = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -596,8 +598,10 @@ class PrescriptionLabTestItem(models.Model):
     lab_test = models.ForeignKey(LabTest, on_delete=models.PROTECT, related_name='+')
     added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     # Set once the patient actually books this suggestion — lets both the patient and the doctor
-    # see which suggested tests were actually followed through on, not just suggested.
-    booking = models.ForeignKey(LabTestBooking, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    # see which suggested tests were actually followed through on, not just suggested. The reverse
+    # accessor is named (rather than the original '+') because the booking side now needs it too:
+    # confirming a booking has to find the doctor who ordered the test in order to notify them.
+    booking = models.ForeignKey(LabTestBooking, on_delete=models.SET_NULL, null=True, blank=True, related_name='prescription_items')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -605,6 +609,33 @@ class PrescriptionLabTestItem(models.Model):
 
     def __str__(self):
         return f'{self.lab_test.name} — {self.prescription_id}'
+
+
+class LabReportShare(models.Model):
+    """One finished lab report, handed by the patient to one doctor.
+
+    A doctor's window into a patient is deliberately narrow — DoctorPatientDetailView returns only
+    what happened with THAT doctor and nothing else from the patient's account — so a report a
+    doctor ordered does not become visible to them just because it exists. The patient hands it
+    over explicitly, and this row is that act: who shared it, with whom, when. Revoking is deleting
+    the row, which is why there's no status field.
+
+    unique_together keeps re-sharing idempotent: tapping "Send to Dr. X" twice is one share, not
+    two notifications. Doctor is PROTECT like every other doctor FK in the domain; booking is
+    CASCADE because a report that no longer exists cannot meaningfully stay shared."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    booking = models.ForeignKey(LabTestBooking, on_delete=models.CASCADE, related_name='report_shares')
+    doctor = models.ForeignKey('Doctor', on_delete=models.PROTECT, related_name='shared_lab_reports')
+    shared_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='+')
+    shared_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'lab_report_shares'
+        ordering = ['-shared_at']
+        unique_together = ('booking', 'doctor')
+
+    def __str__(self):
+        return f'{self.booking_id} → Dr. {self.doctor.name}'
 
 
 class BlogPost(models.Model):
@@ -807,6 +838,11 @@ class DoctorAppointment(models.Model):
     payment_status = models.CharField(max_length=20, choices=[('PENDING', 'Pending'), ('PAID', 'Paid'), ('NOT_REQUIRED', 'Not Required')], default='PENDING')
     payment_method = models.CharField(max_length=20, choices=[('KHALTI', 'Khalti'), ('ESEWA', 'eSewa'), ('WALLET', 'Wallet')], null=True, blank=True)
     khalti_pidx = models.CharField(max_length=100, null=True, blank=True, unique=True)  # needed to resolve the appointment on Khalti's redirect callback, same role as Order.khalti_pidx
+    # eSewa's equivalent handle. It has to be our own value rather than the gateway's because eSewa
+    # signs the request we send it and echoes that same uuid back — so the redirect can only be
+    # matched to an appointment if we minted and stored the uuid first. Mirrors
+    # Order.esewa_transaction_uuid / LabTestBooking.esewa_transaction_uuid exactly.
+    esewa_transaction_uuid = models.CharField(max_length=100, null=True, blank=True, unique=True)
     # Both optional — set only if the doctor recommends a follow-up when completing this consultation.
     follow_up_date = models.DateField(null=True, blank=True)
     follow_up_notes = models.CharField(max_length=255, null=True, blank=True)
@@ -854,7 +890,8 @@ class DoctorReview(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='doctor_reviews')
     doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name='reviews')
-    rating = models.IntegerField()
+    # Half-steps allowed (0.5 … 5.0) — see Review.rating.
+    rating = models.DecimalField(max_digits=2, decimal_places=1)
     comment = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -1372,7 +1409,7 @@ class OrderFulfillment(models.Model):
     # different agent per leg. Same pattern as Order.order_rating/order_comment. DeliveryAgent's
     # displayed rating is an on-the-fly Avg() over these, not a denormalized column, to avoid a
     # second write path to keep in sync.
-    rider_rating = models.IntegerField(null=True, blank=True)
+    rider_rating = models.DecimalField(max_digits=2, decimal_places=1, null=True, blank=True)
     rider_rating_comment = models.TextField(null=True, blank=True)
 
     class Meta:

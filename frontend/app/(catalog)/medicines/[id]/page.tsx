@@ -9,6 +9,7 @@ import { useAuthStore } from '@/store/auth'
 import { useLocationStore } from '@/store/location'
 import { useWishlist } from '@/hooks/useWishlist'
 import { useCart } from '@/hooks/useCart'
+import { StarRating, StarRatingInput } from '@/components/ui/StarRating'
 import type { Medicine, Review, Address } from '@/types'
 
 const FREQUENCIES = [
@@ -83,7 +84,7 @@ export default function MedicineDetailPage() {
       const revs: Review[] = revRes.data.data.reviews || []
       setReviews(revs)
       const mine = revs.find((r) => (r as any).is_mine || (r as any).mine)
-      if (mine) { setMyRating(mine.rating); setMyReview(mine.comment || '') }
+      if (mine) { setMyRating(Number(mine.rating)); setMyReview(mine.comment || '') }
     }).catch(() => toast.error('Medicine not found.')).finally(() => setLoading(false))
   }, [id, lat, lng])
 
@@ -216,11 +217,7 @@ export default function MedicineDetailPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-0.5">
-              {[...Array(5)].map((_, i) => (
-                <span key={i} className={`material-symbols-outlined ${i < Math.floor(Number(medicine.rating)) ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '18px' }}>star</span>
-              ))}
-            </div>
+            <StarRating value={medicine.rating} size={18} />
             <span className="text-sm font-semibold text-on-surface">{Number(medicine.rating).toFixed(1)}</span>
             <span className="text-sm text-on-surface-variant">({medicine.total_reviews} reviews)</span>
           </div>
@@ -398,13 +395,7 @@ export default function MedicineDetailPage() {
               {user && (
                 <form onSubmit={handleReviewSubmit} className="bg-surface-container-low rounded-2xl p-4 space-y-3">
                   <p className="text-sm font-semibold text-on-surface">{myExistingReview ? 'Edit Your Review' : 'Write a Review'}</p>
-                  <div className="flex items-center gap-1">
-                    {[1,2,3,4,5].map((n) => (
-                      <button key={n} type="button" onClick={() => setMyRating(n)}>
-                        <span className={`material-symbols-outlined ${n <= myRating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '22px' }}>star</span>
-                      </button>
-                    ))}
-                  </div>
+                  <StarRatingInput value={myRating} onChange={setMyRating} />
                   <textarea value={myReview} onChange={(e) => setMyReview(e.target.value)} rows={3}
                     placeholder="Share your experience with this medicine..."
                     className="w-full px-3 py-2 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface placeholder:text-on-surface-variant resize-none focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition" />
@@ -438,11 +429,7 @@ export default function MedicineDetailPage() {
                             <p className="text-xs text-on-surface-variant">{new Date(rev.created_at).toLocaleDateString()}</p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-0.5">
-                          {[...Array(5)].map((_, i) => (
-                            <span key={i} className={`material-symbols-outlined ${i < rev.rating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '14px' }}>star</span>
-                          ))}
-                        </div>
+                        <StarRating value={rev.rating} />
                       </div>
                       {rev.comment && <p className="text-sm text-on-surface-variant">{rev.comment}</p>}
                     </div>

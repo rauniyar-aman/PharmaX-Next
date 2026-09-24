@@ -266,6 +266,49 @@ def send_pharmacy_welcome_email(user, raw_password, pharmacy_name=None):
     _send_email_async(user.email, subject, html_body, text_body)
 
 
+def send_doctor_welcome_email(user, raw_password, doctor_name=None):
+    """One-time onboarding email for an admin-created doctor login — AdminDoctorListView.post() and
+    AdminDoctorLinkAccountView.post(). Same split as the collector and pharmacy welcome emails: the
+    admin-set password is delivered ONLY here by email, never in the persistent in-app Notification
+    row (which lives in the DB and shows on every future login).
+
+    Unlike the other two roles, a doctor account starts UNVERIFIED and cannot accept appointments
+    until an admin verifies it, so the email says so up front — otherwise the doctor signs in, finds
+    the whole area gated, and has no idea why. Fire-and-forget via _send_email_async."""
+    store_name = get_store_name()
+    who = doctor_name or user.full_name
+    subject = f'Your {store_name} doctor account is ready'
+    signin_url = f'{FRONTEND_URL}/signin'
+    text_body = (
+        f'Hi Dr. {who},\n\n'
+        f'A doctor account has been created for you on {store_name}. You can sign in with:\n\n'
+        f'Email: {user.email}\n'
+        f'Temporary password: {raw_password}\n\n'
+        f'Please change your password after signing in. Sign in here: {signin_url}\n\n'
+        f'Your account still needs to be verified by our team before you can accept consultations. '
+        f'You can sign in now to set your availability and complete your profile in the meantime.\n\n'
+        f'— {store_name} Team'
+    )
+    body_html = f'''
+      Hi Dr. {who},<br><br>
+      A doctor account has been created for you on <strong>{store_name}</strong>.
+      Use the temporary credentials below to sign in, then change your password from your account settings.
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;">
+        <tr>
+          <td style="background:#f2f4f3; border-radius:12px; padding:18px; font-size:14px; color:#1a1c1a;">
+            <strong>Email:</strong> {user.email}<br>
+            <strong>Temporary password:</strong>
+            <span style="font-family:monospace; letter-spacing:0.5px;">{raw_password}</span>
+          </td>
+        </tr>
+      </table>
+      Your account still needs to be verified by our team before you can accept consultations.
+      You can sign in now to set your availability and complete your profile in the meantime.<br><br>
+      For your security, please change this password after your first sign-in.'''
+    html_body = _render_email_html(store_name, 'Your doctor account is ready', body_html, cta_text='Sign In', cta_url=signin_url)
+    _send_email_async(user.email, subject, html_body, text_body)
+
+
 def send_lab_report_ready_email(booking):
     """Report Ready email for a lab booking — the actual report file is ATTACHED, so the report
     arrives with the notification rather than as a bare link. Respects the same customer

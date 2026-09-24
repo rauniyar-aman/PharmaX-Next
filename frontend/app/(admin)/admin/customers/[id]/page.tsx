@@ -5,6 +5,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
+import { StarRating } from '@/components/ui/StarRating'
 
 const TABS = ['Orders', 'Addresses', 'Prescriptions', 'Reviews', 'Wishlist'] as const
 type Tab = typeof TABS[number]
@@ -242,11 +243,7 @@ export default function CustomerDetailPage() {
               <div key={rev.id} className="bg-surface rounded-2xl border border-outline-variant p-4">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-medium text-on-surface">{rev.medicine?.name}</p>
-                  <div className="flex items-center gap-0.5">
-                    {[...Array(5)].map((_, i) => (
-                      <span key={i} className={`material-symbols-outlined ${i < rev.rating ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '14px' }}>star</span>
-                    ))}
-                  </div>
+                  <StarRating value={rev.rating} />
                 </div>
                 {rev.comment && <p className="text-sm text-on-surface-variant mt-1.5">{rev.comment}</p>}
                 <p className="text-xs text-on-surface-variant mt-1.5">{new Date(rev.created_at).toLocaleDateString()}</p>

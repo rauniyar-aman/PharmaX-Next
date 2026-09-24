@@ -5,9 +5,13 @@ import { useSearchParams } from 'next/navigation'
 
 const REASON_MESSAGES: Record<string, string> = {
   khalti_cancelled: 'You cancelled the Khalti payment.',
+  esewa_cancelled: 'You cancelled the eSewa payment.',
   not_verified: 'The payment could not be verified with the gateway.',
   verify_error: 'We could not reach the payment gateway to verify your payment.',
   appointment_not_found: 'We could not find the appointment associated with this payment.',
+  missing_data: 'The payment gateway did not return the expected data.',
+  bad_data: 'The payment gateway returned data we could not read.',
+  incomplete: 'The payment was not completed.',
 }
 
 function PaymentFailedContent() {

@@ -22,13 +22,13 @@ from django.db import transaction, IntegrityError
 from django.http import HttpResponseRedirect, HttpResponse
 from django.core.files.base import ContentFile
 from django.conf import settings
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from .models import (
     User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, PrescriptionFile,
     Cart, CartItem, Order, OrderItem, Review, WishlistItem,
     Notification, SystemSetting, StockLog,
-    LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout,
+    LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, LabReportShare, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout,
     PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
     Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, DeliveryDecline,
@@ -44,7 +44,7 @@ from .serializers import (
     LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
     ChangePasswordSerializer, UserProfileSerializer,
     CategorySerializer, BrandSerializer, MedicineListSerializer, MedicineDetailSerializer,
-    AddressSerializer, PrescriptionSerializer, PrescriptionMedicineItemSerializer, PrescriptionLabTestItemSerializer, CartSerializer,
+    AddressSerializer, PrescriptionSerializer, PrescriptionMedicineItemSerializer, PrescriptionLabTestItemSerializer, LabReportShareSerializer, CartSerializer,
     CartItemSerializer, OrderSerializer, ReviewSerializer, MyReviewSerializer,
     NotificationSerializer, StockLogSerializer, SystemSettingSerializer,
     LabTestCategorySerializer, LabTestListSerializer, LabTestDetailSerializer, LabTestBookingSerializer, LabBookingGroupSerializer,
@@ -74,7 +74,7 @@ from .serializers import (
     PharmacyIncentiveCampaignSerializer, PharmacyCampaignEnrollmentSerializer,
     DoctorProfileChangeRequestSerializer, DoctorDocumentSerializer,
 )
-from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification, send_collector_welcome_email, send_pharmacy_welcome_email, send_lab_report_ready_email, send_prescription_ready_email
+from .utils import generate_otp, send_otp_email_async, get_store_name, notify_user, notify_users_bulk, _admin_wants_notification, send_collector_welcome_email, send_pharmacy_welcome_email, send_doctor_welcome_email, send_lab_report_ready_email, send_prescription_ready_email
 from .permissions import IsAdmin, IsSuperAdmin, IsPharmacy, IsDeliveryAgent, IsDoctor, IsCollector, require_permission
 from .geo import check_address_serviceable, service_area_config
 from . import imports as bulk_imports
@@ -88,13 +88,24 @@ from .matching import (
     annotate_medicine_availability, _broadcast_radius_km,
 )
 from .scheduling import get_available_slots
+from .video import ensure_meeting_link as _ensure_meeting_link
 from .lab_collection import (
     collector_confirm_sample_collected, collector_mark_en_route,
     collector_mark_arrived, collector_mark_submitted_to_lab,
+    collector_tracking_payload,
 )
 from .pdf import build_prescription_pdf
 
 logger = logging.getLogger(__name__)
+
+# Everything DoctorAppointmentSerializer.get_prescription() reads. Without it, listing appointments
+# costs four extra queries per row once the consultation record carries item names rather than
+# counts — invisible on a dev database, brutal on the admin list, which is unpaginated.
+APPOINTMENT_PRESCRIPTION_PREFETCH = (
+    'prescription__medicine_items__medicine',
+    'prescription__lab_test_items__lab_test',
+    'prescription__lab_test_items__booking',
+)
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
@@ -696,6 +707,33 @@ class MedicineDetailView(APIView):
         return Response({'success': True, 'data': {'medicine': data}})
 
 
+RATING_STEP_ERROR = 'Rating must be between 0.5 and 5 in steps of 0.5.'
+
+
+def _parse_rating(raw):
+    """Parses a user-submitted star rating that may carry a half step (3.5, 4.5, …).
+
+    Returns the Decimal on success or None on any rejection — callers answer with
+    RATING_STEP_ERROR so the one wording covers every rating endpoint. Quantizing to one decimal
+    place before the modulo check means 4.50 and '4.5' both land on the same value, while 4.3 or 6
+    are refused. The columns are Decimal(2,1), so anything that passes here stores exactly.
+    """
+    if raw is None or raw == '':
+        return None
+    try:
+        value = Decimal(str(raw)).quantize(Decimal('0.1'))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    # NaN slips through both Decimal() and quantize() and only blows up on the comparison below, so
+    # it has to be refused by name. It is reachable: the string 'NaN' from a form post is a valid
+    # Decimal. (Infinity raises inside quantize() and is already caught above.)
+    if not value.is_finite():
+        return None
+    if value < Decimal('0.5') or value > Decimal('5') or value % Decimal('0.5') != 0:
+        return None
+    return value
+
+
 def _recalc_medicine_rating(medicine):
     agg = Review.objects.filter(medicine=medicine).aggregate(avg=Avg('rating'), cnt=Count('id'))
     medicine.rating = round(agg['avg'] or 0, 2)
@@ -718,19 +756,20 @@ class MedicineReviewsView(APIView):
         except Medicine.DoesNotExist:
             return Response({'success': False, 'message': 'Medicine not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        rating = request.data.get('rating')
+        rating = _parse_rating(request.data.get('rating'))
         comment = request.data.get('comment', '')
-        if not rating or not (1 <= int(rating) <= 5):
-            return Response({'success': False, 'message': 'Rating must be between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+        if rating is None:
+            return Response({'success': False, 'message': RATING_STEP_ERROR}, status=status.HTTP_400_BAD_REQUEST)
 
         review, created = Review.objects.update_or_create(
             user=request.user, medicine=medicine,
-            defaults={'rating': int(rating), 'comment': comment},
+            defaults={'rating': rating, 'comment': comment},
         )
         _recalc_medicine_rating(medicine)
         if created:
+            # normalize() so a whole rating reads "4-star" rather than "4.0-star"; a half step keeps its .5.
             _notify_admins('manage_inventory', 'NEW_REVIEW', 'New Product Review',
-                            f'{request.user.full_name} left a {rating}-star review on {medicine.name}.', link='/admin/medicines')
+                            f'{request.user.full_name} left a {rating.normalize()}-star review on {medicine.name}.', link='/admin/medicines')
 
         return Response({'success': True, 'data': {'review': ReviewSerializer(review, context={'request': request}).data}}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
@@ -742,11 +781,11 @@ class MedicineReviewsView(APIView):
         except Review.DoesNotExist:
             return Response({'success': False, 'message': 'Review not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        rating = request.data.get('rating')
-        if not rating or not (1 <= int(rating) <= 5):
-            return Response({'success': False, 'message': 'Rating must be between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+        rating = _parse_rating(request.data.get('rating'))
+        if rating is None:
+            return Response({'success': False, 'message': RATING_STEP_ERROR}, status=status.HTTP_400_BAD_REQUEST)
 
-        review.rating = int(rating)
+        review.rating = rating
         review.comment = request.data.get('comment', review.comment)
         review.save(update_fields=['rating', 'comment'])
         _recalc_medicine_rating(review.medicine)
@@ -1803,15 +1842,15 @@ class OrderRateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request, pk):
-        rating = request.data.get('order_rating')
-        if not rating or not (1 <= int(rating) <= 5):
-            return Response({'success': False, 'message': 'Rating must be between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+        rating = _parse_rating(request.data.get('order_rating'))
+        if rating is None:
+            return Response({'success': False, 'message': RATING_STEP_ERROR}, status=status.HTTP_400_BAD_REQUEST)
         try:
             order = Order.objects.get(id=pk, user=request.user, status='DELIVERED')
         except Order.DoesNotExist:
             return Response({'success': False, 'message': 'Delivered order not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        order.order_rating = int(rating)
+        order.order_rating = rating
         order.order_comment = request.data.get('order_comment') or None
         order.save(update_fields=['order_rating', 'order_comment'])
         return Response({'success': True, 'data': {'order': OrderSerializer(order).data}, 'message': 'Order rated.'})
@@ -1825,9 +1864,9 @@ class FulfillmentRateRiderView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request, pk):
-        rating = request.data.get('rider_rating')
-        if not rating or not (1 <= int(rating) <= 5):
-            return Response({'success': False, 'message': 'Rating must be between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+        rating = _parse_rating(request.data.get('rider_rating'))
+        if rating is None:
+            return Response({'success': False, 'message': RATING_STEP_ERROR}, status=status.HTTP_400_BAD_REQUEST)
         try:
             fulfillment = OrderFulfillment.objects.get(
                 id=pk, order__user=request.user, status='DELIVERED', delivery_agent__isnull=False,
@@ -1835,7 +1874,7 @@ class FulfillmentRateRiderView(APIView):
         except OrderFulfillment.DoesNotExist:
             return Response({'success': False, 'message': 'Delivered fulfillment with a rider not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        fulfillment.rider_rating = int(rating)
+        fulfillment.rider_rating = rating
         fulfillment.rider_rating_comment = request.data.get('rider_rating_comment') or None
         fulfillment.save(update_fields=['rider_rating', 'rider_rating_comment'])
         return Response({
@@ -2159,21 +2198,6 @@ class AppointmentKhaltiInitiateView(APIView):
         return Response({'success': True, 'data': {'payment_url': khalti_res['payment_url']}})
 
 
-def _ensure_meeting_link(appt):
-    """Give a confirmed appointment a video room the instant it's confirmed, so neither the doctor
-    nor the patient has to wait for a link to be pasted in by hand. Deterministic and idempotent:
-    the room is derived from the appointment's UUID (unguessable), never changes across re-confirms,
-    and is only ever set when empty — a manual override set via DoctorAppointmentSetMeetingLinkView
-    is always preserved. The base host is a setting so this Jitsi room can later be swapped for a
-    Zoom/Google Meet join URL without touching any caller."""
-    if appt.meeting_link:
-        return appt.meeting_link
-    base = (_get_setting('jitsi_base_url', 'https://meet.jit.si') or 'https://meet.jit.si').rstrip('/')
-    appt.meeting_link = f'{base}/Swasthaya-{appt.id}'
-    appt.save(update_fields=['meeting_link'])
-    return appt.meeting_link
-
-
 def _confirm_appointment(appt):
     """The one idempotent place a doctor appointment moves PENDING -> CONFIRMED and both parties are
     notified — mirrors _confirm_lab_test_booking(). Called at booking creation for a Plus-free
@@ -2205,6 +2229,17 @@ def _confirm_appointment(appt):
         f'({appt.time_slot}). {"Plus-free consultation" if plus_free else f"Paid online — NPR {appt.fee_charged}"}.',
         link='/admin/doctor-consult',
     )
+    # The doctor is the one person who has to show up, and until now was the only party not told.
+    # Guarded on user_id because the legacy Doctor rows predate logins entirely (see
+    # AdminDoctorLinkAccountView) — those have nobody to notify. The fee is deliberately left out:
+    # what the patient paid is not the doctor's share, that's DoctorPayout's job.
+    if appt.doctor.user_id:
+        notify_user(
+            appt.doctor.user, 'APPOINTMENT_UPDATE', 'New Appointment Booked',
+            f'{appt.user.full_name} booked a consultation with you for {date_label}, {appt.time_slot}.'
+            + (f' Reason: {appt.reason}' if appt.reason else ''),
+            link='/doctor/appointments',
+        )
 
 
 def _cancel_unpaid_appointment(appt):
@@ -2253,6 +2288,109 @@ class AppointmentKhaltiVerifyView(APIView):
             appt.save(update_fields=['payment_status'])
             _confirm_appointment(appt)
         return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-confirmation?appointmentId={appt.id}')
+
+
+# eSewa for consultations. Structurally identical to PaymentEsewaInitiateLabTestView /
+# LabTestEsewaSuccessView / LabTestEsewaFailureView, scoped to DoctorAppointment: the appointment is
+# already created and PENDING by the time we get here (AppointmentListCreateView made it), so this
+# only settles money and hands off to the same _confirm_appointment() the Khalti path uses.
+class AppointmentEsewaInitiateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        appointment_id = request.data.get('appointment_id')
+        if not appointment_id:
+            return Response({'success': False, 'message': 'appointment_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            appt = DoctorAppointment.objects.get(id=appointment_id, user=request.user)
+        except DoctorAppointment.DoesNotExist:
+            return Response({'success': False, 'message': 'Appointment not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if appt.payment_status != 'PENDING':
+            return Response({'success': False, 'message': f'This appointment does not need payment (status: {appt.payment_status}).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        appt.payment_method = 'ESEWA'
+        transaction_uuid = f'{appt.id}-{int(timezone.now().timestamp())}'
+        appt.esewa_transaction_uuid = transaction_uuid
+        appt.save(update_fields=['payment_method', 'esewa_transaction_uuid'])
+
+        total_str = str(appt.fee_charged)
+        signature = _esewa_signature(total_str, transaction_uuid)
+
+        return Response({
+            'success': True,
+            'data': {
+                'formUrl': ESEWA_FORM_URL,
+                'params': {
+                    'amount': total_str,
+                    'tax_amount': '0',
+                    'total_amount': total_str,
+                    'transaction_uuid': transaction_uuid,
+                    'product_code': ESEWA_PRODUCT_CODE,
+                    'product_service_charge': '0',
+                    'product_delivery_charge': '0',
+                    'success_url': f'{BACKEND_URL}/api/payment/esewa/success-appointment/',
+                    'failure_url': f'{BACKEND_URL}/api/payment/esewa/failure-appointment/',
+                    'signed_field_names': 'total_amount,transaction_uuid,product_code',
+                    'signature': signature,
+                },
+            },
+        })
+
+
+class AppointmentEsewaSuccessView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        data = request.query_params.get('data')
+        if not data:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=missing_data')
+        try:
+            decoded = json.loads(base64.b64decode(data).decode('utf-8'))
+        except Exception:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=bad_data')
+
+        if decoded.get('status') != 'COMPLETE':
+            return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=incomplete')
+
+        try:
+            resp = requests.get(ESEWA_VERIFY_URL, params={
+                'product_code': ESEWA_PRODUCT_CODE,
+                'total_amount': decoded.get('total_amount'),
+                'transaction_uuid': decoded.get('transaction_uuid'),
+            }, timeout=10)
+            verification = resp.json()
+        except Exception:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=verify_error')
+
+        if verification.get('status') != 'COMPLETE':
+            return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=not_verified')
+
+        try:
+            appt = DoctorAppointment.objects.get(esewa_transaction_uuid=decoded.get('transaction_uuid'))
+        except DoctorAppointment.DoesNotExist:
+            return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=appointment_not_found')
+
+        if appt.payment_status != 'PAID':
+            appt.payment_status = 'PAID'
+            appt.save(update_fields=['payment_status'])
+            _confirm_appointment(appt)
+        return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-confirmation?appointmentId={appt.id}')
+
+
+class AppointmentEsewaFailureView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        data = request.query_params.get('data')
+        if data:
+            try:
+                decoded = json.loads(base64.b64decode(data).decode('utf-8'))
+                appt = DoctorAppointment.objects.get(esewa_transaction_uuid=decoded.get('transaction_uuid'))
+                _cancel_unpaid_appointment(appt)
+            except Exception:
+                pass
+        return HttpResponseRedirect(f'{FRONTEND_URL}/doctor-consult/payment-failed?reason=esewa_cancelled')
 
 
 # ─── Lab Tests ────────────────────────────────────────────────────────────────
@@ -2359,7 +2497,13 @@ class LabTestBookingListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        bookings = LabTestBooking.objects.filter(user=request.user).select_related('lab_test__category', 'address', 'collector__user').order_by('-booked_at')
+        bookings = (
+            LabTestBooking.objects.filter(user=request.user)
+            .select_related('lab_test__category', 'address', 'collector__user')
+            # Feeds ordered_by_doctor / shared_with on the serializer without going N+1 per booking.
+            .prefetch_related('prescription_items__prescription__appointment__doctor', 'report_shares__doctor')
+            .order_by('-booked_at')
+        )
         return Response({'success': True, 'data': {'bookings': LabTestBookingSerializer(bookings, many=True).data}})
 
     def post(self, request):
@@ -2439,7 +2583,12 @@ class LabTestBookingDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            booking = LabTestBooking.objects.select_related('lab_test__category', 'address', 'collector__user').get(id=pk, user=request.user)
+            booking = (
+                LabTestBooking.objects
+                .select_related('lab_test__category', 'address', 'collector__user')
+                .prefetch_related('prescription_items__prescription__appointment__doctor', 'report_shares__doctor')
+                .get(id=pk, user=request.user)
+            )
         except LabTestBooking.DoesNotExist:
             return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}})
@@ -2458,12 +2607,143 @@ class LabTestBookingDetailView(APIView):
         return Response({'success': True, 'data': {'booking': LabTestBookingSerializer(booking).data}, 'message': 'Booking cancelled.'})
 
 
+class LabTestBookingTrackingView(APIView):
+    """Live(ish) collector tracking for the patient's own booking — the lab counterpart to
+    OrderTrackingView. One collector per booking rather than one rider per fulfillment, so this
+    returns a single payload instead of a list. See lab_collection.collector_tracking_payload()
+    for the shape and for why coordinates are withheld outside the live window."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            booking = LabTestBooking.objects.select_related('collector__user', 'address').get(id=pk, user=request.user)
+        except LabTestBooking.DoesNotExist:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'success': True, 'data': {'tracking': collector_tracking_payload(booking)}})
+
+
+class LabReportShareView(APIView):
+    """The patient hands a finished report to a doctor — and takes it back.
+
+    A doctor's view of a patient is deliberately narrow (see DoctorPatientDetailView: only what
+    happened with that doctor, nothing else from the account), so a report does NOT become visible
+    to the doctor who ordered it just because it exists. It becomes visible when the patient says
+    so, here. That keeps the ordering doctor and any other doctor the patient has consulted on the
+    same footing: both need an explicit share, neither gets automatic access.
+
+    GET    — who this report can be sent to, and who it has already been sent to.
+    POST   — send it to one doctor. Idempotent: re-sending is not a second notification.
+    DELETE — take it back. The share row is the whole grant, so deleting it is the revoke.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _booking(self, request, pk):
+        # Scoped to request.user: only the account that booked the test can share its report, even
+        # when the sample was collected from someone else (patient_name et al).
+        return LabTestBooking.objects.select_related('lab_test', 'user').filter(id=pk, user=request.user).first()
+
+    def _shares(self, booking):
+        shares = booking.report_shares.select_related('doctor').order_by('-shared_at')
+        return [{
+            'id': str(s.id), 'doctor_id': str(s.doctor_id), 'doctor_name': s.doctor.name,
+            'shared_at': s.shared_at,
+        } for s in shares]
+
+    def get(self, request, pk):
+        booking = self._booking(request, pk)
+        if not booking:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Only doctors this patient has actually consulted, and only those with a login — a legacy
+        # Doctor row with no User has nowhere to receive a share, so offering it would be a dead end.
+        ordering = _booking_ordering_doctor(booking)
+        doctors = Doctor.objects.filter(
+            appointments__user=request.user, user__isnull=False,
+        ).distinct().order_by('name')
+
+        return Response({'success': True, 'data': {
+            'report_ready': bool(booking.report_file),
+            'doctors': [{
+                'id': str(d.id), 'name': d.name, 'specialty': d.specialty,
+                'ordered_this_test': bool(ordering and ordering.id == d.id),
+            } for d in doctors],
+            'shares': self._shares(booking),
+        }})
+
+    def post(self, request, pk):
+        booking = self._booking(request, pk)
+        if not booking:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+        # The file is the thing being shared, so the file's existence is the gate — not the status,
+        # which could later gain steps after REPORT_READY.
+        if not booking.report_file:
+            return Response({'success': False, 'message': 'There is no report on this booking yet.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        doctor_id = request.data.get('doctor_id')
+        if not doctor_id:
+            return Response({'success': False, 'message': 'doctor_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        doctor = Doctor.objects.select_related('user').filter(id=doctor_id, user__isnull=False).first()
+        if not doctor:
+            return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
+        # You can only send your records to a doctor you've actually seen. Without this a patient
+        # could push their file at any doctor on the platform, and every doctor's shared-report list
+        # would be open to strangers.
+        if not DoctorAppointment.objects.filter(doctor=doctor, user=request.user).exists():
+            return Response({'success': False, 'message': 'You can only send reports to a doctor you have consulted.'}, status=status.HTTP_403_FORBIDDEN)
+
+        share, created = LabReportShare.objects.get_or_create(
+            booking=booking, doctor=doctor, defaults={'shared_by': request.user},
+        )
+        if created:
+            notify_user(
+                doctor.user, 'LAB_BOOKING_UPDATE', 'Lab Report Shared With You',
+                f'{booking.user.full_name} shared their {booking.lab_test.name} report with you.',
+                link=f'/doctor/patients/{booking.user_id}',
+            )
+
+        return Response({
+            'success': True,
+            'data': {'shares': self._shares(booking)},
+            'message': f'Report sent to Dr. {doctor.name}.' if created else f'Dr. {doctor.name} already has this report.',
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    def delete(self, request, pk):
+        booking = self._booking(request, pk)
+        if not booking:
+            return Response({'success': False, 'message': 'Booking not found.'}, status=status.HTTP_404_NOT_FOUND)
+        doctor_id = request.query_params.get('doctor_id') or request.data.get('doctor_id')
+        if not doctor_id:
+            return Response({'success': False, 'message': 'doctor_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        deleted, _ = LabReportShare.objects.filter(booking=booking, doctor_id=doctor_id).delete()
+        if not deleted:
+            return Response({'success': False, 'message': 'This report is not shared with that doctor.'}, status=status.HTTP_404_NOT_FOUND)
+        # No notification on revoke — telling a doctor "access removed" turns a quiet, ordinary
+        # decision by the patient into something they have to explain.
+        return Response({'success': True, 'data': {'shares': self._shares(booking)}, 'message': 'Access removed.'})
+
+
 # ─── Lab Test Sample Collection: Payment ───────────────────────────────────────
 #
 # Mirrors PaymentKhaltiInitiateView/KhaltiVerifyView and PaymentEsewaInitiateView/EsewaSuccessView/
 # EsewaFailureView's exact structure, scoped to LabTestBooking instead of Order — no cart/coupon/
 # wallet/delivery-charge here, same reasoning as the appointment payment views: a lab test booking
 # is a single already-priced item, not a multi-item checkout.
+
+def _booking_ordering_doctor(booking):
+    """The doctor who suggested this test during a consultation, or None if the patient booked it
+    off their own bat. The link is PrescriptionLabTestItem.booking, set at booking creation when the
+    patient arrives from a prescription's suggested-tests list — so this resolves only for tests a
+    doctor actually ordered, never for a self-booked one. Returns the Doctor, not the User: callers
+    still have to check `.user_id` because the legacy Doctor rows have no login to notify."""
+    item = (
+        PrescriptionLabTestItem.objects
+        .filter(booking=booking, prescription__appointment__isnull=False)
+        .select_related('prescription__appointment__doctor__user')
+        .first()
+    )
+    return item.prescription.appointment.doctor if item else None
+
 
 def _confirm_lab_test_booking(booking, notify=True):
     """The one place a booking moves PENDING -> CONFIRMED — called either the moment
@@ -2485,6 +2765,21 @@ def _confirm_lab_test_booking(booking, notify=True):
         return
     booking.status = 'CONFIRMED'
     booking.save(update_fields=['status'])
+
+    # The doctor who ordered this test is told it was actually booked — they asked for it during a
+    # consultation and until now had no way to know whether the patient followed through. This sits
+    # ABOVE the `notify` guard on purpose: that flag exists to collapse the customer/admin fan-out
+    # for a cart checkout into one aggregated summary, and there is no aggregated equivalent for a
+    # doctor, who is only ever told about the specific test they themselves ordered.
+    ordering_doctor = _booking_ordering_doctor(booking)
+    if ordering_doctor and ordering_doctor.user_id:
+        notify_user(
+            ordering_doctor.user, 'LAB_BOOKING_UPDATE', 'Patient Booked a Test You Ordered',
+            f'{booking.user.full_name} booked {booking.lab_test.name} for '
+            f'{booking.scheduled_date.strftime("%b %d, %Y")}. '
+            f'The report will appear here if they choose to share it with you.',
+            link=f'/doctor/patients/{booking.user_id}',
+        )
 
     if not notify:
         return
@@ -2537,9 +2832,16 @@ def _upload_lab_report(booking, file):
     # In-app row links to the bookings page (report is viewable/downloadable there — notification
     # clicks route internally); the email carries the report itself as an attachment. Split like the
     # account-welcome flows so the file-bearing email doesn't ALSO fire the generic notify email.
+    # If a doctor ordered this test, the row doubles as the prompt to send it back to them — that
+    # hand-off is the patient's to make, so it's an invitation here, never an automatic share.
+    ordering_doctor = _booking_ordering_doctor(booking)
+    share_hint = (
+        f' Dr. {ordering_doctor.name} ordered this test — you can send them the report from there.'
+        if ordering_doctor and ordering_doctor.user_id else ''
+    )
     Notification.objects.create(
         user=booking.user, type='LAB_BOOKING_UPDATE', title='Report Ready',
-        message=f'Your {booking.lab_test.name} report is ready — view or download it from your bookings.',
+        message=f'Your {booking.lab_test.name} report is ready — view or download it from your bookings.{share_hint}',
         link='/lab-test-bookings',
     )
     send_lab_report_ready_email(booking)
@@ -3263,7 +3565,12 @@ class AppointmentListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        appts = DoctorAppointment.objects.filter(user=request.user).select_related('doctor').order_by('-booked_at')
+        appts = (
+            DoctorAppointment.objects.filter(user=request.user)
+            .select_related('doctor')
+            .prefetch_related(*APPOINTMENT_PRESCRIPTION_PREFETCH)
+            .order_by('-booked_at')
+        )
         # context={'request': request} so the serializer can build an absolute prescription PDF URL
         # in local dev (where MEDIA_URL is a relative /media/ path); in prod the R2 URL is already
         # absolute and the context is harmless.
@@ -3320,7 +3627,7 @@ class AppointmentListCreateView(APIView):
         if is_plus_free:
             _confirm_appointment(appt)
 
-        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment booked!'}, status=status.HTTP_201_CREATED)
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt, context={'request': request}).data}, 'message': 'Appointment booked!'}, status=status.HTTP_201_CREATED)
 
 
 class AppointmentDetailView(APIView):
@@ -3347,7 +3654,7 @@ class AppointmentDetailView(APIView):
 
         appt.status = 'CANCELLED'
         appt.save(update_fields=['status'])
-        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment cancelled.'})
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt, context={'request': request}).data}, 'message': 'Appointment cancelled.'})
 
 
 class AppointmentFollowUpsDueView(APIView):
@@ -3375,7 +3682,7 @@ class AppointmentFollowUpsDueView(APIView):
         if due:
             DoctorAppointment.objects.filter(id__in=[a.id for a in due]).update(follow_up_notified_at=timezone.now())
 
-        return Response({'success': True, 'data': {'follow_ups': DoctorAppointmentSerializer(due, many=True).data}})
+        return Response({'success': True, 'data': {'follow_ups': DoctorAppointmentSerializer(due, many=True, context={'request': request}).data}})
 
 
 class InternalAppointmentRemindersView(APIView):
@@ -3476,14 +3783,14 @@ class DoctorReviewsView(APIView):
         if not _user_completed_appointment(request.user, doctor):
             return Response({'success': False, 'message': 'You can only review a doctor after completing a consultation with them.'}, status=status.HTTP_403_FORBIDDEN)
 
-        rating = request.data.get('rating')
+        rating = _parse_rating(request.data.get('rating'))
         comment = request.data.get('comment', '')
-        if not rating or not (1 <= int(rating) <= 5):
-            return Response({'success': False, 'message': 'Rating must be between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+        if rating is None:
+            return Response({'success': False, 'message': RATING_STEP_ERROR}, status=status.HTTP_400_BAD_REQUEST)
 
         review, created = DoctorReview.objects.update_or_create(
             user=request.user, doctor=doctor,
-            defaults={'rating': int(rating), 'comment': comment},
+            defaults={'rating': rating, 'comment': comment},
         )
         _recalc_doctor_rating(doctor)
 
@@ -3497,11 +3804,11 @@ class DoctorReviewsView(APIView):
         except DoctorReview.DoesNotExist:
             return Response({'success': False, 'message': 'Review not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        rating = request.data.get('rating')
-        if not rating or not (1 <= int(rating) <= 5):
-            return Response({'success': False, 'message': 'Rating must be between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+        rating = _parse_rating(request.data.get('rating'))
+        if rating is None:
+            return Response({'success': False, 'message': RATING_STEP_ERROR}, status=status.HTTP_400_BAD_REQUEST)
 
-        review.rating = int(rating)
+        review.rating = rating
         review.comment = request.data.get('comment', review.comment)
         review.save(update_fields=['rating', 'comment'])
         _recalc_doctor_rating(review.doctor)
@@ -5025,6 +5332,18 @@ class AdminDoctorListView(APIView):
                 license_number=d['license_number'], onboarding_fee_amount=d.get('onboarding_fee_amount', Decimal('0')),
             )
 
+        # Mirrors the pharmacy and collector creation paths: a persistent in-app row that never
+        # carries the password, plus the welcome email that does. Both run post-commit so we never
+        # announce an account a rollback undid. Without these the doctor was simply never told the
+        # account existed — admin typed a password and nothing ever reached them.
+        Notification.objects.create(
+            user=user, type='ACCOUNT_UPDATE', title='Your doctor account is ready',
+            message='You can now sign in to set your availability and complete your profile. '
+                    'Our team will verify your account before you can accept consultations.',
+            link='/doctor/dashboard',
+        )
+        send_doctor_welcome_email(user, d['password'], doctor_name=doctor.name)
+
         return Response({'success': True, 'data': {'doctor': AdminDoctorSerializer(doctor).data}, 'message': 'Doctor account created — remember to verify it before it can accept appointments.'}, status=status.HTTP_201_CREATED)
 
 
@@ -5133,6 +5452,15 @@ class AdminDoctorLinkAccountView(APIView):
             doctor.user = user
             doctor.save(update_fields=['user'])
 
+        # Same post-commit pair as AdminDoctorListView.post — a legacy doctor getting their first
+        # login needs to be told about it just as much as a freshly created one.
+        Notification.objects.create(
+            user=user, type='ACCOUNT_UPDATE', title='Your doctor account is ready',
+            message='You can now sign in to set your availability and complete your profile.',
+            link='/doctor/dashboard',
+        )
+        send_doctor_welcome_email(user, d['password'], doctor_name=doctor.name)
+
         return Response({'success': True, 'data': {'doctor': AdminDoctorSerializer(doctor).data}, 'message': 'Login account linked.'}, status=status.HTTP_201_CREATED)
 
 
@@ -5140,11 +5468,16 @@ class AdminAppointmentListView(APIView):
     permission_classes = [require_permission('manage_doctors')]
 
     def get(self, request):
-        qs = DoctorAppointment.objects.select_related('user', 'doctor', 'payout').order_by('-booked_at')
+        qs = (
+            DoctorAppointment.objects
+            .select_related('user', 'doctor', 'payout')
+            .prefetch_related(*APPOINTMENT_PRESCRIPTION_PREFETCH)
+            .order_by('-booked_at')
+        )
         status_filter = request.query_params.get('status', '').strip()
         if status_filter:
             qs = qs.filter(status=status_filter)
-        data = DoctorAppointmentSerializer(qs, many=True).data
+        data = DoctorAppointmentSerializer(qs, many=True, context={'request': request}).data
         for row, appt in zip(data, qs):
             row['payout_status'] = appt.payout.status if hasattr(appt, 'payout') else None
         return Response({'success': True, 'data': {'appointments': data}})
@@ -5171,7 +5504,7 @@ class AdminAppointmentDetailView(APIView):
         # non-empty meeting_link in the same request is preserved (the helper only fills a blank).
         if appt.status == 'CONFIRMED':
             _ensure_meeting_link(appt)
-        data = DoctorAppointmentSerializer(appt).data
+        data = DoctorAppointmentSerializer(appt, context={'request': request}).data
         data['payout_status'] = appt.payout.status if hasattr(appt, 'payout') else None
         return Response({'success': True, 'data': {'appointment': data}, 'message': 'Appointment updated.'})
 
@@ -5401,6 +5734,8 @@ class AdminPrescriptionDetailView(APIView):
         data['customer'] = {'id': str(prescription.user.id), 'full_name': prescription.user.full_name, 'email': prescription.user.email}
         items = prescription.medicine_items.select_related('medicine__category', 'medicine__brand').order_by('created_at')
         data['medicine_items'] = PrescriptionMedicineItemSerializer(items, many=True).data
+        lab_items = prescription.lab_test_items.select_related('lab_test__category', 'booking').order_by('created_at')
+        data['lab_test_items'] = PrescriptionLabTestItemSerializer(lab_items, many=True).data
         return Response({'success': True, 'data': {'prescription': data}})
 
     def put(self, request, pk):
@@ -5418,9 +5753,20 @@ class AdminPrescriptionDetailView(APIView):
         prescription.admin_comment = admin_comment
         prescription.save(update_fields=['status', 'rejection_reason', 'admin_comment'])
 
-        item_count = prescription.medicine_items.count() if new_status == 'VERIFIED' else 0
-        if item_count:
-            message = f'Your prescription has been verified — we found {item_count} medicine(s). Review and add them to your cart.'
+        # A verified prescription can now carry lab tests as well as medicines, and they land the
+        # patient in different places — a medicine goes to the cart, a test has to be booked with
+        # its own address/date/time — so the nudge names whichever is actually there.
+        medicine_count = prescription.medicine_items.count() if new_status == 'VERIFIED' else 0
+        lab_test_count = prescription.lab_test_items.count() if new_status == 'VERIFIED' else 0
+        if medicine_count and lab_test_count:
+            message = (f'Your prescription has been verified — we found {medicine_count} medicine(s) '
+                       f'and {lab_test_count} lab test(s). Review and act on them.')
+            link = f'/prescriptions/{prescription.id}/review'
+        elif medicine_count:
+            message = f'Your prescription has been verified — we found {medicine_count} medicine(s). Review and add them to your cart.'
+            link = f'/prescriptions/{prescription.id}/review'
+        elif lab_test_count:
+            message = f'Your prescription has been verified — we found {lab_test_count} lab test(s). Review and book them whenever suits you.'
             link = f'/prescriptions/{prescription.id}/review'
         else:
             message = f'Your prescription has been {new_status.lower()}.' + (f' Reason: {rejection_reason}' if rejection_reason else '')
@@ -5503,6 +5849,53 @@ class AdminPrescriptionMedicineItemDetailView(APIView):
         if prescription.status != 'PENDING':
             return Response({'success': False, 'message': 'Medicines can only be removed while the prescription is pending.'}, status=status.HTTP_400_BAD_REQUEST)
         PrescriptionMedicineItem.objects.filter(id=item_id, prescription=prescription).delete()
+        return Response({'success': True, 'message': 'Item removed.'})
+
+
+class AdminPrescriptionLabTestItemListView(APIView):
+    """The lab-test half of prescription curation. An uploaded prescription routinely names tests as
+    well as medicines, and until now an admin could only transcribe the medicines — the tests were
+    invisible to the patient. PrescriptionLabTestItem and the patient-side review screen already
+    existed for doctor-issued prescriptions; this is the same funnel opened to the upload flow."""
+    permission_classes = [require_permission('manage_prescriptions')]
+
+    def post(self, request, pk):
+        try:
+            prescription = Prescription.objects.get(id=pk)
+        except Prescription.DoesNotExist:
+            return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if prescription.status != 'PENDING':
+            return Response({'success': False, 'message': 'Lab tests can only be added while the prescription is pending.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        lab_test_id = request.data.get('lab_test_id')
+        if not lab_test_id:
+            return Response({'success': False, 'message': 'lab_test_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            lab_test = LabTest.objects.get(id=lab_test_id, is_active=True)
+        except LabTest.DoesNotExist:
+            return Response({'success': False, 'message': 'Lab test not found.'}, status=status.HTTP_404_NOT_FOUND)
+        # A lab test carries no quantity, so unlike a medicine a second row for the same test says
+        # nothing new — it would just show the patient the same "Book This Test" card twice.
+        if prescription.lab_test_items.filter(lab_test=lab_test).exists():
+            return Response({'success': False, 'message': 'That lab test is already on this prescription.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        item = PrescriptionLabTestItem.objects.create(
+            prescription=prescription, lab_test=lab_test, added_by=request.user,
+        )
+        return Response({'success': True, 'data': {'item': PrescriptionLabTestItemSerializer(item).data}}, status=status.HTTP_201_CREATED)
+
+
+class AdminPrescriptionLabTestItemDetailView(APIView):
+    permission_classes = [require_permission('manage_prescriptions')]
+
+    def delete(self, request, pk, item_id):
+        try:
+            prescription = Prescription.objects.get(id=pk)
+        except Prescription.DoesNotExist:
+            return Response({'success': False, 'message': 'Prescription not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if prescription.status != 'PENDING':
+            return Response({'success': False, 'message': 'Lab tests can only be removed while the prescription is pending.'}, status=status.HTTP_400_BAD_REQUEST)
+        PrescriptionLabTestItem.objects.filter(id=item_id, prescription=prescription).delete()
         return Response({'success': True, 'message': 'Item removed.'})
 
 
@@ -6464,11 +6857,16 @@ class DoctorOwnAppointmentListView(APIView):
         doctor = getattr(request.user, 'doctor', None)
         if not doctor:
             return _doctor_not_found_response()
-        qs = doctor.appointments.select_related('user').order_by('-booked_at')
+        qs = (
+            doctor.appointments
+            .select_related('user')
+            .prefetch_related(*APPOINTMENT_PRESCRIPTION_PREFETCH)
+            .order_by('-booked_at')
+        )
         status_filter = request.query_params.get('status', '').strip()
         if status_filter:
             qs = qs.filter(status=status_filter)
-        return Response({'success': True, 'data': {'appointments': DoctorAppointmentSerializer(qs, many=True).data}})
+        return Response({'success': True, 'data': {'appointments': DoctorAppointmentSerializer(qs, many=True, context={'request': request}).data}})
 
 
 class DoctorAppointmentConfirmView(APIView):
@@ -6502,7 +6900,7 @@ class DoctorAppointmentConfirmView(APIView):
             message=f'Dr. {doctor.name} has confirmed your appointment on {appt.scheduled_date} at {appt.time_slot}.',
             link='/appointments',
         )
-        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment confirmed.'})
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt, context={'request': request}).data}, 'message': 'Appointment confirmed.'})
 
 
 class DoctorAppointmentSetMeetingLinkView(APIView):
@@ -6532,7 +6930,7 @@ class DoctorAppointmentSetMeetingLinkView(APIView):
             message=f'Dr. {doctor.name} has shared the meeting link for your appointment on {appt.scheduled_date}.',
             link='/appointments',
         )
-        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Meeting link set.'})
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt, context={'request': request}).data}, 'message': 'Meeting link set.'})
 
 
 class DoctorAppointmentCompleteView(APIView):
@@ -6668,7 +7066,7 @@ class DoctorAppointmentCompleteView(APIView):
             )
             send_prescription_ready_email(presc)
 
-        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt).data}, 'message': 'Appointment marked complete.'})
+        return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt, context={'request': request}).data}, 'message': 'Appointment marked complete.'})
 
 
 class DoctorPayoutListView(APIView):
@@ -6735,7 +7133,12 @@ class DoctorPatientDetailView(APIView):
         if not doctor:
             return _doctor_not_found_response()
 
-        appointments = DoctorAppointment.objects.filter(doctor=doctor, user_id=user_id).select_related('user').order_by('-scheduled_date')
+        appointments = (
+            DoctorAppointment.objects.filter(doctor=doctor, user_id=user_id)
+            .select_related('user')
+            .prefetch_related(*APPOINTMENT_PRESCRIPTION_PREFETCH)
+            .order_by('-scheduled_date')
+        )
         if not appointments.exists():
             return Response({'success': False, 'message': 'Patient not found.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -6751,6 +7154,15 @@ class DoctorPatientDetailView(APIView):
             data['lab_test_items'] = PrescriptionLabTestItemSerializer(presc.lab_test_items.all(), many=True).data
             prescriptions_data.append(data)
 
+        # Reports this patient chose to send to this doctor. Scoped to doctor=doctor like everything
+        # else here: a report exists on the platform the moment the lab uploads it, but it reaches a
+        # doctor only through a share the patient made (LabReportShareView) — including reports for
+        # tests this very doctor ordered.
+        shared_reports = (
+            LabReportShare.objects.filter(doctor=doctor, booking__user_id=user_id)
+            .select_related('booking__lab_test', 'booking__user').order_by('-shared_at')
+        )
+
         return Response({
             'success': True,
             'data': {
@@ -6758,8 +7170,9 @@ class DoctorPatientDetailView(APIView):
                     'id': str(patient_user.id), 'full_name': patient_user.full_name,
                     'email': patient_user.email, 'phone': patient_user.phone,
                 },
-                'appointments': DoctorAppointmentSerializer(appointments, many=True).data,
+                'appointments': DoctorAppointmentSerializer(appointments, many=True, context={'request': request}).data,
                 'prescriptions': prescriptions_data,
+                'shared_reports': LabReportShareSerializer(shared_reports, many=True, context={'request': request}).data,
             },
         })
 

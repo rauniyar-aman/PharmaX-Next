@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
+import { resolveImg } from '@/lib/resolveImg'
 import type { DoctorPatientDetail, AppointmentStatus } from '@/types'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -46,6 +47,7 @@ export default function DoctorPatientDetailPage() {
   }
 
   const { patient, appointments, prescriptions } = detail
+  const sharedReports = detail.shared_reports || []
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -60,6 +62,36 @@ export default function DoctorPatientDetailPage() {
         <p className="text-xs text-on-surface-variant mt-0.5">{patient.email}{patient.phone ? ` · ${patient.phone}` : ''}</p>
         <p className="text-xs text-on-surface-variant mt-1">{appointments.length} appointment{appointments.length !== 1 ? 's' : ''} with you</p>
       </div>
+
+      {/* Lab reports the patient sent over. Ordering a test does not grant sight of its result —
+          the patient hands it across, and can take it back, so this list is theirs to control. */}
+      {sharedReports.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-sm font-bold text-on-surface">Reports Shared With You</p>
+          {sharedReports.map((r) => (
+            <div key={r.id} className="bg-surface rounded-2xl border border-outline-variant p-4 flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-on-surface">{r.lab_test_name}</p>
+                <p className="text-xs text-on-surface-variant mt-0.5">
+                  Sample collected {fmtDate(r.scheduled_date)} · shared {fmtDate(r.shared_at)}
+                </p>
+                {r.patient.booked_by && (
+                  <p className="text-xs text-on-surface-variant mt-0.5">
+                    For {r.patient.full_name}{r.patient.age ? `, ${r.patient.age}` : ''} · booked by {r.patient.booked_by}
+                  </p>
+                )}
+              </div>
+              {r.report_file_url && (
+                <a href={resolveImg(r.report_file_url) || '#'} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-primary text-on-primary text-xs font-semibold hover:opacity-90 transition-opacity whitespace-nowrap">
+                  <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>description</span>
+                  Open report
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Appointment history */}
       <div className="space-y-3">

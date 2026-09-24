@@ -8,6 +8,7 @@ import { useLocationStore } from '@/store/location'
 import { useWishlist } from '@/hooks/useWishlist'
 import { useCart } from '@/hooks/useCart'
 import MedicineCard, { MedicineCardSkeleton } from '@/components/medicine/MedicineCard'
+import { StarRating } from '@/components/ui/StarRating'
 import type { Medicine, Category, Brand } from '@/types'
 
 const PAGE_SIZE_OPTIONS = [20, 60, 100]
@@ -199,9 +200,7 @@ export default function MedicinesPage() {
             <CheckboxRow key={r} checked={selectedRatings.includes(r)}
               label={
                 <span className="flex items-center gap-1">
-                  {[...Array(5)].map((_, i) => (
-                    <span key={i} className={`material-symbols-outlined ${i < r ? 'ms-filled text-amber-400' : 'text-outline-variant'}`} style={{ fontSize: '14px' }}>star</span>
-                  ))}
+                  <StarRating value={r} />
                   <span className="ml-0.5">&amp; up</span>
                 </span>
               }
