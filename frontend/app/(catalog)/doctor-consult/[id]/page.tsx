@@ -11,6 +11,22 @@ import { StarRating, StarRatingInput } from '@/components/ui/StarRating'
 import { useAuthStore } from '@/store/auth'
 import type { Doctor, DoctorReview } from '@/types'
 
+/** Whether returning to this doctor on the chosen date costs nothing, answered per date because
+ * the free window is measured to the appointment rather than to today. */
+type FollowUpFree = {
+  eligible: boolean
+  window_days: number
+  previous_consultation_date?: string
+  expires_on?: string
+}
+
+/** `2026-09-25` → `25 Sep`. The explicit midnight keeps the browser parsing it as a local date;
+ * bare `YYYY-MM-DD` is read as UTC and reads back a day early east of Greenwich. */
+function formatDay(value?: string): string {
+  if (!value) return ''
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+}
+
 export default function DoctorDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
@@ -21,6 +37,7 @@ export default function DoctorDetailPage() {
   const [date, setDate] = useState(tomorrowDateStr())
   const [slots, setSlots] = useState<string[]>([])
   const [slotsLoading, setSlotsLoading] = useState(false)
+  const [followUpFree, setFollowUpFree] = useState<FollowUpFree | null>(null)
   const [timeSlot, setTimeSlot] = useState('')
   const [reason, setReason] = useState('')
   const [booking, setBooking] = useState(false)
@@ -50,14 +67,18 @@ export default function DoctorDetailPage() {
   }, [id])
 
   // Real available slots, computed server-side from the doctor's weekly availability pattern —
-  // refetched every time the date changes so the list never goes stale mid-booking.
+  // refetched every time the date changes so the list never goes stale mid-booking. The same
+  // response says whether this date falls inside a free follow-up window.
   useEffect(() => {
     if (!id || !date) return
     setSlotsLoading(true)
     setTimeSlot('')
     api.get(`/doctors/${id}/slots/`, { params: { date } })
-      .then((r) => setSlots(r.data.data.slots || []))
-      .catch(() => setSlots([]))
+      .then((r) => {
+        setSlots(r.data.data.slots || [])
+        setFollowUpFree(r.data.data.follow_up_free || null)
+      })
+      .catch(() => { setSlots([]); setFollowUpFree(null) })
       .finally(() => setSlotsLoading(false))
   }, [id, date])
 
@@ -107,11 +128,14 @@ export default function DoctorDetailPage() {
         doctor_id: id, scheduled_date: date, time_slot: timeSlot, reason: reason || undefined,
       })
       const appt = res.data.data.appointment
-      // Two genuinely distinct outcomes: a Plus member's booking is already CONFIRMED with
-      // nothing left to pay, while everyone else still owes the consultation fee and has to go
-      // through the Khalti step before their appointment is confirmed.
-      if (appt.is_plus_free) {
-        toast.success('Appointment confirmed — it\'s free with your Swasthaya Plus membership!')
+      // Two genuinely distinct outcomes: a booking with nothing left to pay is already CONFIRMED,
+      // while everyone else still owes the consultation fee and has to go through the payment step
+      // before their appointment is confirmed. The reason it was free changes only the wording —
+      // saying "free with Plus" to someone who got a free follow-up would misreport why.
+      if (appt.is_plus_free || appt.is_follow_up_free) {
+        toast.success(appt.is_plus_free
+          ? 'Appointment confirmed — it\'s free with your Swasthaya Plus membership!'
+          : 'Appointment confirmed — this follow-up is free.')
         router.push('/appointments')
       } else {
         toast.success('Appointment booked — complete payment to confirm it.')
@@ -281,9 +305,25 @@ export default function DoctorDetailPage() {
         <div className="space-y-4">
           <div className="bg-surface rounded-2xl border border-outline-variant p-5 space-y-4 sticky top-[7.5rem]">
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-bold text-on-surface">NPR {Number(doctor.consultation_fee).toFixed(0)}</span>
-              <span className="text-xs text-on-surface-variant">consultation fee</span>
+              {followUpFree?.eligible ? (
+                <>
+                  <span className="text-2xl font-bold text-on-surface">Free</span>
+                  <span className="text-xs text-on-surface-variant line-through">NPR {Number(doctor.consultation_fee).toFixed(0)}</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-2xl font-bold text-on-surface">NPR {Number(doctor.consultation_fee).toFixed(0)}</span>
+                  <span className="text-xs text-on-surface-variant">consultation fee</span>
+                </>
+              )}
             </div>
+
+            {followUpFree?.eligible && (
+              <p className="rounded-xl bg-secondary-container px-3 py-2.5 text-xs text-on-secondary-container">
+                You saw this doctor on {formatDay(followUpFree.previous_consultation_date)}, so this
+                follow-up is free. Book by {formatDay(followUpFree.expires_on)} to use it.
+              </p>
+            )}
 
             {user ? (
               <>

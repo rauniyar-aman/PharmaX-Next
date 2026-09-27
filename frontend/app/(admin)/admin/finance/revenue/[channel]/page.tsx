@@ -88,6 +88,7 @@ const CONFIG: Record<string, ChannelConfig> = {
         <td className="px-4 py-3 font-semibold text-on-surface whitespace-nowrap">
           {fmt(t.fee_charged ?? 0)}
           {t.is_plus_free && <span className="ml-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary/10 text-primary uppercase tracking-wide">Plus-free</span>}
+          {t.is_follow_up_free && <span className="ml-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-secondary/10 text-secondary uppercase tracking-wide">Follow-up</span>}
         </td>
         <td className="px-4 py-3 text-on-surface-variant text-xs whitespace-nowrap">{humanize(t.payment_method)}</td>
         <td className="px-4 py-3"><StatusPill status={t.status} /></td>

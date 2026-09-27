@@ -847,6 +847,15 @@ class DoctorAppointment(models.Model):
     follow_up_date = models.DateField(null=True, blank=True)
     follow_up_notes = models.CharField(max_length=255, null=True, blank=True)
     follow_up_notified_at = models.DateTimeField(null=True, blank=True)
+    # The earlier consultation this one follows up on, and whether that's why nothing was charged.
+    # follow_up_of marks a return visit inside the follow-up window — set even when the booking was
+    # free for some other reason, which is the whole distinction between the two columns: a Plus
+    # member's return visit is a real follow-up (linked) that wasn't charged to their follow-up
+    # entitlement (is_follow_up_free stays False), so the entitlement survives for later. A visit
+    # long after the window is not linked at all; it isn't a follow-up of anything.
+    # SET_NULL because a source consultation may be pruned without taking its follow-ups with it.
+    follow_up_of = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='follow_ups')
+    is_follow_up_free = models.BooleanField(default=False)
     # Fire-once markers for the pre-appointment reminder sweep — same discipline as
     # follow_up_notified_at above, one column per lead time so each fires exactly once.
     reminder_24h_sent_at = models.DateTimeField(null=True, blank=True)

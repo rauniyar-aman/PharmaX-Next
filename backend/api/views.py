@@ -1163,6 +1163,45 @@ def _user_has_plus_benefit(user, key):
     return membership.plan.benefits.filter(key=key, is_active=True).exists()
 
 
+def _follow_up_free_days():
+    """Days after a consultation during which a return visit to the same doctor is free.
+    '0' switches the whole entitlement off."""
+    try:
+        return max(0, int(_get_setting('follow_up_free_days', '7')))
+    except (TypeError, ValueError):
+        return 7
+
+
+def _free_follow_up_source(user, doctor, for_date):
+    """The earlier consultation that makes booking `doctor` on `for_date` a free follow-up, or None.
+
+    Three deliberate limits, each of which the obvious implementation gets wrong:
+
+    - The window runs from the earlier consultation to the NEW appointment's date, not to today.
+      Measured from today, a patient could book a slot months out on their last free day and still
+      pay nothing.
+    - One free follow-up per consultation, so a patient inside the window can't book an unlimited
+      number of free appointments off a single paid one. A follow-up that gets CANCELLED releases
+      the entitlement again — they never got the consultation it was spent on.
+    - A free follow-up can't itself source another, which caps the chain at one instead of letting
+      it renew itself indefinitely.
+    """
+    window_days = _follow_up_free_days()
+    if not window_days or not getattr(user, 'is_authenticated', False):
+        return None
+
+    candidates = DoctorAppointment.objects.filter(
+        user=user, doctor=doctor, status='COMPLETED', is_follow_up_free=False,
+        scheduled_date__lte=for_date,
+        scheduled_date__gte=for_date - timedelta(days=window_days),
+    ).order_by('-scheduled_date')
+
+    for source in candidates:
+        if not source.follow_ups.filter(is_follow_up_free=True).exclude(status='CANCELLED').exists():
+            return source
+    return None
+
+
 # Order statuses that represent a genuine, confirmed purchase — excludes BROADCASTING/
 # AWAITING_PAYMENT (not yet confirmed) and CANCELLED/RETURNED (reversed).
 PURCHASED_ORDER_STATUSES = ['PLACED', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED']
@@ -3558,7 +3597,21 @@ class DoctorSlotsView(APIView):
         if not requested_date:
             return Response({'success': False, 'message': 'A valid date query param (YYYY-MM-DD) is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({'success': True, 'data': {'slots': get_available_slots(doctor, requested_date)}})
+        # Answered here, alongside the slots, because eligibility depends on the date being booked
+        # — the window is measured to the appointment, not to today — so it can change as the
+        # patient moves through the calendar. AllowAny: a signed-out visitor is simply never
+        # eligible (the helper checks is_authenticated), and the booking path re-derives this
+        # itself rather than trusting the answer back.
+        follow_up_source = _free_follow_up_source(request.user, doctor, requested_date)
+        follow_up_free = {'eligible': follow_up_source is not None, 'window_days': _follow_up_free_days()}
+        if follow_up_source:
+            follow_up_free['previous_consultation_date'] = follow_up_source.scheduled_date
+            follow_up_free['expires_on'] = follow_up_source.scheduled_date + timedelta(days=_follow_up_free_days())
+
+        return Response({'success': True, 'data': {
+            'slots': get_available_slots(doctor, requested_date),
+            'follow_up_free': follow_up_free,
+        }})
 
 
 class AppointmentListCreateView(APIView):
@@ -3599,7 +3652,14 @@ class AppointmentListCreateView(APIView):
         # DoctorPayout) — PharmaX absorbs the discount as a Plus perk. Non-free bookings stay
         # PENDING (not yet confirmed) until payment clears.
         is_plus_free = _user_has_plus_benefit(request.user, 'FREE_DOCTOR_CONSULTATION')
-        if is_plus_free:
+        # Looked up regardless of the Plus outcome, because a Plus member's return visit is still a
+        # follow-up worth linking — it just isn't charged to their follow-up entitlement. Spending
+        # the entitlement on a booking that was already free would quietly cost them the one they
+        # could have used later.
+        follow_up_source = _free_follow_up_source(request.user, doctor, scheduled_date)
+        is_follow_up_free = bool(follow_up_source) and not is_plus_free
+
+        if is_plus_free or is_follow_up_free:
             fee_charged, payment_status_value = Decimal('0'), 'NOT_REQUIRED'
         else:
             fee_charged, payment_status_value = doctor.consultation_fee, 'PENDING'
@@ -3613,6 +3673,8 @@ class AppointmentListCreateView(APIView):
             fee_amount=doctor.consultation_fee,
             fee_charged=fee_charged,
             is_plus_free=is_plus_free,
+            follow_up_of=follow_up_source,
+            is_follow_up_free=is_follow_up_free,
             payment_status=payment_status_value,
             reason=s.validated_data.get('reason'),
         )
@@ -3621,10 +3683,11 @@ class AppointmentListCreateView(APIView):
         # would inflate it with cancellations/no-shows/unpaid appointments that never happened.
 
         # Created PENDING above regardless of path; _confirm_appointment() is the single place an
-        # appointment moves to CONFIRMED and notifies the patient + admins. A Plus-free consultation
-        # confirms right here; a paid one stays PENDING until its Khalti payment verifies, so the
-        # admin is no longer notified at creation about a booking whose payment may never complete.
-        if is_plus_free:
+        # appointment moves to CONFIRMED and notifies the patient + admins. A consultation with
+        # nothing to pay confirms right here; a paid one stays PENDING until its Khalti payment
+        # verifies, so the admin is no longer notified at creation about a booking whose payment
+        # may never complete.
+        if is_plus_free or is_follow_up_free:
             _confirm_appointment(appt)
 
         return Response({'success': True, 'data': {'appointment': DoctorAppointmentSerializer(appt, context={'request': request}).data}, 'message': 'Appointment booked!'}, status=status.HTTP_201_CREATED)

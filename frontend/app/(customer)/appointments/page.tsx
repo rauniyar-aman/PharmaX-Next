@@ -93,7 +93,9 @@ export default function AppointmentsPage() {
               <div>
                 <p className="text-on-surface-variant">Fee</p>
                 <p className="font-medium text-on-surface mt-0.5">
-                  {a.is_plus_free ? 'Free (Plus)' : `NPR ${Number(a.fee_amount).toFixed(0)}`}
+                  {a.is_plus_free ? 'Free (Plus)'
+                    : a.is_follow_up_free ? 'Free (follow-up)'
+                    : `NPR ${Number(a.fee_amount).toFixed(0)}`}
                 </p>
               </div>
             </div>
@@ -104,9 +106,10 @@ export default function AppointmentsPage() {
               </div>
             )}
 
-            {/* Payment status only matters for a non-Plus booking still waiting on it — a Plus
-                booking never has anything to pay, and a paid one has nothing left to show here. */}
-            {!a.is_plus_free && a.payment_status === 'PENDING' && (
+            {/* Payment status only matters for a booking that still owes something — one that was
+                free (Plus or follow-up) never has anything to pay, and a paid one has nothing left
+                to show here. */}
+            {!a.is_plus_free && !a.is_follow_up_free && a.payment_status === 'PENDING' && (
               <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 flex-wrap">
                 <p className="text-xs text-amber-800 flex items-center gap-1.5">
                   <span className="material-symbols-outlined ms-filled" style={{ fontSize: '15px' }}>hourglass_top</span>

@@ -1224,12 +1224,14 @@ class DoctorAppointmentSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user', 'doctor', 'doctor_id', 'scheduled_date', 'time_slot',
             'status', 'fee_amount', 'reason', 'meeting_link', 'join_url',
-            'fee_charged', 'is_plus_free', 'payment_status', 'payment_method',
+            'fee_charged', 'is_plus_free', 'is_follow_up_free', 'follow_up_of',
+            'payment_status', 'payment_method',
             'prescription', 'follow_up_date', 'follow_up_notes', 'booked_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'status', 'fee_amount', 'meeting_link', 'join_url',
-            'fee_charged', 'is_plus_free', 'payment_status', 'payment_method',
+            'fee_charged', 'is_plus_free', 'is_follow_up_free', 'follow_up_of',
+            'payment_status', 'payment_method',
             'prescription', 'follow_up_date', 'follow_up_notes', 'booked_at', 'updated_at',
         ]
 
@@ -1856,5 +1858,5 @@ class AdminChannelAppointmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = DoctorAppointment
         fields = ['id', 'patient_name', 'doctor_name', 'fee_charged', 'is_plus_free',
-                  'payment_method', 'payment_status', 'status', 'booked_at']
+                  'is_follow_up_free', 'payment_method', 'payment_status', 'status', 'booked_at']
         read_only_fields = fields

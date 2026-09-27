@@ -886,6 +886,13 @@ export interface DoctorAppointment {
   join_url?: string | null
   fee_charged?: string
   is_plus_free?: boolean
+  /** Free because it returns to the same doctor inside the follow-up window. Mutually exclusive
+   *  with is_plus_free — a Plus member's booking is credited to Plus and leaves the follow-up
+   *  entitlement unspent. */
+  is_follow_up_free?: boolean
+  /** The consultation this one follows, recorded whenever one could be identified even if the
+   *  booking was free for another reason. */
+  follow_up_of?: string | null
   payment_status?: AppointmentPaymentStatus
   payment_method?: 'KHALTI' | 'ESEWA' | 'WALLET' | null
   payout_status?: PayoutStatus | null   // admin views only (AdminAppointmentListView/Detail)
@@ -1248,6 +1255,7 @@ export interface ChannelTransaction {
   doctor_name?: string
   fee_charged?: string
   is_plus_free?: boolean
+  is_follow_up_free?: boolean
 }
 
 export interface ChannelDetail {

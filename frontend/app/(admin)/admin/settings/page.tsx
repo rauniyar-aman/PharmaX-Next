@@ -42,6 +42,12 @@ const SETTINGS_GROUPS = [
     ],
   },
   {
+    title: 'Consultations',
+    fields: [
+      { key: 'follow_up_free_days', label: 'Free Follow-Up Window (days, 0 to disable)', placeholder: '7' },
+    ],
+  },
+  {
     title: 'Uploads',
     fields: [
       { key: 'document_max_size_mb', label: 'Max Document Size (MB)', placeholder: '5' },
