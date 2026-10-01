@@ -158,3 +158,8 @@ staticfiles/
 *.mo
 celerybeat-schedule
 celerybeat.pid
+
+# Local AI/agent tooling — editor/assistant config, not part of the project
+.claude/
+CLAUDE.md
+AGENTS.md
