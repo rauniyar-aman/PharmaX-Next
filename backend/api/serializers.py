@@ -4,7 +4,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.db.models import Sum
 from django.utils import timezone
-from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, LabReportShare, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner, PharmacyIncentiveCampaign, PharmacyCampaignEnrollment, DoctorProfileChangeRequest, DoctorDocument
+from .models import User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, Cart, CartItem, Order, OrderItem, Review, WishlistItem, Notification, StockLog, SystemSetting, LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, LabReportShare, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorDateAvailability, DoctorAppointment, DoctorPayout, PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog, Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission, Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, PharmacyPayout, DeliveryAgentEarning, DeliveryAgentCodLiability, PharmacyTeamMember, PharmacyBusinessHours, PharmacyDocument, PharmacyLocationChangeRequest, LabCollector, CollectorEarning, CollectorCodLiability, FeaturedDeal, PromoBanner, PharmacyIncentiveCampaign, PharmacyCampaignEnrollment, DoctorProfileChangeRequest, DoctorDocument
 from .video import ensure_meeting_link, build_join_url
 
 
@@ -1210,6 +1210,37 @@ class DoctorAvailabilitySerializer(serializers.ModelSerializer):
         model = DoctorAvailability
         fields = ['id', 'day_of_week', 'start_time', 'end_time', 'slot_duration_minutes', 'is_active']
         read_only_fields = ['id']
+
+
+class DoctorDateAvailabilitySerializer(serializers.ModelSerializer):
+    slot_duration_minutes = serializers.IntegerField(min_value=5, max_value=240, required=False)
+
+    class Meta:
+        model = DoctorDateAvailability
+        fields = ['id', 'date', 'is_available', 'start_time', 'end_time', 'slot_duration_minutes', 'note', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+    def validate_date(self, value):
+        # Only on create. An existing row is left alone as it ages into the past — a doctor editing
+        # a note on yesterday's day off shouldn't be blocked by a rule meant to stop new bookings
+        # being shaped around dates that have already gone.
+        if self.instance is None and value < timezone.localdate():
+            raise serializers.ValidationError('Pick today or a later date.')
+        return value
+
+    def validate(self, attrs):
+        # A PATCH carries only what changed, so decide against the row as it will be after saving —
+        # otherwise clearing start_time alone would slip through on an already-available date.
+        def field(name):
+            return attrs[name] if name in attrs else getattr(self.instance, name, None)
+
+        if field('is_available') in (True, None):
+            start, end = field('start_time'), field('end_time')
+            if not start or not end:
+                raise serializers.ValidationError('A date you are available on needs both a start and an end time.')
+            if start >= end:
+                raise serializers.ValidationError('Start time must be before end time.')
+        return attrs
 
 
 class DoctorAppointmentSerializer(serializers.ModelSerializer):

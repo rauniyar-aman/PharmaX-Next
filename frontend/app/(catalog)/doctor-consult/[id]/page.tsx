@@ -5,7 +5,7 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import { resolveImg } from '@/lib/resolveImg'
-import { tomorrowDateStr } from '@/lib/dates'
+import { todayDateStr } from '@/lib/dates'
 import DateField from '@/components/ui/DateField'
 import { StarRating, StarRatingInput } from '@/components/ui/StarRating'
 import { useAuthStore } from '@/store/auth'
@@ -34,7 +34,7 @@ export default function DoctorDetailPage() {
 
   const [doctor, setDoctor] = useState<Doctor | null>(null)
   const [loading, setLoading] = useState(true)
-  const [date, setDate] = useState(tomorrowDateStr())
+  const [date, setDate] = useState(todayDateStr())
   const [slots, setSlots] = useState<string[]>([])
   const [slotsLoading, setSlotsLoading] = useState(false)
   const [followUpFree, setFollowUpFree] = useState<FollowUpFree | null>(null)
@@ -329,7 +329,7 @@ export default function DoctorDetailPage() {
               <>
                 <div>
                   <label className="text-xs font-medium text-on-surface-variant">Preferred Date</label>
-                  <DateField min={tomorrowDateStr()} value={date} onChange={(e) => setDate(e.target.value)}
+                  <DateField min={todayDateStr()} value={date} onChange={(e) => setDate(e.target.value)}
                     className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
                 </div>
                 <div>

@@ -28,7 +28,7 @@ from .models import (
     User, Address, Category, Brand, Medicine, Prescription, PrescriptionMedicineItem, PrescriptionLabTestItem, PrescriptionFile,
     Cart, CartItem, Order, OrderItem, Review, WishlistItem,
     Notification, SystemSetting, StockLog,
-    LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, LabReportShare, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorAppointment, DoctorPayout,
+    LabTestCategory, LabTest, LabTestBooking, LabBookingGroup, LabReportShare, BlogPost, MedicineSubscription, Doctor, DoctorAvailability, DoctorDateAvailability, DoctorAppointment, DoctorPayout,
     PlusPlan, PlusMembership, PlusBenefit, DoctorReview, HealthRecord, MedicineReminder, ReminderLog,
     Coupon, CouponUsage, Wallet, WalletTransaction, Referral, Permission,
     Pharmacy, DeliveryAgent, PharmacyMedicineListing, FulfillmentRequest, OrderFulfillment, DeliveryDecline,
@@ -49,7 +49,7 @@ from .serializers import (
     NotificationSerializer, StockLogSerializer, SystemSettingSerializer,
     LabTestCategorySerializer, LabTestListSerializer, LabTestDetailSerializer, LabTestBookingSerializer, LabBookingGroupSerializer,
     BlogPostListSerializer, BlogPostDetailSerializer, MedicineSubscriptionSerializer,
-    DoctorSerializer, DoctorAvailabilitySerializer, DoctorAppointmentSerializer,
+    DoctorSerializer, DoctorAvailabilitySerializer, DoctorDateAvailabilitySerializer, DoctorAppointmentSerializer,
     DoctorPayoutSerializer, AdminDoctorPayoutSerializer,
     AdminDoctorSerializer, AdminDoctorCreateSerializer, AdminDoctorLinkAccountSerializer,
     PlusPlanSerializer, PlusMembershipSerializer, PlusBenefitSerializer,
@@ -3547,7 +3547,10 @@ class DoctorListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        qs = Doctor.objects.filter(is_active=True).prefetch_related('documents')
+        # is_verified gates every public consult surface: an admin-created doctor stays invisible and
+        # unbookable until an admin verifies them (mirrors the LabCollector gate). See
+        # DoctorSpecialtyListView / DoctorDetailView / DoctorSlotsView / AppointmentListCreateView.
+        qs = Doctor.objects.filter(is_active=True, is_verified=True).prefetch_related('documents')
         search = request.query_params.get('search', '').strip()
         specialty = request.query_params.get('specialty', '').strip()
         sort = request.query_params.get('sortBy', 'popular')
@@ -3566,7 +3569,7 @@ class DoctorSpecialtyListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        specialties = list(Doctor.objects.filter(is_active=True).values_list('specialty', flat=True).distinct().order_by('specialty'))
+        specialties = list(Doctor.objects.filter(is_active=True, is_verified=True).values_list('specialty', flat=True).distinct().order_by('specialty'))
         return Response({'success': True, 'data': {'specialties': specialties}})
 
 
@@ -3575,20 +3578,21 @@ class DoctorDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            doctor = Doctor.objects.prefetch_related('documents').get(id=pk, is_active=True)
+            doctor = Doctor.objects.prefetch_related('documents').get(id=pk, is_active=True, is_verified=True)
         except Doctor.DoesNotExist:
             return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'success': True, 'data': {'doctor': DoctorSerializer(doctor, context={'request': request}).data}})
 
 
 class DoctorSlotsView(APIView):
-    """Real available slots for a given date, computed fresh from the doctor's
-    DoctorAvailability weekly pattern — see scheduling.get_available_slots()."""
+    """Real available slots for a given date, computed fresh from the doctor's hours for that date
+    — the weekly DoctorAvailability pattern unless a DoctorDateAvailability row overrides it. See
+    scheduling.get_available_slots()."""
     permission_classes = [AllowAny]
 
     def get(self, request, pk):
         try:
-            doctor = Doctor.objects.get(id=pk, is_active=True)
+            doctor = Doctor.objects.get(id=pk, is_active=True, is_verified=True)
         except Doctor.DoesNotExist:
             return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -3611,6 +3615,10 @@ class DoctorSlotsView(APIView):
         return Response({'success': True, 'data': {
             'slots': get_available_slots(doctor, requested_date),
             'follow_up_free': follow_up_free,
+            # Lets the booking form say the doctor is away rather than "no slots", which otherwise
+            # reads the same as a fully-booked day. The doctor's own note for the date is not
+            # included — it's a private reminder, not a public out-of-office message.
+            'date_off': doctor.date_availability.filter(date=requested_date, is_available=False).exists(),
         }})
 
 
@@ -3635,7 +3643,7 @@ class AppointmentListCreateView(APIView):
             return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            doctor = Doctor.objects.get(id=s.validated_data['doctor_id'], is_active=True)
+            doctor = Doctor.objects.get(id=s.validated_data['doctor_id'], is_active=True, is_verified=True)
         except Doctor.DoesNotExist:
             return Response({'success': False, 'message': 'Doctor not found.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -6913,6 +6921,92 @@ class DoctorAvailabilityDetailView(APIView):
         return Response({'success': True, 'message': 'Availability pattern removed.'})
 
 
+def _booked_counts_by_date(doctor, dates):
+    """{date: appointments still standing on it} for the given dates, in one query.
+
+    A doctor closing a date needs to know whether patients are already booked into it — nothing on
+    the availability row itself can tell them, and the answer is what decides whether they can just
+    close the day or have to reschedule people first.
+    """
+    if not dates:
+        return {}
+    rows = (DoctorAppointment.objects
+            .filter(doctor=doctor, scheduled_date__in=dates, status__in=['PENDING', 'CONFIRMED'])
+            .values('scheduled_date').annotate(n=Count('id')))
+    return {r['scheduled_date']: r['n'] for r in rows}
+
+
+def _date_availability_payload(doctor, rows):
+    """Serialized rows with the booked-appointment count folded in."""
+    data = DoctorDateAvailabilitySerializer(rows, many=True).data
+    counts = _booked_counts_by_date(doctor, [r.date for r in rows])
+    for row, item in zip(rows, data):
+        item['booked_appointments'] = counts.get(row.date, 0)
+    return data
+
+
+class DoctorDateAvailabilityListView(APIView):
+    """Per-date exceptions to the weekly pattern — a day off, or one day on different hours."""
+    permission_classes = [IsDoctor]
+
+    def get(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+        # Past exceptions are kept (they explain an empty day in the appointment history) but never
+        # listed — this page is for planning, and a year of stale rows would bury the useful ones.
+        rows = list(doctor.date_availability.filter(date__gte=timezone.localdate()).order_by('date'))
+        return Response({'success': True, 'data': {'dates': _date_availability_payload(doctor, rows)}})
+
+    def post(self, request):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return _doctor_not_found_response()
+
+        s = DoctorDateAvailabilitySerializer(data=request.data)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        if doctor.date_availability.filter(date=s.validated_data['date']).exists():
+            return Response({'success': False, 'message': 'You already have an entry for this date — edit it instead.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        row = s.save(doctor=doctor)
+        return Response({'success': True, 'data': {'date': _date_availability_payload(doctor, [row])[0]}}, status=status.HTTP_201_CREATED)
+
+
+class DoctorDateAvailabilityDetailView(APIView):
+    permission_classes = [IsDoctor]
+
+    def _row(self, request, pk):
+        doctor = getattr(request.user, 'doctor', None)
+        if not doctor:
+            return None, None
+        return doctor, doctor.date_availability.filter(id=pk).first()
+
+    def patch(self, request, pk):
+        doctor, row = self._row(request, pk)
+        if not doctor:
+            return _doctor_not_found_response()
+        if not row:
+            return Response({'success': False, 'message': 'Date entry not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        s = DoctorDateAvailabilitySerializer(row, data=request.data, partial=True)
+        if not s.is_valid():
+            return Response({'success': False, 'errors': s.errors}, status=status.HTTP_400_BAD_REQUEST)
+        s.save()
+        return Response({'success': True, 'data': {'date': _date_availability_payload(doctor, [row])[0]}})
+
+    def delete(self, request, pk):
+        doctor, row = self._row(request, pk)
+        if not doctor:
+            return _doctor_not_found_response()
+        if not row:
+            return Response({'success': False, 'message': 'Date entry not found.'}, status=status.HTTP_404_NOT_FOUND)
+        row.delete()
+        # Deleting the exception doesn't close the date — it hands it back to the weekly pattern.
+        return Response({'success': True, 'message': 'Date entry removed — that date follows your weekly hours again.'})
+
+
+
 class DoctorOwnAppointmentListView(APIView):
     permission_classes = [IsDoctor]
 
@@ -6944,6 +7038,11 @@ class DoctorAppointmentConfirmView(APIView):
         doctor = getattr(request.user, 'doctor', None)
         if not doctor:
             return _doctor_not_found_response()
+        # Confirming is the doctor accepting the consult — the exact act verification gates. A doctor
+        # whose verification was revoked (or never granted) after a booking landed must not be able
+        # to accept it; the patient's booking stays PENDING until an admin verifies them.
+        if not doctor.is_verified:
+            return Response({'success': False, 'message': 'Your account is pending verification. You cannot accept appointments yet.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             appt = doctor.appointments.get(id=pk)
         except DoctorAppointment.DoesNotExist:

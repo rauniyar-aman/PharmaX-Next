@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import type { DoctorAvailability } from '@/types'
+import DateAvailabilityManager from './DateAvailabilityManager'
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -179,6 +180,10 @@ export default function DoctorAvailabilityPage() {
             </div>
           )
         })}
+      </div>
+
+      <div className="border-t border-outline-variant pt-5">
+        <DateAvailabilityManager />
       </div>
     </div>
   )

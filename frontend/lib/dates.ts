@@ -11,20 +11,10 @@ function localDateStr(d: Date): string {
   return `${d.getFullYear()}-${month}-${day}`
 }
 
-/** Today, for a date input's `min` where the current day is still a valid choice. */
+/** Today, for a date input's `min`. Same-day booking is allowed: the doctor's slot list is filtered
+ * to still-future times server-side (`backend/api/scheduling.py`) and the lab collection bands are
+ * filtered against the clock on the pages that render them, so a time that has already passed is
+ * never offered even when the chosen date is today. */
 export function todayDateStr(): string {
   return localDateStr(new Date())
-}
-
-/** Tomorrow — the earliest date a sample collection or a consult can be booked for.
- *
- * Slots come from the doctor's weekly pattern with no regard for the clock
- * (`backend/api/scheduling.py`), and collection windows are fixed bands like "6:00 AM - 8:00 AM",
- * so a same-day booking would happily offer a time that has already passed. This floor is the only
- * thing preventing that, which is why it has to be the local day and not the UTC one.
- */
-export function tomorrowDateStr(): string {
-  const d = new Date()
-  d.setDate(d.getDate() + 1)
-  return localDateStr(d)
 }

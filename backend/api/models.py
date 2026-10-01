@@ -816,6 +816,38 @@ class DoctorAvailability(models.Model):
         return f'Dr. {self.doctor.name} — {self.get_day_of_week_display()}'
 
 
+class DoctorDateAvailability(models.Model):
+    """One calendar date that departs from the weekly DoctorAvailability pattern — either closed
+    outright (is_available=False: leave, a conference, an emergency) or open on hours of its own,
+    which is also how a doctor opens a weekday the pattern never covers.
+
+    get_available_slots() reads this before the pattern, so a row here wins for that date and no
+    caller has to know the difference. Hours live on the row rather than being inherited at read
+    time: a date the doctor deliberately set to 14:00–17:00 should stay 14:00–17:00 even after they
+    rewrite their usual Tuesday.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name='date_availability')
+    date = models.DateField()
+    is_available = models.BooleanField(default=True)
+    # Null on a closed date — there are no hours to record. Kept, not cleared, if a doctor closes a
+    # date they had already given hours to, so reopening it restores what they picked.
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    slot_duration_minutes = models.PositiveIntegerField(default=20)
+    note = models.CharField(max_length=200, blank=True)  # the doctor's own reminder; never shown to patients
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'doctor_date_availability'
+        unique_together = ('doctor', 'date')
+        ordering = ['date']
+
+    def __str__(self):
+        state = f'{self.start_time:%H:%M}–{self.end_time:%H:%M}' if self.is_available and self.start_time else 'unavailable'
+        return f'Dr. {self.doctor.name} — {self.date} ({state})'
+
+
 class DoctorAppointment(models.Model):
     STATUS = [
         ('PENDING', 'Pending'),

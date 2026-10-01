@@ -289,6 +289,9 @@ urlpatterns = [
     path('doctor/documents/',                   views.DoctorDocumentView.as_view(), name='doctor-documents'),
     path('doctor/documents/<uuid:pk>/',         views.DoctorDocumentDetailView.as_view(), name='doctor-document-detail'),
     path('doctor/availability/',                views.DoctorAvailabilityListView.as_view(), name='doctor-availability'),
+    # Before the <uuid:pk> route below only for readability — 'dates' can't match a uuid converter.
+    path('doctor/availability/dates/',          views.DoctorDateAvailabilityListView.as_view(), name='doctor-date-availability'),
+    path('doctor/availability/dates/<uuid:pk>/', views.DoctorDateAvailabilityDetailView.as_view(), name='doctor-date-availability-detail'),
     path('doctor/availability/<uuid:pk>/',      views.DoctorAvailabilityDetailView.as_view(), name='doctor-availability-detail'),
     path('doctor/appointments/',                views.DoctorOwnAppointmentListView.as_view(), name='doctor-own-appointments'),
     path('doctor/appointments/<uuid:pk>/confirm/', views.DoctorAppointmentConfirmView.as_view(), name='doctor-appointment-confirm'),

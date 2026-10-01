@@ -954,6 +954,18 @@ export interface DoctorAvailability {
   is_active: boolean
 }
 
+export interface DoctorDateAvailability {
+  id: string
+  date: string                       // YYYY-MM-DD
+  is_available: boolean              // false = a one-off day off
+  start_time: string | null          // null on a closed date
+  end_time: string | null
+  slot_duration_minutes: number
+  note: string                       // the doctor's private reminder, never shown to patients
+  created_at: string
+  booked_appointments: number        // folded in by the API so the doctor sees who's affected
+}
+
 export interface DoctorPayout {
   id: string
   appointment: string

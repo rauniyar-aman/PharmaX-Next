@@ -1,10 +1,10 @@
 'use client'
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useMemo, Suspense } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import { tomorrowDateStr } from '@/lib/dates'
+import { todayDateStr } from '@/lib/dates'
 import DateField from '@/components/ui/DateField'
 import { useAuthStore } from '@/store/auth'
 import { useLabCartStore } from '@/store/labCart'
@@ -12,6 +12,18 @@ import type { LabTest, Address } from '@/types'
 import { fetchServiceArea, isServiceable, type ServiceAreaConfig } from '@/lib/serviceArea'
 
 const TIME_SLOTS = ['6:00 AM - 8:00 AM', '8:00 AM - 10:00 AM', '10:00 AM - 12:00 PM', '4:00 PM - 6:00 PM', '6:00 PM - 8:00 PM']
+
+/** True while a collection band ("6:00 AM - 8:00 AM") has not yet started. Read against the browser
+ * clock, which for our Kathmandu users is Nepal time — the same basis as todayDateStr(). This is
+ * what keeps same-day booking from offering a window that has already passed; only the band's start
+ * matters, so a window is bookable right up until it begins. */
+function bandNotStarted(band: string, now: Date): boolean {
+  const m = band.match(/^(\d+):(\d+)\s*(AM|PM)/i)
+  if (!m) return true
+  let hour = Number(m[1]) % 12
+  if (/pm/i.test(m[3])) hour += 12
+  return hour * 60 + Number(m[2]) > now.getHours() * 60 + now.getMinutes()
+}
 
 // Mirrors (customer)/checkout/payment/page.tsx's METHODS list — same three gateways, same
 // pay-now-vs-pay-on-collection choice, just worded for a sample collection instead of a delivery.
@@ -38,7 +50,7 @@ function LabTestDetailContent() {
   const [svcArea, setSvcArea] = useState<ServiceAreaConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [addressId, setAddressId] = useState('')
-  const [date, setDate] = useState(tomorrowDateStr())
+  const [date, setDate] = useState(todayDateStr())
   const [timeSlot, setTimeSlot] = useState('')
   const [notes, setNotes] = useState('')
   const [method, setMethod] = useState('CASH_ON_DELIVERY')
@@ -67,6 +79,17 @@ function LabTestDetailContent() {
       if (def) setAddressId(def.id)
     }).catch(() => {})
   }, [user])
+
+  // On today's date, drop the collection windows that have already begun; any other date offers all
+  // of them. Recomputed when the date changes — a stale selection (e.g. a morning band left over
+  // from switching back to today in the afternoon) is cleared so it can't be submitted.
+  const availableSlots = useMemo(
+    () => (date === todayDateStr() ? TIME_SLOTS.filter((s) => bandNotStarted(s, new Date())) : TIME_SLOTS),
+    [date],
+  )
+  useEffect(() => {
+    if (timeSlot && !availableSlots.includes(timeSlot)) setTimeSlot('')
+  }, [availableSlots, timeSlot])
 
   const submitEsewaForm = (formUrl: string, params: Record<string, string>) => {
     const form = document.createElement('form')
@@ -279,7 +302,7 @@ function LabTestDetailContent() {
                 </div>
                 <div>
                   <label className="text-xs font-medium text-on-surface-variant">Preferred Date</label>
-                  <DateField min={tomorrowDateStr()} value={date} onChange={(e) => setDate(e.target.value)}
+                  <DateField min={todayDateStr()} value={date} onChange={(e) => setDate(e.target.value)}
                     className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition" />
                 </div>
                 <div>
@@ -287,8 +310,11 @@ function LabTestDetailContent() {
                   <select value={timeSlot} onChange={(e) => setTimeSlot(e.target.value)}
                     className="mt-1 w-full px-3 py-2.5 border border-outline-variant rounded-xl bg-surface text-sm text-on-surface focus:outline-none focus:border-secondary transition">
                     <option value="">Select a time slot</option>
-                    {TIME_SLOTS.map((s) => <option key={s} value={s}>{s}</option>)}
+                    {availableSlots.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
+                  {availableSlots.length === 0 && (
+                    <p className="mt-1 text-[11px] text-on-surface-variant">Today's collection windows have passed — pick another date.</p>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-on-surface-variant">Notes (optional)</label>
