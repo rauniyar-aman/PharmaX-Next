@@ -111,11 +111,16 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8001')
 
 ESEWA_PRODUCT_CODE = os.getenv('ESEWA_PRODUCT_CODE', 'EPAYTEST')
-ESEWA_SECRET_KEY = os.getenv('ESEWA_SECRET_KEY', '8gBm/:&EnhH.1/q')
+# Payment gateway secrets come only from the environment — never hardcode a key (even a sandbox
+# one) in the repo. Empty by default so local/test runs carry no real secret; prod sets these on
+# the host. An unset key produces an invalid signature and the gateway rejects it, which is the
+# intended fail-closed behaviour rather than silently falling back to a shared sandbox key.
+ESEWA_SECRET_KEY = os.getenv('ESEWA_SECRET_KEY', '')
 ESEWA_FORM_URL = os.getenv('ESEWA_FORM_URL', 'https://rc-epay.esewa.com.np/api/epay/main/v2/form')
 ESEWA_VERIFY_URL = os.getenv('ESEWA_VERIFY_URL', 'https://rc-epay.esewa.com.np/api/epay/transaction/status/')
 
-KHALTI_SECRET_KEY = os.getenv('KHALTI_SECRET_KEY', 'test_secret_key_f59e8b7d18b4499ca40f68195a846e9')
+# Supplied by the host in production (see ESEWA_SECRET_KEY note above); empty by default.
+KHALTI_SECRET_KEY = os.getenv('KHALTI_SECRET_KEY', '')
 KHALTI_API_URL = os.getenv('KHALTI_API_URL', 'https://dev.khalti.com/api/v2')
 
 
